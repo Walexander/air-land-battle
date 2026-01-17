@@ -82,6 +82,14 @@ pub struct Obstacles {
 #[derive(Resource, Default)]
 pub struct Occupancy {
     pub positions: HashSet<(i32, i32)>,
+    // Maps position to the entity occupying it
+    pub position_to_entity: HashMap<(i32, i32), Entity>,
+}
+
+#[derive(Resource, Default)]
+pub struct OccupancyIntent {
+    // Maps entity to the cell it intends to occupy next
+    pub intentions: HashMap<Entity, (i32, i32)>,
 }
 
 pub struct HexMapPlugin;
@@ -90,13 +98,16 @@ impl Plugin for HexMapPlugin {
     fn build(&self, app: &mut App) {
         let mut obstacles = Obstacles::default();
         obstacles.positions.insert((2, 0)); // Obstacle to the right
+        obstacles.positions.insert((0, 2)); // Detail sprite location
+        obstacles.positions.insert((-2, 0)); // Detail sprite location
 
         app.insert_resource(HexMapConfig { map_radius: 5 })
             .insert_resource(HoveredHex::default())
             .insert_resource(obstacles)
             .insert_resource(Occupancy::default())
+            .insert_resource(OccupancyIntent::default())
             .add_systems(Startup, (setup_hex_map, trigger_collision_test).chain())
-            .add_systems(Update, (hex_hover_system, update_outline_colors, move_units, handle_unit_selection, update_selected_visual, animate_selection_rings, update_path_visualizations, animate_destination_rings, update_occupancy, detect_collisions_and_repath, update_occupied_visuals));
+            .add_systems(Update, (hex_hover_system, update_outline_colors, update_occupancy_intent, move_units, handle_unit_selection, update_selected_visual, animate_selection_rings, update_path_visualizations, animate_destination_rings, update_occupancy, detect_collisions_and_repath, update_occupied_visuals));
     }
 }
 
@@ -398,24 +409,21 @@ fn find_path(start: (i32, i32), goal: (i32, i32), map_radius: i32, obstacles: &H
     None // No path found
 }
 
-fn create_details_sprite_quad(width: f32, height: f32, col: usize, row: usize) -> Mesh {
-    // Create a quad for details.png spritesheet
-    // Sprite sheet: 3 columns x 9 rows
+fn create_details_sprite_quad_from_pixels(width: f32, height: f32, x_px: f32, y_px: f32, sprite_w_px: f32, sprite_h_px: f32) -> Mesh {
+    // Create a quad from pixel coordinates in the details.png spritesheet
     // Texture dimensions: 128x128 pixels
     let half_width = width / 2.0;
 
     let texture_size = 128.0;
-    let sprite_width_px = texture_size / 3.0;  // ~42.67 pixels per sprite
-    let sprite_height_px = texture_size / 9.0; // ~14.22 pixels per sprite
 
     // Add a small inset to avoid texture bleeding
     let inset = 0.5;
 
-    let u_start = ((col as f32 * sprite_width_px) + inset) / texture_size;
-    let u_end = (((col as f32 + 1.0) * sprite_width_px) - inset) / texture_size;
+    let u_start = (x_px + inset) / texture_size;
+    let u_end = (x_px + sprite_w_px - inset) / texture_size;
 
-    let v_start = ((row as f32 * sprite_height_px) + inset) / texture_size;
-    let v_end = (((row as f32 + 1.0) * sprite_height_px) - inset) / texture_size;
+    let v_start = (y_px + inset) / texture_size;
+    let v_end = (y_px + sprite_h_px - inset) / texture_size;
 
     let positions = vec![
         [-half_width, 0.0, 0.0],
@@ -646,7 +654,7 @@ fn setup_hex_map(
     // Sprite indices: 0=top-left (pink), 1=top-right (beige), 2=middle-left (green), etc.
     let units = vec![
         (-3, 1, 0),   // Pink alien on left
-        (3, -1, 1),   // Beige alien on right (offset to same visual row)
+        (3, 1, 1),   // Beige alien on right (offset to same visual row)
     ];
 
     // Create selection ring mesh (reuse for all units)
@@ -715,7 +723,7 @@ fn setup_hex_map(
         ..default()
     });
 
-    // Spawn a couple of detail sprites from first column (column 0), first row (row 0)
+    // Spawn detail sprites using the specific sprite at x=32px, 30px wide, 32px tall
     let detail_positions = vec![
         (0, 2),   // Center-ish, offset up
         (-2, 0),  // Left side
@@ -723,12 +731,19 @@ fn setup_hex_map(
 
     for (q, r) in detail_positions {
         let world_pos = axial_to_world_pos(q, r);
-        let sprite_pos = world_pos + Vec3::new(0.0, 5.0, 0.0);
+        let sprite_pos = world_pos + Vec3::new(0.0, 0.0, 0.0);
 
-        // Use the actual pixel dimensions from the spritesheet
-        let sprite_width = 128.0 / 3.0;  // ~42.67
-        let sprite_height = 128.0 / 9.0; // ~14.22
-        let detail_mesh = meshes.add(create_details_sprite_quad(sprite_width, sprite_height, 0, 0));
+        // Use the sprite at x=32px that is 30px wide and 32px tall
+        let sprite_width_render = 30.0 * 2.0;  // Scale up 2x for visibility
+        let sprite_height_render = 32.0 * 2.0;
+        let detail_mesh = meshes.add(create_details_sprite_quad_from_pixels(
+            sprite_width_render,
+            sprite_height_render,
+            32.0,  // x offset in pixels
+            0.0,   // y offset (assuming first row)
+            30.0,  // sprite width in pixels
+            32.0   // sprite height in pixels
+        ));
 
         let rotation = Quat::from_rotation_y(std::f32::consts::PI / 4.0);
 
@@ -892,6 +907,7 @@ fn handle_unit_selection(
     config: Res<HexMapConfig>,
     obstacles: Res<Obstacles>,
     occupancy: Res<Occupancy>,
+    occupancy_intent: Res<OccupancyIntent>,
     unit_query: Query<(Entity, &Unit, Option<&UnitMovement>), Without<Selected>>,
     selected_query: Query<(Entity, &Unit, Option<&UnitMovement>, &Transform), With<Selected>>,
     path_viz_query: Query<(Entity, &PathVisualization)>,
@@ -930,12 +946,18 @@ fn handle_unit_selection(
                             return;
                         }
 
-                        // Create combined blocking set: obstacles + occupied cells (excluding the moving unit)
+                        // Create combined blocking set: obstacles + occupied cells + intent cells (excluding the moving unit)
                         let mut blocking_cells = obstacles.positions.clone();
                         let unit_current_pos = (selected_unit.q, selected_unit.r);
                         for &occupied_pos in &occupancy.positions {
                             if occupied_pos != unit_current_pos && occupied_pos != goal {
                                 blocking_cells.insert(occupied_pos);
+                            }
+                        }
+                        // Include cells that other units intend to occupy
+                        for (entity, &intent_pos) in &occupancy_intent.intentions {
+                            if *entity != selected_entity && intent_pos != unit_current_pos && intent_pos != goal {
+                                blocking_cells.insert(intent_pos);
                             }
                         }
 
@@ -1461,20 +1483,61 @@ fn update_path_visualizations(
     }
 }
 
+fn update_occupancy_intent(
+    unit_query: Query<(Entity, &Unit, &UnitMovement)>,
+    mut occupancy_intent: ResMut<OccupancyIntent>,
+) {
+    occupancy_intent.intentions.clear();
+    for (entity, unit, movement) in &unit_query {
+        // Set intent based on progress toward next waypoint
+        if movement.current_waypoint < movement.path.len() {
+            // Once we're halfway to the next cell, claim it as our intent
+            if movement.progress >= 0.5 {
+                let next_cell = movement.path[movement.current_waypoint];
+                occupancy_intent.intentions.insert(entity, next_cell);
+            } else {
+                // Before halfway, our intent is to stay in current position
+                occupancy_intent.intentions.insert(entity, (unit.q, unit.r));
+            }
+        } else {
+            // No more waypoints, intent is current position
+            occupancy_intent.intentions.insert(entity, (unit.q, unit.r));
+        }
+    }
+}
+
 fn update_occupancy(
-    unit_query: Query<&Unit>,
+    unit_query: Query<(Entity, &Unit, Option<&UnitMovement>)>,
     mut occupancy: ResMut<Occupancy>,
 ) {
     occupancy.positions.clear();
-    for unit in &unit_query {
-        // Only mark the unit's current cell as occupied
-        occupancy.positions.insert((unit.q, unit.r));
+    occupancy.position_to_entity.clear();
+    for (entity, unit, movement_opt) in &unit_query {
+        let current_cell = (unit.q, unit.r);
+
+        // Determine which cell the unit visually occupies based on movement progress
+        let occupied_cell = if let Some(movement) = movement_opt {
+            if movement.current_waypoint < movement.path.len() && movement.progress >= 0.5 {
+                // Past halfway - they visually occupy the next cell
+                movement.path[movement.current_waypoint]
+            } else {
+                // Before halfway - they occupy current cell
+                current_cell
+            }
+        } else {
+            // Not moving - occupy current cell
+            current_cell
+        };
+
+        occupancy.positions.insert(occupied_cell);
+        occupancy.position_to_entity.insert(occupied_cell, entity);
     }
 }
 
 fn detect_collisions_and_repath(
     mut unit_query: Query<(Entity, &mut Unit, &mut UnitMovement)>,
     occupancy: Res<Occupancy>,
+    occupancy_intent: Res<OccupancyIntent>,
     obstacles: Res<Obstacles>,
     config: Res<HexMapConfig>,
     path_viz_query: Query<(Entity, &PathVisualization)>,
@@ -1491,9 +1554,29 @@ fn detect_collisions_and_repath(
             let next_cell = movement.path[movement.current_waypoint];
             let current_cell = (unit.q, unit.r);
 
-            // Check if the next cell is occupied by another unit
-            if occupancy.positions.contains(&next_cell) && next_cell != current_cell {
-                // Collision detected - need to repath
+            // Check if the next cell is currently occupied by a higher-priority unit
+            let should_yield_to_occupied_cell = if let Some(&occupying_entity) = occupancy.position_to_entity.get(&next_cell) {
+                // Cell is occupied - only yield if the occupier has higher priority (lower entity ID)
+                next_cell != current_cell && entity.to_bits() > occupying_entity.to_bits()
+            } else {
+                false
+            };
+
+            // For intent conflicts, only check when we're close enough to care (past 40% progress)
+            // This prevents premature repathing when units are far from the conflict point
+            let should_yield_to_intent = movement.progress >= 0.4 &&
+                occupancy_intent.intentions.iter()
+                    .any(|(other_entity, &intent_pos)| {
+                        if *other_entity != entity && intent_pos == next_cell {
+                            // This unit has lower priority (higher entity ID), so it must yield
+                            entity.to_bits() > other_entity.to_bits()
+                        } else {
+                            false
+                        }
+                    });
+
+            // Only repath if we need to yield to a higher-priority unit (either occupied or intent)
+            if should_yield_to_occupied_cell || should_yield_to_intent {
                 let final_goal = *movement.path.last().unwrap();
                 units_to_repath.push((entity, unit.clone(), final_goal, movement.clone()));
             }
@@ -1505,11 +1588,17 @@ fn detect_collisions_and_repath(
         let current_cell = (unit.q, unit.r);
         let next_cell = old_movement.path[old_movement.current_waypoint];
 
-        // Create blocking set (obstacles + occupied cells, excluding our position and goal)
+        // Create blocking set (obstacles + occupied cells + intent cells, excluding our position and goal)
         let mut blocking = obstacles.positions.clone();
         for &occupied_pos in &occupancy.positions {
             if occupied_pos != current_cell && occupied_pos != final_goal {
                 blocking.insert(occupied_pos);
+            }
+        }
+        // Include cells that other units intend to occupy
+        for (other_entity, &intent_pos) in &occupancy_intent.intentions {
+            if *other_entity != entity && intent_pos != current_cell && intent_pos != final_goal {
+                blocking.insert(intent_pos);
             }
         }
 
@@ -1576,7 +1665,7 @@ fn trigger_collision_test(
         // Move first unit from left to right
         let (entity1, unit1) = units[0];
         let start1 = (unit1.q, unit1.r);
-        let goal1 = (3, -1);  // Move to right side, same visual row
+        let goal1 = (3, 1);  // Move to right side, same visual row
 
         // Create blocking set for first unit
         let mut blocking1 = obstacles.positions.clone();

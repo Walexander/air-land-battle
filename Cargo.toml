@@ -1,0 +1,8 @@
+[package]
+name = "bevy-newb"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = "0.18.0"
+bevy-inspector-egui = "0.30.0"
