@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::gltf::GltfAssetLabel;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::cmp::Ordering;
 
@@ -64,6 +65,19 @@ pub struct DestinationRing {
     pub animation_timer: f32,
 }
 
+#[derive(Component)]
+pub struct AnimationGraphs {
+    idle_graph: Handle<AnimationGraph>,
+    idle_index: AnimationNodeIndex,
+    moving_graph: Handle<AnimationGraph>,
+    moving_index: AnimationNodeIndex,
+}
+
+#[derive(Component)]
+pub struct CurrentAnimationState {
+    is_moving: bool,
+}
+
 #[derive(Resource)]
 pub struct HexMapConfig {
     pub map_radius: i32,
@@ -107,7 +121,7 @@ impl Plugin for HexMapPlugin {
             .insert_resource(Occupancy::default())
             .insert_resource(OccupancyIntent::default())
             .add_systems(Startup, (setup_hex_map, trigger_collision_test).chain())
-            .add_systems(Update, (hex_hover_system, update_outline_colors, update_occupancy_intent, move_units, handle_unit_selection, update_selected_visual, animate_selection_rings, update_path_visualizations, animate_destination_rings, update_occupancy, detect_collisions_and_repath, update_occupied_visuals));
+            .add_systems(Update, (play_animation_when_loaded, update_unit_animations, hex_hover_system, update_outline_colors, update_occupancy_intent, move_units, handle_unit_selection, update_selected_visual, animate_selection_rings, update_path_visualizations, animate_destination_rings, update_occupancy, detect_collisions_and_repath, update_occupied_visuals));
     }
 }
 
@@ -523,6 +537,7 @@ fn setup_hex_map(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut animation_graphs: ResMut<Assets<AnimationGraph>>,
     asset_server: Res<AssetServer>,
     config: Res<HexMapConfig>,
     obstacles: Res<Obstacles>,
@@ -637,24 +652,14 @@ fn setup_hex_map(
     }
 
     // Load alien sprites texture
-    let alien_texture: Handle<Image> = asset_server.load("aliens.png");
-
-    // Create a material with transparency enabled
-    let alien_material = materials.add(StandardMaterial {
-        base_color_texture: Some(alien_texture),
-        alpha_mode: AlphaMode::Blend,
-        unlit: true, // No lighting on sprites
-        cull_mode: None, // Double-sided rendering
-        ..default()
-    });
+    // Load 3D model
+    let stickman_scene: Handle<Scene> = asset_server.load("Fox.glb#Scene0");
 
     // Spawn units positioned for collision testing
     // Two units on opposite sides that will move left-to-right toward each other
-    // Using offset row coordinates so they're on the same horizontal visual line
-    // Sprite indices: 0=top-left (pink), 1=top-right (beige), 2=middle-left (green), etc.
     let units = vec![
-        (-3, 1, 0),   // Pink alien on left
-        (3, 1, 1),   // Beige alien on right (offset to same visual row)
+        (-3, 1, 0),   // Unit on left
+        (3, 1, 1),    // Unit on right
     ];
 
     // Create selection ring mesh (reuse for all units)
@@ -666,36 +671,36 @@ fn setup_hex_map(
         ..default()
     });
 
-    for (q, r, sprite_index) in units {
+    for (q, r, unit_index) in units {
         let world_pos = axial_to_world_pos(q, r);
         // Position unit above the hex tile (5.0 is the hex height)
         let unit_pos = world_pos + Vec3::new(0.0, 5.0, 0.0);
 
-        // Sprite dimensions: match actual sprite size (40x66 pixels)
-        // Maintain 40:66 aspect ratio
-        let unit_mesh = meshes.add(create_sprite_quad(40.0, 66.0, sprite_index));
+        // Create separate animation graphs for idle and moving
+        let (idle_graph, idle_index) = AnimationGraph::from_clip(
+            asset_server.load(GltfAssetLabel::Animation(0).from_asset("Fox.glb"))
+        );
+        let (moving_graph, moving_index) = AnimationGraph::from_clip(
+            asset_server.load(GltfAssetLabel::Animation(2).from_asset("Fox.glb"))
+        );
+        let idle_graph_handle = animation_graphs.add(idle_graph);
+        let moving_graph_handle = animation_graphs.add(moving_graph);
 
-        // Camera is at (400, 400, 400) looking at origin
-        // Rotate sprite 45 degrees to face the camera
-        let rotation = Quat::from_rotation_y(std::f32::consts::PI / 4.0);
-
-        // Determine unit type name based on sprite index
-        let unit_type = match sprite_index {
-            0 => "Pink",
-            1 => "Beige",
-            2 => "Green",
-            3 => "Blue",
-            4 => "Yellow",
-            5 => "Purple",
-            _ => "Unknown",
-        };
-
+        // Spawn the 3D model as a scene (start with idle graph)
         let unit_entity = commands.spawn((
-            Mesh3d(unit_mesh),
-            MeshMaterial3d(alien_material.clone()),
-            Transform::from_translation(unit_pos).with_rotation(rotation),
-            Unit { q, r, _sprite_index: sprite_index },
-            Name::new(format!("Unit {} ({}, {})", unit_type, q, r)),
+            SceneRoot(stickman_scene.clone()),
+            Transform::from_translation(unit_pos)
+                .with_scale(Vec3::splat(0.5)), // Scale for Fox model
+            Unit { q, r, _sprite_index: unit_index },
+            AnimationGraphHandle(idle_graph_handle.clone()),
+            AnimationGraphs {
+                idle_graph: idle_graph_handle,
+                idle_index,
+                moving_graph: moving_graph_handle,
+                moving_index,
+            },
+            CurrentAnimationState { is_moving: false },
+            Name::new(format!("Unit {} ({}, {})", unit_index, q, r)),
         )).id();
 
         // Spawn selection ring at unit's feet (initially hidden)
@@ -868,6 +873,20 @@ fn move_units(
         let start_pos = axial_to_world_pos(current_hex.0, current_hex.1);
         let target_pos = axial_to_world_pos(target_hex.0, target_hex.1);
         let distance = start_pos.distance(target_pos);
+
+        // Calculate target rotation for current movement
+        let target_rotation = if distance > 0.0 {
+            let direction = (target_pos - start_pos).normalize();
+            let angle = direction.z.atan2(direction.x);
+            Quat::from_rotation_y(-angle + std::f32::consts::PI / 2.0)
+        } else {
+            transform.rotation
+        };
+
+        // Smoothly interpolate rotation
+        // Start rotating early (at 0% progress) and continue throughout the movement
+        let rotation_speed = 8.0; // Higher = faster rotation
+        transform.rotation = transform.rotation.slerp(target_rotation, time.delta_secs() * rotation_speed);
 
         // Update progress
         if distance > 0.0 {
@@ -1763,6 +1782,105 @@ fn update_occupied_visuals(
                 HexOutline { hex_entity },
                 OccupiedOutline,
             ));
+        }
+    }
+}
+
+// System that switches animations based on movement state
+fn update_unit_animations(
+    mut commands: Commands,
+    mut units_query: Query<(Entity, &AnimationGraphs, &mut CurrentAnimationState, &mut AnimationGraphHandle, Option<&UnitMovement>), With<Unit>>,
+    children_query: Query<&Children>,
+    mut players_query: Query<&mut AnimationPlayer>,
+) {
+    for (unit_entity, anim_graphs, mut anim_state, mut graph_handle, movement) in units_query.iter_mut() {
+        let is_moving = movement.is_some();
+
+        // Debug logging
+        if is_moving != anim_state.is_moving {
+            println!("Unit {:?}: movement state changing from {} to {}",
+                unit_entity,
+                anim_state.is_moving,
+                is_moving
+            );
+        }
+
+        // Check if movement state changed
+        if is_moving != anim_state.is_moving {
+            anim_state.is_moving = is_moving;
+
+            // Select the appropriate graph and animation index
+            let (new_graph, new_index) = if is_moving {
+                (anim_graphs.moving_graph.clone(), anim_graphs.moving_index)
+            } else {
+                (anim_graphs.idle_graph.clone(), anim_graphs.idle_index)
+            };
+
+            // Update the graph handle on the unit entity
+            *graph_handle = AnimationGraphHandle(new_graph.clone());
+
+            // Find the AnimationPlayer in descendants and update it
+            let mut found_player = false;
+            for descendant in children_query.iter_descendants(unit_entity) {
+                if let Ok(mut player) = players_query.get_mut(descendant) {
+                    // Update the graph handle on the player entity
+                    commands.entity(descendant).insert(AnimationGraphHandle(new_graph.clone()));
+
+                    // Stop all and play the new animation
+                    player.stop_all();
+                    player.play(new_index).repeat();
+                    println!("Switched to {} animation (index {:?}) for unit {:?} on entity {:?}",
+                        if is_moving { "moving" } else { "idle" },
+                        new_index,
+                        unit_entity,
+                        descendant
+                    );
+                    found_player = true;
+                    break;
+                }
+            }
+
+            if !found_player {
+                println!("Warning: Could not find AnimationPlayer for unit {:?}", unit_entity);
+            }
+        }
+    }
+}
+
+// System that plays animations when AnimationPlayers are added by scene loading
+fn play_animation_when_loaded(
+    mut commands: Commands,
+    units_query: Query<(Entity, &AnimationGraphs, &AnimationGraphHandle), With<Unit>>,
+    children_query: Query<&Children>,
+    mut players_query: Query<(Entity, &mut AnimationPlayer), Added<AnimationPlayer>>,
+) {
+    // Find any newly added AnimationPlayers
+    for (player_entity, mut player) in players_query.iter_mut() {
+        println!("Found newly added AnimationPlayer on entity {:?}", player_entity);
+
+        // Find which unit this player belongs to
+        for (unit_entity, anim_graphs, graph_handle) in &units_query {
+            // Check if player_entity is a descendant of unit_entity
+            let mut is_descendant = false;
+            for descendant in children_query.iter_descendants(unit_entity) {
+                if descendant == player_entity {
+                    is_descendant = true;
+                    break;
+                }
+            }
+
+            if is_descendant {
+                println!("AnimationPlayer belongs to unit {:?}", unit_entity);
+
+                // Add the graph handle to the entity with the player
+                commands.entity(player_entity).insert(graph_handle.clone());
+
+                // Start playing the idle animation by default
+                player.play(anim_graphs.idle_index).repeat();
+                println!("Started idle animation {:?} on entity {:?}", anim_graphs.idle_index, player_entity);
+
+                break;
+            }
         }
     }
 }
