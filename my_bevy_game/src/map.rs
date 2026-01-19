@@ -13,6 +13,9 @@ const OUTLINE_WIDTH: f32 = 8.0;
 
 // Components
 #[derive(Component)]
+pub struct HexMap;
+
+#[derive(Component)]
 pub struct HexTile {
     pub q: i32,
     pub r: i32,
@@ -295,105 +298,113 @@ fn setup_hex_map(
     // Load obstacle sprite texture
     let obstacle_texture = asset_server.load("details.png");
 
-    for q in -config.map_radius..=config.map_radius {
-        let r1 = (-config.map_radius).max(-q - config.map_radius);
-        let r2 = config.map_radius.min(-q + config.map_radius);
+    // Create parent HexMap entity
+    commands.spawn((
+        HexMap,
+        Transform::default(),
+        Visibility::default(),
+        Name::new("HexMap"),
+    )).with_children(|parent| {
+        for q in -config.map_radius..=config.map_radius {
+            let r1 = (-config.map_radius).max(-q - config.map_radius);
+            let r2 = config.map_radius.min(-q + config.map_radius);
 
-        for r in r1..=r2 {
-            let height = prism_height;
-            let world_pos = axial_to_world_pos(q, r);
+            for r in r1..=r2 {
+                let height = prism_height;
+                let world_pos = axial_to_world_pos(q, r);
 
-            let is_obstacle = obstacles.positions.contains(&(q, r));
+                let is_obstacle = obstacles.positions.contains(&(q, r));
 
-            // Check if this position is part of any launch platform and get its index
-            let pad_index = launch_pads.pads.iter().position(|platform| {
-                platform.contains(&(q, r))
-            });
-            let is_launch_pad = pad_index.is_some();
+                // Check if this position is part of any launch platform and get its index
+                let pad_index = launch_pads.pads.iter().position(|platform| {
+                    platform.contains(&(q, r))
+                });
+                let is_launch_pad = pad_index.is_some();
 
-            let color = Color::srgb(0.0, 0.0, 0.0);
+                let color = Color::srgb(0.0, 0.0, 0.0);
 
-            let hex_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
-            let mut hex_entity_commands = commands.spawn((
-                Mesh3d(hex_mesh.clone()),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: color,
-                    unlit: false,
-                    ..default()
-                })),
-                Transform::from_translation(world_pos).with_rotation(hex_rotation),
-                HexTile { q, r, _height: height },
-                Name::new(format!("Hex ({}, {})", q, r)),
-            ));
-
-            // Add LaunchPadTile component if this is a launch pad
-            if let Some(idx) = pad_index {
-                hex_entity_commands.insert(LaunchPadTile { pad_index: idx });
-            }
-
-            let hex_entity = hex_entity_commands.id();
-
-            // Spawn hex outline (skip for obstacles since they use sprites)
-            let base_outline_height = prism_height + 0.5;
-            let outline_pos = if is_launch_pad {
-                world_pos + Vec3::new(0.0, base_outline_height + 0.2, 0.0)
-            } else {
-                world_pos + Vec3::new(0.0, base_outline_height, 0.0)
-            };
-
-            let outline_color = Color::srgb(0.5, 0.5, 0.5);
-            let outline_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
-
-            if is_obstacle {
-                // Spawn billboard mesh with texture for obstacles
-                let sprite_height = prism_height + 10.0;
-                let sprite_pos = world_pos + Vec3::new(0.0, sprite_height, 0.0);
-
-                commands.spawn((
-                    Mesh3d(billboard_mesh.clone()),
+                let hex_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
+                let mut hex_entity_commands = parent.spawn((
+                    Mesh3d(hex_mesh.clone()),
                     MeshMaterial3d(materials.add(StandardMaterial {
-                        base_color_texture: Some(obstacle_texture.clone()),
-                        alpha_mode: AlphaMode::Blend,
-                        unlit: true,
+                        base_color: color,
+                        unlit: false,
                         ..default()
                     })),
-                    Transform::from_translation(sprite_pos),
-                    ObstacleSprite,
+                    Transform::from_translation(world_pos).with_rotation(hex_rotation),
+                    HexTile { q, r, _height: height },
+                    Name::new(format!("Hex ({}, {})", q, r)),
                 ));
-            } else if is_launch_pad {
-                commands.spawn((
-                    Mesh3d(outline_mesh.clone()),
-                    MeshMaterial3d(materials.add(StandardMaterial {
-                        base_color: Color::srgb(0.2, 0.6, 1.0),
-                        emissive: Color::srgb(0.2, 0.6, 1.0).into(),
-                        unlit: true,
-                        ..default()
-                    })),
-                    Transform::from_translation(outline_pos).with_rotation(outline_rotation),
-                    HexOutline { hex_entity },
-                    LaunchPadOutline,
-                ));
-            } else {
-                commands.spawn((
-                    Mesh3d(outline_mesh.clone()),
-                    MeshMaterial3d(materials.add(StandardMaterial {
-                        base_color: outline_color,
-                        unlit: true,
-                        ..default()
-                    })),
-                    Transform::from_translation(outline_pos).with_rotation(outline_rotation),
-                    HexOutline { hex_entity },
-                ));
-            }
 
-            if is_obstacle {
-                println!("Creating RED OBSTACLE at ({}, {})", q, r);
-            }
-            if is_launch_pad {
-                println!("Creating BLUE LAUNCH PAD at ({}, {})", q, r);
+                // Add LaunchPadTile component if this is a launch pad
+                if let Some(idx) = pad_index {
+                    hex_entity_commands.insert(LaunchPadTile { pad_index: idx });
+                }
+
+                let hex_entity = hex_entity_commands.id();
+
+                // Spawn hex outline (skip for obstacles since they use sprites)
+                let base_outline_height = prism_height + 0.5;
+                let outline_pos = if is_launch_pad {
+                    world_pos + Vec3::new(0.0, base_outline_height + 0.2, 0.0)
+                } else {
+                    world_pos + Vec3::new(0.0, base_outline_height, 0.0)
+                };
+
+                let outline_color = Color::srgb(0.5, 0.5, 0.5);
+                let outline_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
+
+                if is_obstacle {
+                    // Spawn billboard mesh with texture for obstacles
+                    let sprite_height = prism_height + 10.0;
+                    let sprite_pos = world_pos + Vec3::new(0.0, sprite_height, 0.0);
+
+                    parent.spawn((
+                        Mesh3d(billboard_mesh.clone()),
+                        MeshMaterial3d(materials.add(StandardMaterial {
+                            base_color_texture: Some(obstacle_texture.clone()),
+                            alpha_mode: AlphaMode::Blend,
+                            unlit: true,
+                            ..default()
+                        })),
+                        Transform::from_translation(sprite_pos),
+                        ObstacleSprite,
+                    ));
+                } else if is_launch_pad {
+                    parent.spawn((
+                        Mesh3d(outline_mesh.clone()),
+                        MeshMaterial3d(materials.add(StandardMaterial {
+                            base_color: Color::srgb(0.2, 0.6, 1.0),
+                            emissive: Color::srgb(0.2, 0.6, 1.0).into(),
+                            unlit: true,
+                            ..default()
+                        })),
+                        Transform::from_translation(outline_pos).with_rotation(outline_rotation),
+                        HexOutline { hex_entity },
+                        LaunchPadOutline,
+                    ));
+                } else {
+                    parent.spawn((
+                        Mesh3d(outline_mesh.clone()),
+                        MeshMaterial3d(materials.add(StandardMaterial {
+                            base_color: outline_color,
+                            unlit: true,
+                            ..default()
+                        })),
+                        Transform::from_translation(outline_pos).with_rotation(outline_rotation),
+                        HexOutline { hex_entity },
+                    ));
+                }
+
+                if is_obstacle {
+                    println!("Creating RED OBSTACLE at ({}, {})", q, r);
+                }
+                if is_launch_pad {
+                    println!("Creating BLUE LAUNCH PAD at ({}, {})", q, r);
+                }
             }
         }
-    }
+    });
 }
 
 fn hex_hover_system(

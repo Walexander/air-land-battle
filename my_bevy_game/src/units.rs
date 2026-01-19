@@ -7,6 +7,12 @@ use crate::map::{axial_to_world_pos, HexMapConfig, Obstacles};
 use crate::selection::{SelectionRing, create_selection_ring_mesh};
 
 // Components
+#[derive(Component)]
+pub struct RedArmy;
+
+#[derive(Component)]
+pub struct BlueArmy;
+
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub enum Army {
     Red,
@@ -465,54 +471,119 @@ fn setup_units(
         ..default()
     });
 
-    for (q, r, unit_index, army) in units {
-        let world_pos = axial_to_world_pos(q, r);
-        let unit_pos = world_pos + Vec3::new(0.0, 5.0, 0.0);
+    // Create Red Army parent
+    commands.spawn((
+        RedArmy,
+        Transform::default(),
+        Visibility::default(),
+        Name::new("Red Army"),
+    )).with_children(|parent| {
+        for (q, r, unit_index, army) in units.iter().filter(|(_, _, _, a)| *a == Army::Red) {
+            let world_pos = axial_to_world_pos(*q, *r);
+            let unit_pos = world_pos + Vec3::new(0.0, 5.0, 0.0);
 
-        let (idle_graph, idle_index) = AnimationGraph::from_clip(
-            asset_server.load(GltfAssetLabel::Animation(0).from_asset("Fox.glb")),
-        );
-        let (moving_graph, moving_index) = AnimationGraph::from_clip(
-            asset_server.load(GltfAssetLabel::Animation(2).from_asset("Fox.glb")),
-        );
-        let idle_graph_handle = animation_graphs.add(idle_graph);
-        let moving_graph_handle = animation_graphs.add(moving_graph);
+            let (idle_graph, idle_index) = AnimationGraph::from_clip(
+                asset_server.load(GltfAssetLabel::Animation(0).from_asset("Fox.glb")),
+            );
+            let (moving_graph, moving_index) = AnimationGraph::from_clip(
+                asset_server.load(GltfAssetLabel::Animation(2).from_asset("Fox.glb")),
+            );
+            let idle_graph_handle = animation_graphs.add(idle_graph);
+            let moving_graph_handle = animation_graphs.add(moving_graph);
 
-        let unit_entity = commands
-            .spawn((
-                SceneRoot(stickman_scene.clone()),
-                Transform::from_translation(unit_pos).with_scale(Vec3::splat(0.5)),
-                Unit {
-                    q,
-                    r,
-                    _sprite_index: unit_index,
-                    army,
+            let unit_entity = parent
+                .spawn((
+                    SceneRoot(stickman_scene.clone()),
+                    Transform::from_translation(unit_pos).with_scale(Vec3::splat(0.5)),
+                    Unit {
+                        q: *q,
+                        r: *r,
+                        _sprite_index: *unit_index,
+                        army: *army,
+                    },
+                    AnimationGraphHandle(idle_graph_handle.clone()),
+                    AnimationGraphs {
+                        idle_graph: idle_graph_handle,
+                        idle_index,
+                        moving_graph: moving_graph_handle,
+                        moving_index,
+                    },
+                    CurrentAnimationState { is_moving: false },
+                    Name::new(format!("Unit {} ({}, {})", unit_index, q, r)),
+                ))
+                .id();
+
+            let ring_pos = world_pos + Vec3::new(0.0, 6.0, 0.0);
+            let ring_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
+            parent.spawn((
+                Mesh3d(ring_mesh.clone()),
+                MeshMaterial3d(ring_material.clone()),
+                Transform::from_translation(ring_pos).with_rotation(ring_rotation),
+                SelectionRing {
+                    unit_entity,
+                    animation_timer: 0.0,
                 },
-                AnimationGraphHandle(idle_graph_handle.clone()),
-                AnimationGraphs {
-                    idle_graph: idle_graph_handle,
-                    idle_index,
-                    moving_graph: moving_graph_handle,
-                    moving_index,
-                },
-                CurrentAnimationState { is_moving: false },
-                Name::new(format!("Unit {} ({}, {})", unit_index, q, r)),
-            ))
-            .id();
+                Visibility::Hidden,
+            ));
+        }
+    });
 
-        let ring_pos = world_pos + Vec3::new(0.0, 6.0, 0.0);
-        let ring_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
-        commands.spawn((
-            Mesh3d(ring_mesh.clone()),
-            MeshMaterial3d(ring_material.clone()),
-            Transform::from_translation(ring_pos).with_rotation(ring_rotation),
-            SelectionRing {
-                unit_entity,
-                animation_timer: 0.0,
-            },
-            Visibility::Hidden,
-        ));
-    }
+    // Create Blue Army parent
+    commands.spawn((
+        BlueArmy,
+        Transform::default(),
+        Visibility::default(),
+        Name::new("Blue Army"),
+    )).with_children(|parent| {
+        for (q, r, unit_index, army) in units.iter().filter(|(_, _, _, a)| *a == Army::Blue) {
+            let world_pos = axial_to_world_pos(*q, *r);
+            let unit_pos = world_pos + Vec3::new(0.0, 5.0, 0.0);
+
+            let (idle_graph, idle_index) = AnimationGraph::from_clip(
+                asset_server.load(GltfAssetLabel::Animation(0).from_asset("Fox.glb")),
+            );
+            let (moving_graph, moving_index) = AnimationGraph::from_clip(
+                asset_server.load(GltfAssetLabel::Animation(2).from_asset("Fox.glb")),
+            );
+            let idle_graph_handle = animation_graphs.add(idle_graph);
+            let moving_graph_handle = animation_graphs.add(moving_graph);
+
+            let unit_entity = parent
+                .spawn((
+                    SceneRoot(stickman_scene.clone()),
+                    Transform::from_translation(unit_pos).with_scale(Vec3::splat(0.5)),
+                    Unit {
+                        q: *q,
+                        r: *r,
+                        _sprite_index: *unit_index,
+                        army: *army,
+                    },
+                    AnimationGraphHandle(idle_graph_handle.clone()),
+                    AnimationGraphs {
+                        idle_graph: idle_graph_handle,
+                        idle_index,
+                        moving_graph: moving_graph_handle,
+                        moving_index,
+                    },
+                    CurrentAnimationState { is_moving: false },
+                    Name::new(format!("Unit {} ({}, {})", unit_index, q, r)),
+                ))
+                .id();
+
+            let ring_pos = world_pos + Vec3::new(0.0, 6.0, 0.0);
+            let ring_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
+            parent.spawn((
+                Mesh3d(ring_mesh.clone()),
+                MeshMaterial3d(ring_material.clone()),
+                Transform::from_translation(ring_pos).with_rotation(ring_rotation),
+                SelectionRing {
+                    unit_entity,
+                    animation_timer: 0.0,
+                },
+                Visibility::Hidden,
+            ));
+        }
+    });
 }
 
 pub struct UnitsPlugin;
