@@ -28,11 +28,21 @@ pub struct ObstacleOutline;
 #[derive(Component)]
 pub struct OccupiedOutline;
 
+#[derive(Component)]
+pub struct LaunchPadOutline;
+
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+pub enum Army {
+    Red,
+    Blue,
+}
+
 #[derive(Component, Clone)]
 pub struct Unit {
     pub q: i32,
     pub r: i32,
     pub _sprite_index: usize,
+    pub army: Army,
 }
 
 #[derive(Component, Clone)]
@@ -78,6 +88,12 @@ pub struct CurrentAnimationState {
     is_moving: bool,
 }
 
+#[derive(Component)]
+pub struct TimerBar;
+
+#[derive(Component)]
+pub struct TimerText;
+
 #[derive(Resource)]
 pub struct HexMapConfig {
     pub map_radius: i32,
@@ -106,6 +122,44 @@ pub struct OccupancyIntent {
     pub intentions: HashMap<Entity, (i32, i32)>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum LaunchPadOwner {
+    Neutral,
+    Red,
+    Blue,
+}
+
+#[derive(Resource)]
+pub struct LaunchPads {
+    pub pads: Vec<Vec<(i32, i32)>>, // Each pad is a list of tile coordinates
+}
+
+#[derive(Resource)]
+pub struct GameTimer {
+    pub time_remaining: f32, // Seconds remaining
+    pub is_active: bool,
+    pub winning_army: Option<Army>,
+}
+
+impl Default for GameTimer {
+    fn default() -> Self {
+        Self {
+            time_remaining: 20.0,
+            is_active: false,
+            winning_army: None,
+        }
+    }
+}
+
+#[derive(Resource, Default)]
+pub struct GameState {
+    pub winner: Option<Army>,
+    pub game_over: bool,
+}
+
+#[derive(Component)]
+pub struct GameOverScreen;
+
 pub struct HexMapPlugin;
 
 impl Plugin for HexMapPlugin {
@@ -115,13 +169,24 @@ impl Plugin for HexMapPlugin {
         obstacles.positions.insert((0, 2)); // Detail sprite location
         obstacles.positions.insert((-2, 0)); // Detail sprite location
 
+        // Define launch pads
+        let launch_pads = LaunchPads {
+            pads: vec![
+                vec![(-2, 1), (-1, 1), (-1, 0)], // Launch pad 1
+                // Can add more launch pads here later
+            ],
+        };
+
         app.insert_resource(HexMapConfig { map_radius: 5 })
             .insert_resource(HoveredHex::default())
             .insert_resource(obstacles)
             .insert_resource(Occupancy::default())
             .insert_resource(OccupancyIntent::default())
-            .add_systems(Startup, (setup_hex_map, trigger_collision_test).chain())
-            .add_systems(Update, (play_animation_when_loaded, update_unit_animations, hex_hover_system, update_outline_colors, update_occupancy_intent, move_units, handle_unit_selection, update_selected_visual, animate_selection_rings, update_path_visualizations, animate_destination_rings, update_occupancy, detect_collisions_and_repath, update_occupied_visuals));
+            .insert_resource(launch_pads)
+            .insert_resource(GameTimer::default())
+            .insert_resource(GameState::default())
+            .add_systems(Startup, (setup_hex_map, setup_ui, trigger_collision_test).chain())
+            .add_systems(Update, (play_animation_when_loaded, update_unit_animations, hex_hover_system, update_outline_colors, update_occupancy_intent, move_units, handle_unit_selection, update_selected_visual, animate_selection_rings, update_path_visualizations, animate_destination_rings, update_occupancy, detect_collisions_and_repath, update_occupied_visuals, check_launch_pad_ownership, update_timer_ui, show_game_over_screen, handle_restart));
     }
 }
 
@@ -141,6 +206,7 @@ fn create_hexagon_prism_mesh(height: f32) -> Mesh {
     uvs.push([0.5, 0.5]);
 
     // Top perimeter vertices (indices 1-6)
+    // Flat-top orientation (will be rotated by Transform for screen alignment)
     for i in 0..6 {
         let angle = std::f32::consts::PI / 3.0 * i as f32;
         let x = HEX_RADIUS * angle.cos();
@@ -162,6 +228,7 @@ fn create_hexagon_prism_mesh(height: f32) -> Mesh {
     let bottom_start_idx = 7u32; // First bottom perimeter vertex
 
     // Bottom perimeter vertices (indices 7-12)
+    // Flat-top orientation (will be rotated by Transform for screen alignment)
     for i in 0..6 {
         let angle = std::f32::consts::PI / 3.0 * i as f32;
         let x = HEX_RADIUS * angle.cos();
@@ -273,6 +340,7 @@ fn create_hexagon_outline_mesh() -> Mesh {
     let inner_radius = HEX_RADIUS - (OUTLINE_WIDTH / 2.0);
 
     // Create 6 pairs of vertices (outer and inner) around the hexagon
+    // Flat-top orientation (will be rotated by Transform for screen alignment)
     for i in 0..6 {
         let angle = std::f32::consts::PI / 3.0 * i as f32;
         let cos = angle.cos();
@@ -323,8 +391,10 @@ fn create_hexagon_outline_mesh() -> Mesh {
 }
 
 fn axial_to_world_pos(q: i32, r: i32) -> Vec3 {
-    let x = HEX_WIDTH * 0.75 * q as f32;
-    let z = HEX_HEIGHT * (r as f32 + q as f32 * 0.5);
+    // Pointy-top hex coordinates
+    // For pointy-top: horizontal spacing uses sqrt(3)*size, vertical uses 1.5*size
+    let x = HEX_HEIGHT * (q as f32 + r as f32 * 0.5);
+    let z = HEX_WIDTH * 0.75 * r as f32;
     // Y is always 0 since prisms are positioned at their base
     Vec3::new(x, 0.0, z)
 }
@@ -582,6 +652,9 @@ fn setup_hex_map(
             // Check if this tile is an obstacle
             let is_obstacle = obstacles.positions.contains(&(q, r));
 
+            // Check if this tile is a launch pad
+            let is_launch_pad = (q == -2 && r == 1) || (q == -1 && r == 1) || (q == -1 && r == 0);
+
             // Color tiles - black for normal tiles, red for obstacles
             let color = if is_obstacle {
                 Color::srgb(1.0, 0.0, 0.0) // Bright red for obstacles
@@ -590,6 +663,8 @@ fn setup_hex_map(
             };
 
             // Spawn main hex tile
+            // Rotate by 90 degrees to make flat-top hexes pointy-top
+            let hex_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
             let hex_entity = commands.spawn((
                 Mesh3d(hex_mesh),
                 MeshMaterial3d(materials.add(StandardMaterial {
@@ -597,15 +672,17 @@ fn setup_hex_map(
                     unlit: is_obstacle, // Make obstacles unlit so red is bright
                     ..default()
                 })),
-                Transform::from_translation(world_pos),
+                Transform::from_translation(world_pos).with_rotation(hex_rotation),
                 HexTile { q, r, _height: height },
                 Name::new(format!("Hex ({}, {})", q, r)),
             )).id();
 
             // Spawn hex outline ring for hover effect
-            // Layer outlines: normal at +0.5, obstacles at +0.6 (to render on top)
+            // Layer outlines: normal at +0.5, obstacles at +0.6, launch pads at +0.7 (highest)
             let base_outline_height = prism_height + 0.5;
-            let outline_pos = if is_obstacle {
+            let outline_pos = if is_launch_pad {
+                world_pos + Vec3::new(0.0, base_outline_height + 0.2, 0.0) // Highest for launch pads
+            } else if is_obstacle {
                 world_pos + Vec3::new(0.0, base_outline_height + 0.1, 0.0) // Slightly higher for obstacles
             } else {
                 world_pos + Vec3::new(0.0, base_outline_height, 0.0)
@@ -617,6 +694,9 @@ fn setup_hex_map(
                 Color::srgb(0.5, 0.5, 0.5) // Light gray normally
             };
 
+            // Rotate outlines to match hex rotation
+            let outline_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
+
             if is_obstacle {
                 // Obstacle outline - mark it so it doesn't get overwritten
                 commands.spawn((
@@ -626,9 +706,23 @@ fn setup_hex_map(
                         unlit: true,
                         ..default()
                     })),
-                    Transform::from_translation(outline_pos),
+                    Transform::from_translation(outline_pos).with_rotation(outline_rotation),
                     HexOutline { hex_entity },
                     ObstacleOutline, // Mark as obstacle outline
+                ));
+            } else if is_launch_pad {
+                // Launch pad outline - bright blue, renders on top
+                commands.spawn((
+                    Mesh3d(outline_mesh.clone()),
+                    MeshMaterial3d(materials.add(StandardMaterial {
+                        base_color: Color::srgb(0.2, 0.6, 1.0), // Bright blue
+                        emissive: Color::srgb(0.2, 0.6, 1.0).into(), // Glowing blue
+                        unlit: true,
+                        ..default()
+                    })),
+                    Transform::from_translation(outline_pos).with_rotation(outline_rotation),
+                    HexOutline { hex_entity },
+                    LaunchPadOutline, // Mark as launch pad outline
                 ));
             } else {
                 // Normal outline
@@ -639,7 +733,7 @@ fn setup_hex_map(
                         unlit: true,
                         ..default()
                     })),
-                    Transform::from_translation(outline_pos),
+                    Transform::from_translation(outline_pos).with_rotation(outline_rotation),
                     HexOutline { hex_entity },
                 ));
             }
@@ -647,6 +741,9 @@ fn setup_hex_map(
             // Print debug info
             if is_obstacle {
                 println!("Creating RED OBSTACLE at ({}, {})", q, r);
+            }
+            if is_launch_pad {
+                println!("Creating BLUE LAUNCH PAD at ({}, {})", q, r);
             }
         }
     }
@@ -657,9 +754,10 @@ fn setup_hex_map(
 
     // Spawn units positioned for collision testing
     // Two units on opposite sides that will move left-to-right toward each other
+    // Format: (q, r, unit_index, army)
     let units = vec![
-        (-3, 1, 0),   // Unit on left
-        (3, 1, 1),    // Unit on right
+        (-3, 1, 0, Army::Red),   // Red unit on left
+        (3, 1, 1, Army::Blue),    // Blue unit on right
     ];
 
     // Create selection ring mesh (reuse for all units)
@@ -671,7 +769,7 @@ fn setup_hex_map(
         ..default()
     });
 
-    for (q, r, unit_index) in units {
+    for (q, r, unit_index, army) in units {
         let world_pos = axial_to_world_pos(q, r);
         // Position unit above the hex tile (5.0 is the hex height)
         let unit_pos = world_pos + Vec3::new(0.0, 5.0, 0.0);
@@ -691,7 +789,7 @@ fn setup_hex_map(
             SceneRoot(stickman_scene.clone()),
             Transform::from_translation(unit_pos)
                 .with_scale(Vec3::splat(0.5)), // Scale for Fox model
-            Unit { q, r, _sprite_index: unit_index },
+            Unit { q, r, _sprite_index: unit_index, army },
             AnimationGraphHandle(idle_graph_handle.clone()),
             AnimationGraphs {
                 idle_graph: idle_graph_handle,
@@ -705,11 +803,13 @@ fn setup_hex_map(
 
         // Spawn selection ring at unit's feet (initially hidden)
         // Position slightly above hex outlines (which are at 5.5)
+        // Rotate to match hex orientation
         let ring_pos = world_pos + Vec3::new(0.0, 6.0, 0.0);
+        let ring_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
         commands.spawn((
             Mesh3d(ring_mesh.clone()),
             MeshMaterial3d(ring_material.clone()),
-            Transform::from_translation(ring_pos),
+            Transform::from_translation(ring_pos).with_rotation(ring_rotation),
             SelectionRing {
                 unit_entity,
                 animation_timer: 0.0,
@@ -832,7 +932,7 @@ fn hex_hover_system(
 
 fn update_outline_colors(
     hovered_hex: Res<HoveredHex>,
-    mut outline_query: Query<(&HexOutline, &MeshMaterial3d<StandardMaterial>, &mut Transform), Without<ObstacleOutline>>,
+    mut outline_query: Query<(&HexOutline, &MeshMaterial3d<StandardMaterial>, &mut Transform), (Without<ObstacleOutline>, Without<LaunchPadOutline>)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     for (outline, material_handle, mut transform) in &mut outline_query {
@@ -1030,6 +1130,7 @@ fn handle_unit_selection(
                                             q: next_cell.0,
                                             r: next_cell.1,
                                             _sprite_index: selected_unit._sprite_index,
+                                            army: selected_unit.army,
                                         },
                                         UnitMovement {
                                             path: new_path,
@@ -1076,6 +1177,7 @@ fn handle_unit_selection(
                                 };
 
                                 if !path_to_follow.is_empty() {
+                                    println!("User-commanded unit moving from ({}, {}) to destination ({}, {})", start.0, start.1, goal.0, goal.1);
                                     commands.entity(selected_entity).insert(UnitMovement {
                                         path: path_to_follow,
                                         current_waypoint: 0,
@@ -1114,10 +1216,12 @@ fn spawn_destination_ring(
         ..default()
     });
 
+    // Rotate destination ring to match hex orientation
+    let ring_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
     commands.spawn((
         Mesh3d(ring_mesh),
         MeshMaterial3d(ring_material),
-        Transform::from_translation(ring_pos),
+        Transform::from_translation(ring_pos).with_rotation(ring_rotation),
         DestinationRing {
             unit_entity,
             animation_timer: 0.0,
@@ -1702,6 +1806,7 @@ fn trigger_collision_test(
             };
 
             if !path_to_follow.is_empty() {
+                println!("Unit 1 moving from ({}, {}) to destination ({}, {})", start1.0, start1.1, goal1.0, goal1.1);
                 commands.entity(entity1).insert(UnitMovement {
                     path: path_to_follow,
                     current_waypoint: 0,
@@ -1733,6 +1838,7 @@ fn trigger_collision_test(
             };
 
             if !path_to_follow.is_empty() {
+                println!("Unit 2 moving from ({}, {}) to destination ({}, {})", start2.0, start2.1, goal2.0, goal2.1);
                 commands.entity(entity2).insert(UnitMovement {
                     path: path_to_follow,
                     current_waypoint: 0,
@@ -1775,10 +1881,12 @@ fn update_occupied_visuals(
                 ..default()
             });
 
+            // Rotate occupied outline to match hex orientation
+            let outline_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
             commands.spawn((
                 Mesh3d(outline_mesh),
                 MeshMaterial3d(outline_material),
-                Transform::from_translation(outline_pos),
+                Transform::from_translation(outline_pos).with_rotation(outline_rotation),
                 HexOutline { hex_entity },
                 OccupiedOutline,
             ));
@@ -1882,5 +1990,331 @@ fn play_animation_when_loaded(
                 break;
             }
         }
+    }
+}
+
+fn setup_ui(mut commands: Commands) {
+    // Create UI root node at the bottom of the screen
+    commands.spawn((
+        Node {
+            width: Val::Percent(100.0),
+            height: Val::Px(60.0),
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(0.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+    )).with_children(|parent| {
+        // Timer bar background
+        parent.spawn((
+            Node {
+                width: Val::Px(400.0),
+                height: Val::Px(30.0),
+                border: UiRect::all(Val::Px(2.0)),
+                ..default()
+            },
+            BorderColor::all(Color::srgb(0.3, 0.3, 0.3)),
+            BackgroundColor(Color::srgb(0.1, 0.1, 0.1)),
+        )).with_children(|parent| {
+            // Timer bar fill (progress)
+            parent.spawn((
+                Node {
+                    width: Val::Percent(0.0),  // Start at 0%
+                    height: Val::Percent(100.0),
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.2, 0.8, 0.2)),
+                TimerBar,
+            ));
+        });
+        
+        // Timer text
+        parent.spawn((
+            Text::new(""),
+            TextFont {
+                font_size: 20.0,
+                ..default()
+            },
+            TextColor(Color::WHITE),
+            Node {
+                position_type: PositionType::Absolute,
+                ..default()
+            },
+            TimerText,
+        ));
+    });
+}
+
+fn check_launch_pad_ownership(
+    unit_query: Query<&Unit>,
+    launch_pads: Res<LaunchPads>,
+    mut game_timer: ResMut<GameTimer>,
+    mut game_state: ResMut<GameState>,
+    time: Res<Time>,
+) {
+    // Don't process if game is over
+    if game_state.game_over {
+        return;
+    }
+    // Determine ownership of each launch pad
+    let mut pad_owners: Vec<LaunchPadOwner> = Vec::new();
+    
+    for pad in &launch_pads.pads {
+        let mut has_red = false;
+        let mut has_blue = false;
+        
+        // Check which armies have units on this pad
+        for unit in unit_query.iter() {
+            let unit_pos = (unit.q, unit.r);
+            if pad.contains(&unit_pos) {
+                match unit.army {
+                    Army::Red => has_red = true,
+                    Army::Blue => has_blue = true,
+                }
+            }
+        }
+        
+        // Determine ownership
+        let owner = if has_red && has_blue {
+            LaunchPadOwner::Neutral  // Both armies present
+        } else if has_red {
+            LaunchPadOwner::Red
+        } else if has_blue {
+            LaunchPadOwner::Blue
+        } else {
+            LaunchPadOwner::Neutral  // No units
+        };
+        
+        pad_owners.push(owner);
+    }
+    
+    // Count how many pads each army owns
+    let red_count = pad_owners.iter().filter(|&&o| o == LaunchPadOwner::Red).count();
+    let blue_count = pad_owners.iter().filter(|&&o| o == LaunchPadOwner::Blue).count();
+    let total_pads = pad_owners.len();
+    let majority = (total_pads / 2) + 1;
+    
+    // Check if one army has the majority
+    if red_count >= majority {
+        if !game_timer.is_active {
+            // Red just gained majority from no majority, start timer
+            game_timer.is_active = true;
+            game_timer.winning_army = Some(Army::Red);
+            println!("Red army has majority! Timer started at {:.1}s.", game_timer.time_remaining);
+        } else if game_timer.winning_army != Some(Army::Red) {
+            // Ownership changed from Blue to Red, don't restart timer
+            game_timer.winning_army = Some(Army::Red);
+            println!("Ownership changed to Red army! Timer continues at {:.1}s.", game_timer.time_remaining);
+        }
+
+        // Tick down timer
+        game_timer.time_remaining -= time.delta_secs();
+        if game_timer.time_remaining <= 0.0 {
+            println!("Red army wins!");
+            game_state.game_over = true;
+            game_state.winner = Some(Army::Red);
+            game_timer.is_active = false;
+        }
+    } else if blue_count >= majority {
+        if !game_timer.is_active {
+            // Blue just gained majority from no majority, start timer
+            game_timer.is_active = true;
+            game_timer.winning_army = Some(Army::Blue);
+            println!("Blue army has majority! Timer started at {:.1}s.", game_timer.time_remaining);
+        } else if game_timer.winning_army != Some(Army::Blue) {
+            // Ownership changed from Red to Blue, don't restart timer
+            game_timer.winning_army = Some(Army::Blue);
+            println!("Ownership changed to Blue army! Timer continues at {:.1}s.", game_timer.time_remaining);
+        }
+
+        // Tick down timer
+        game_timer.time_remaining -= time.delta_secs();
+        if game_timer.time_remaining <= 0.0 {
+            println!("Blue army wins!");
+            game_state.game_over = true;
+            game_state.winner = Some(Army::Blue);
+            game_timer.is_active = false;
+        }
+    } else {
+        // No majority, pause timer but keep time remaining
+        if game_timer.is_active {
+            println!("No majority. Timer paused at {:.1}s.", game_timer.time_remaining);
+        }
+        game_timer.is_active = false;
+        game_timer.winning_army = None;
+        // Don't reset time_remaining - it will resume from current value
+    }
+}
+
+fn update_timer_ui(
+    game_timer: Res<GameTimer>,
+    mut bar_query: Query<(&mut Node, &mut BackgroundColor), With<TimerBar>>,
+    mut text_query: Query<&mut Text, With<TimerText>>,
+) {
+    if let Ok((mut node, mut bg_color)) = bar_query.single_mut() {
+        if game_timer.is_active {
+            // Update progress bar width
+            let progress = game_timer.time_remaining / 20.0;
+            node.width = Val::Percent(progress * 100.0);
+            
+            // Change color based on winning army
+            *bg_color = match game_timer.winning_army {
+                Some(Army::Red) => BackgroundColor(Color::srgb(0.9, 0.2, 0.2)),
+                Some(Army::Blue) => BackgroundColor(Color::srgb(0.2, 0.4, 0.9)),
+                None => BackgroundColor(Color::srgb(0.2, 0.8, 0.2)),
+            };
+        } else {
+            // Timer inactive, show empty bar
+            node.width = Val::Percent(0.0);
+        }
+    }
+    
+    if let Ok(mut text) = text_query.single_mut() {
+        if game_timer.is_active {
+            let winning_army_name = match game_timer.winning_army {
+                Some(Army::Red) => "RED",
+                Some(Army::Blue) => "BLUE",
+                None => "",
+            };
+            **text = format!("{} {:.1}s", winning_army_name, game_timer.time_remaining);
+        } else {
+            **text = String::new();
+        }
+    }
+}
+
+fn show_game_over_screen(
+    mut commands: Commands,
+    game_state: Res<GameState>,
+    game_over_query: Query<Entity, With<GameOverScreen>>,
+) {
+    // If game is over and we haven't shown the screen yet
+    if game_state.game_over && game_over_query.is_empty() {
+        let winner_name = match game_state.winner {
+            Some(Army::Red) => "RED ARMY",
+            Some(Army::Blue) => "BLUE ARMY",
+            None => "NOBODY",
+        };
+
+        let winner_color = match game_state.winner {
+            Some(Army::Red) => Color::srgb(0.9, 0.2, 0.2),
+            Some(Army::Blue) => Color::srgb(0.2, 0.4, 0.9),
+            None => Color::srgb(0.5, 0.5, 0.5),
+        };
+
+        // Create full-screen overlay
+        commands.spawn((
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                position_type: PositionType::Absolute,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.8)),
+            GameOverScreen,
+        )).with_children(|parent| {
+            // Victory message container
+            parent.spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    padding: UiRect::all(Val::Px(40.0)),
+                    border: UiRect::all(Val::Px(4.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.15, 0.15, 0.15)),
+                BorderColor::all(winner_color),
+            )).with_children(|parent| {
+                // "VICTORY!" text
+                parent.spawn((
+                    Text::new("VICTORY!"),
+                    TextFont {
+                        font_size: 80.0,
+                        ..default()
+                    },
+                    TextColor(winner_color),
+                    Node {
+                        margin: UiRect::bottom(Val::Px(20.0)),
+                        ..default()
+                    },
+                ));
+
+                // Winner text
+                parent.spawn((
+                    Text::new(format!("{} WINS!", winner_name)),
+                    TextFont {
+                        font_size: 50.0,
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                    Node {
+                        margin: UiRect::bottom(Val::Px(30.0)),
+                        ..default()
+                    },
+                ));
+
+                // Restart instruction
+                parent.spawn((
+                    Text::new("Press SPACE to restart"),
+                    TextFont {
+                        font_size: 24.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.7, 0.7, 0.7)),
+                ));
+            });
+        });
+
+        println!("Game over screen displayed!");
+    }
+}
+
+fn handle_restart(
+    mut commands: Commands,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut game_state: ResMut<GameState>,
+    mut game_timer: ResMut<GameTimer>,
+    game_over_query: Query<Entity, With<GameOverScreen>>,
+    children_query: Query<&Children>,
+) {
+    // Check if space bar is pressed and game is over
+    if game_state.game_over && keyboard.just_pressed(KeyCode::Space) {
+        println!("Restarting game...");
+
+        // Reset game state
+        game_state.game_over = false;
+        game_state.winner = None;
+
+        // Reset timer
+        game_timer.time_remaining = 20.0;
+        game_timer.is_active = false;
+        game_timer.winning_army = None;
+
+        // Remove game over screen - collect all descendants first
+        for entity in game_over_query.iter() {
+            let mut to_despawn = vec![entity];
+
+            // Recursively collect all descendants
+            let mut i = 0;
+            while i < to_despawn.len() {
+                if let Ok(children) = children_query.get(to_despawn[i]) {
+                    for child in children.iter() {
+                        to_despawn.push(child);
+                    }
+                }
+                i += 1;
+            }
+
+            // Despawn in reverse order (children first)
+            for e in to_despawn.into_iter().rev() {
+                commands.entity(e).despawn();
+            }
+        }
+
+        println!("Game restarted!");
     }
 }
