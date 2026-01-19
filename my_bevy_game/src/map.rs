@@ -25,7 +25,7 @@ pub struct HexOutline {
 }
 
 #[derive(Component)]
-pub struct ObstacleOutline;
+pub struct ObstacleSprite;
 
 #[derive(Component)]
 pub struct LaunchPadOutline;
@@ -65,7 +65,7 @@ impl Plugin for MapPlugin {
             .insert_resource(HoveredHex::default())
             .insert_resource(obstacles)
             .add_systems(Startup, setup_hex_map)
-            .add_systems(Update, (hex_hover_system, update_outline_colors, update_launch_pad_colors));
+            .add_systems(Update, (hex_hover_system, update_outline_colors, update_launch_pad_colors, billboard_sprites));
     }
 }
 
@@ -153,6 +153,49 @@ fn create_hexagon_prism_mesh(height: f32) -> Mesh {
         .with_inserted_indices(Indices::U32(indices))
 }
 
+fn create_billboard_mesh(width: f32, height: f32) -> Mesh {
+    let half_width = width / 2.0;
+    let half_height = height / 2.0;
+
+    let positions = vec![
+        [-half_width, half_height, 0.0],   // Top-left
+        [half_width, half_height, 0.0],    // Top-right
+        [half_width, -half_height, 0.0],   // Bottom-right
+        [-half_width, -half_height, 0.0],  // Bottom-left
+    ];
+
+    let normals = vec![
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+    ];
+
+    // UV coordinates for the sprite (x: 32, y: 0, width: 30, height: 32)
+    // Texture is 128x128
+    let texture_width = 128.0;
+    let texture_height = 128.0;
+    let u_min = 33.0 / texture_width;
+    let u_max = (33.0 + 28.0) / texture_width;
+    let v_min = 0.0 / texture_height;
+    let v_max = 32.0 / texture_height;
+
+    let uvs = vec![
+        [u_min, v_min],  // Top-left
+        [u_max, v_min],  // Top-right
+        [u_max, v_max],  // Bottom-right
+        [u_min, v_max],  // Bottom-left
+    ];
+
+    let indices = vec![0, 1, 2, 0, 2, 3];
+
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+        .with_inserted_indices(Indices::U32(indices))
+}
+
 fn create_hexagon_outline_mesh() -> Mesh {
     let mut positions = Vec::new();
     let mut normals = Vec::new();
@@ -216,6 +259,7 @@ fn setup_hex_map(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
     config: Res<HexMapConfig>,
     obstacles: Res<Obstacles>,
     launch_pads: Res<LaunchPads>,
@@ -246,6 +290,10 @@ fn setup_hex_map(
     // Reuse meshes
     let hex_mesh = meshes.add(create_hexagon_prism_mesh(prism_height));
     let outline_mesh = meshes.add(create_hexagon_outline_mesh());
+    let billboard_mesh = meshes.add(create_billboard_mesh(HEX_WIDTH - 32.0, HEX_WIDTH - 32.0));
+
+    // Load obstacle sprite texture
+    let obstacle_texture = asset_server.load("details.png");
 
     for q in -config.map_radius..=config.map_radius {
         let r1 = (-config.map_radius).max(-q - config.map_radius);
@@ -263,18 +311,14 @@ fn setup_hex_map(
             });
             let is_launch_pad = pad_index.is_some();
 
-            let color = if is_obstacle {
-                Color::srgb(1.0, 0.0, 0.0)
-            } else {
-                Color::srgb(0.0, 0.0, 0.0)
-            };
+            let color = Color::srgb(0.0, 0.0, 0.0);
 
             let hex_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
             let mut hex_entity_commands = commands.spawn((
                 Mesh3d(hex_mesh.clone()),
                 MeshMaterial3d(materials.add(StandardMaterial {
                     base_color: color,
-                    unlit: is_obstacle,
+                    unlit: false,
                     ..default()
                 })),
                 Transform::from_translation(world_pos).with_rotation(hex_rotation),
@@ -289,35 +333,32 @@ fn setup_hex_map(
 
             let hex_entity = hex_entity_commands.id();
 
-            // Spawn hex outline
+            // Spawn hex outline (skip for obstacles since they use sprites)
             let base_outline_height = prism_height + 0.5;
             let outline_pos = if is_launch_pad {
                 world_pos + Vec3::new(0.0, base_outline_height + 0.2, 0.0)
-            } else if is_obstacle {
-                world_pos + Vec3::new(0.0, base_outline_height + 0.1, 0.0)
             } else {
                 world_pos + Vec3::new(0.0, base_outline_height, 0.0)
             };
 
-            let outline_color = if is_obstacle {
-                Color::srgb(1.0, 0.0, 0.0)
-            } else {
-                Color::srgb(0.5, 0.5, 0.5)
-            };
-
+            let outline_color = Color::srgb(0.5, 0.5, 0.5);
             let outline_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
 
             if is_obstacle {
+                // Spawn billboard mesh with texture for obstacles
+                let sprite_height = prism_height + 10.0;
+                let sprite_pos = world_pos + Vec3::new(0.0, sprite_height, 0.0);
+
                 commands.spawn((
-                    Mesh3d(outline_mesh.clone()),
+                    Mesh3d(billboard_mesh.clone()),
                     MeshMaterial3d(materials.add(StandardMaterial {
-                        base_color: outline_color,
+                        base_color_texture: Some(obstacle_texture.clone()),
+                        alpha_mode: AlphaMode::Blend,
                         unlit: true,
                         ..default()
                     })),
-                    Transform::from_translation(outline_pos).with_rotation(outline_rotation),
-                    HexOutline { hex_entity },
-                    ObstacleOutline,
+                    Transform::from_translation(sprite_pos),
+                    ObstacleSprite,
                 ));
             } else if is_launch_pad {
                 commands.spawn((
@@ -426,7 +467,7 @@ fn update_outline_colors(
     hovered_hex: Res<HoveredHex>,
     mut outline_query: Query<
         (&HexOutline, &MeshMaterial3d<StandardMaterial>, &mut Transform),
-        (Without<ObstacleOutline>, Without<LaunchPadOutline>),
+        Without<LaunchPadOutline>,
     >,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -476,5 +517,19 @@ fn update_launch_pad_colors(
                 }
             }
         }
+    }
+}
+
+fn billboard_sprites(
+    mut sprite_query: Query<&mut Transform, With<ObstacleSprite>>,
+    camera_query: Query<&Transform, (With<GameCamera>, Without<ObstacleSprite>)>,
+) {
+    let Ok(camera_transform) = camera_query.single() else {
+        return;
+    };
+
+    for mut sprite_transform in &mut sprite_query {
+        // Make sprite face the camera
+        sprite_transform.look_at(camera_transform.translation, Vec3::Y);
     }
 }
