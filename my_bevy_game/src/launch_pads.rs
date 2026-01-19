@@ -39,12 +39,18 @@ pub struct GameState {
     pub game_over: bool,
 }
 
+#[derive(Resource, Default)]
+pub struct LaunchPadOwnership {
+    pub owners: Vec<LaunchPadOwner>,
+}
+
 // Systems
 fn check_launch_pad_ownership(
     unit_query: Query<&Unit>,
     launch_pads: Res<LaunchPads>,
     mut game_timer: ResMut<GameTimer>,
     mut game_state: ResMut<GameState>,
+    mut pad_ownership: ResMut<LaunchPadOwnership>,
     time: Res<Time>,
 ) {
     if game_state.game_over {
@@ -80,6 +86,9 @@ fn check_launch_pad_ownership(
         pad_owners.push(owner);
     }
 
+    // Store ownership state for visualization
+    pad_ownership.owners = pad_owners.clone();
+
     let red_count = pad_owners
         .iter()
         .filter(|&&o| o == LaunchPadOwner::Red)
@@ -88,15 +97,13 @@ fn check_launch_pad_ownership(
         .iter()
         .filter(|&&o| o == LaunchPadOwner::Blue)
         .count();
-    let total_pads = pad_owners.len();
-    let majority = (total_pads / 2) + 1;
 
-    if red_count >= majority {
+    if red_count > 0 && blue_count == 0 {
         if !game_timer.is_active {
             game_timer.is_active = true;
             game_timer.winning_army = Some(Army::Red);
             println!(
-                "Red army has majority! Timer started at {:.1}s.",
+                "Red army controls launch pads! Timer started at {:.1}s.",
                 game_timer.time_remaining
             );
         } else if game_timer.winning_army != Some(Army::Red) {
@@ -114,12 +121,12 @@ fn check_launch_pad_ownership(
             game_state.winner = Some(Army::Red);
             game_timer.is_active = false;
         }
-    } else if blue_count >= majority {
+    } else if blue_count > 0 && red_count == 0 {
         if !game_timer.is_active {
             game_timer.is_active = true;
             game_timer.winning_army = Some(Army::Blue);
             println!(
-                "Blue army has majority! Timer started at {:.1}s.",
+                "Blue army controls launch pads! Timer started at {:.1}s.",
                 game_timer.time_remaining
             );
         } else if game_timer.winning_army != Some(Army::Blue) {
@@ -140,7 +147,7 @@ fn check_launch_pad_ownership(
     } else {
         if game_timer.is_active {
             println!(
-                "No majority. Timer paused at {:.1}s.",
+                "Launch pads contested or unoccupied. Timer paused at {:.1}s.",
                 game_timer.time_remaining
             );
         }
@@ -154,13 +161,19 @@ pub struct LaunchPadsPlugin;
 impl Plugin for LaunchPadsPlugin {
     fn build(&self, app: &mut App) {
         let mut launch_pads = LaunchPads { pads: Vec::new() };
+        // Launch platform 1 (left side)
         launch_pads
             .pads
-            .push(vec![(-2, 1), (-1, 1), (-1, 0)]); // Launch pad 1
+            .push(vec![(-3, 3), (-3, 2), (-2, 2)]);
+        // Launch platform 2 (center)
+        launch_pads
+            .pads
+            .push(vec![(0, 2), (1, 2), (0, 3)]);
 
         app.insert_resource(launch_pads)
             .insert_resource(GameTimer::default())
             .insert_resource(GameState::default())
+            .insert_resource(LaunchPadOwnership::default())
             .add_systems(Update, check_launch_pad_ownership);
     }
 }

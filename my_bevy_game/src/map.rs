@@ -3,6 +3,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 
 use crate::ui::GameCamera;
+use crate::launch_pads::{LaunchPads, LaunchPadOwner, LaunchPadOwnership};
 
 // Hex grid constants
 const HEX_WIDTH: f32 = 128.0;
@@ -29,6 +30,11 @@ pub struct ObstacleOutline;
 #[derive(Component)]
 pub struct LaunchPadOutline;
 
+#[derive(Component)]
+pub struct LaunchPadTile {
+    pub pad_index: usize,
+}
+
 // Resources
 #[derive(Resource)]
 pub struct HexMapConfig {
@@ -53,15 +59,13 @@ impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
         // Set up obstacles
         let mut obstacles = Obstacles::default();
-        obstacles.positions.insert((2, 0));
-        obstacles.positions.insert((0, 2));
-        obstacles.positions.insert((-2, 0));
+        obstacles.positions.insert((-1, 2));
 
         app.insert_resource(HexMapConfig { map_radius: 5 })
             .insert_resource(HoveredHex::default())
             .insert_resource(obstacles)
             .add_systems(Startup, setup_hex_map)
-            .add_systems(Update, (hex_hover_system, update_outline_colors));
+            .add_systems(Update, (hex_hover_system, update_outline_colors, update_launch_pad_colors));
     }
 }
 
@@ -214,6 +218,7 @@ fn setup_hex_map(
     mut materials: ResMut<Assets<StandardMaterial>>,
     config: Res<HexMapConfig>,
     obstacles: Res<Obstacles>,
+    launch_pads: Res<LaunchPads>,
 ) {
     // Spawn 3D camera with orthographic projection
     let mut orthographic = OrthographicProjection::default_3d();
@@ -251,7 +256,12 @@ fn setup_hex_map(
             let world_pos = axial_to_world_pos(q, r);
 
             let is_obstacle = obstacles.positions.contains(&(q, r));
-            let is_launch_pad = (q == -2 && r == 1) || (q == -1 && r == 1) || (q == -1 && r == 0);
+
+            // Check if this position is part of any launch platform and get its index
+            let pad_index = launch_pads.pads.iter().position(|platform| {
+                platform.contains(&(q, r))
+            });
+            let is_launch_pad = pad_index.is_some();
 
             let color = if is_obstacle {
                 Color::srgb(1.0, 0.0, 0.0)
@@ -260,7 +270,7 @@ fn setup_hex_map(
             };
 
             let hex_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
-            let hex_entity = commands.spawn((
+            let mut hex_entity_commands = commands.spawn((
                 Mesh3d(hex_mesh.clone()),
                 MeshMaterial3d(materials.add(StandardMaterial {
                     base_color: color,
@@ -270,7 +280,14 @@ fn setup_hex_map(
                 Transform::from_translation(world_pos).with_rotation(hex_rotation),
                 HexTile { q, r, _height: height },
                 Name::new(format!("Hex ({}, {})", q, r)),
-            )).id();
+            ));
+
+            // Add LaunchPadTile component if this is a launch pad
+            if let Some(idx) = pad_index {
+                hex_entity_commands.insert(LaunchPadTile { pad_index: idx });
+            }
+
+            let hex_entity = hex_entity_commands.id();
 
             // Spawn hex outline
             let base_outline_height = prism_height + 0.5;
@@ -384,14 +401,14 @@ fn hex_hover_system(
             }
 
             if let Some((entity, q, r, _)) = closest_hex {
-                if hovered_hex.entity != Some(entity) {
-                    let obstacle_marker = if obstacles.positions.contains(&(q, r)) {
-                        " [OBSTACLE]"
-                    } else {
-                        ""
-                    };
-                    println!("Hovering: ({}, {}){}", q, r, obstacle_marker);
-                }
+                // if hovered_hex.entity != Some(entity) {
+                //     let obstacle_marker = if obstacles.positions.contains(&(q, r)) {
+                //         " [OBSTACLE]"
+                //     } else {
+                //         ""
+                //     };
+                //     println!("Hovering: ({}, {}){}", q, r, obstacle_marker);
+                // }
                 hovered_hex.entity = Some(entity);
                 hovered_hex.q = q;
                 hovered_hex.r = r;
@@ -423,6 +440,40 @@ fn update_outline_colors(
             } else {
                 material.base_color = Color::srgb(0.5, 0.5, 0.5);
                 transform.scale = Vec3::splat(1.0);
+            }
+        }
+    }
+}
+
+fn update_launch_pad_colors(
+    pad_ownership: Res<LaunchPadOwnership>,
+    launch_pads: Res<LaunchPads>,
+    mut outline_query: Query<(&HexOutline, &MeshMaterial3d<StandardMaterial>), With<LaunchPadOutline>>,
+    hex_query: Query<&HexTile>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for (outline, material_handle) in &mut outline_query {
+        if let Ok(hex_tile) = hex_query.get(outline.hex_entity) {
+            // Find which pad this hex belongs to
+            if let Some(pad_index) = launch_pads.pads.iter().position(|platform| {
+                platform.contains(&(hex_tile.q, hex_tile.r))
+            }) {
+                // Get the owner of this pad
+                let owner = pad_ownership.owners.get(pad_index)
+                    .copied()
+                    .unwrap_or(LaunchPadOwner::Neutral);
+
+                // Update color based on owner
+                let color = match owner {
+                    LaunchPadOwner::Red => Color::srgb(1.0, 0.0, 0.0),
+                    LaunchPadOwner::Blue => Color::srgb(0.0, 0.0, 1.0),
+                    LaunchPadOwner::Neutral => Color::srgb(1.0, 1.0, 0.0), // Yellow
+                };
+
+                if let Some(material) = materials.get_mut(&material_handle.0) {
+                    material.base_color = color;
+                    material.emissive = color.into();
+                }
             }
         }
     }

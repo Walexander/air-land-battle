@@ -67,10 +67,10 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_plugins(EguiPlugin::default())
         .add_plugins(WorldInspectorPlugin::new())
+        .add_plugins(LaunchPadsPlugin)
         .add_plugins(MapPlugin)
         .add_plugins(UnitsPlugin)
         .add_plugins(SelectionPlugin)
-        .add_plugins(LaunchPadsPlugin)
         .add_plugins(UIPlugin)
         .run();
 }
