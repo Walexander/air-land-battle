@@ -508,7 +508,7 @@ fn update_launch_pad_colors(
                 let color = match owner {
                     LaunchPadOwner::Red => Color::srgb(1.0, 0.0, 0.0),
                     LaunchPadOwner::Blue => Color::srgb(0.0, 0.0, 1.0),
-                    LaunchPadOwner::Neutral => Color::srgb(1.0, 1.0, 0.0), // Yellow
+                    LaunchPadOwner::Neutral => Color::srgb(0.8, 0.7, 0.0), // Darker yellow
                 };
 
                 if let Some(material) = materials.get_mut(&material_handle.0) {

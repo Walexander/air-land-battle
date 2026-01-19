@@ -98,12 +98,12 @@ fn check_launch_pad_ownership(
         .filter(|&&o| o == LaunchPadOwner::Blue)
         .count();
 
-    if red_count > 0 && blue_count == 0 {
+    if red_count > blue_count {
         if !game_timer.is_active {
             game_timer.is_active = true;
             game_timer.winning_army = Some(Army::Red);
             println!(
-                "Red army controls launch pads! Timer started at {:.1}s.",
+                "Red army controls majority of launch pads! Timer started at {:.1}s.",
                 game_timer.time_remaining
             );
         } else if game_timer.winning_army != Some(Army::Red) {
@@ -121,12 +121,12 @@ fn check_launch_pad_ownership(
             game_state.winner = Some(Army::Red);
             game_timer.is_active = false;
         }
-    } else if blue_count > 0 && red_count == 0 {
+    } else if blue_count > red_count {
         if !game_timer.is_active {
             game_timer.is_active = true;
             game_timer.winning_army = Some(Army::Blue);
             println!(
-                "Blue army controls launch pads! Timer started at {:.1}s.",
+                "Blue army controls majority of launch pads! Timer started at {:.1}s.",
                 game_timer.time_remaining
             );
         } else if game_timer.winning_army != Some(Army::Blue) {
@@ -147,7 +147,7 @@ fn check_launch_pad_ownership(
     } else {
         if game_timer.is_active {
             println!(
-                "Launch pads contested or unoccupied. Timer paused at {:.1}s.",
+                "Launch pads tied. Timer paused at {:.1}s.",
                 game_timer.time_remaining
             );
         }
@@ -169,6 +169,10 @@ impl Plugin for LaunchPadsPlugin {
         launch_pads
             .pads
             .push(vec![(0, 2), (1, 2), (0, 3)]);
+        // Launch platform 3 (bottom right)
+        launch_pads
+            .pads
+            .push(vec![(1, -1), (1, -2), (0, -1), (0, 0)]);
 
         app.insert_resource(launch_pads)
             .insert_resource(GameTimer::default())

@@ -453,6 +453,8 @@ fn setup_units(
     let units = vec![
         (-3, 1, 0, Army::Red),
         (3, 1, 1, Army::Blue),
+        (-4, 1, 2, Army::Red),
+        (4, 1, 3, Army::Blue),
     ];
 
     let ring_mesh = meshes.add(create_selection_ring_mesh(20.0, 30.0));

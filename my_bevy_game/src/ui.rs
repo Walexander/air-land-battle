@@ -89,34 +89,21 @@ fn update_timer_ui(
     mut text_query: Query<&mut Text, With<TimerText>>,
 ) {
     if let Ok((mut node, mut bg_color)) = bar_query.single_mut() {
-        if game_timer.is_active {
-            let progress = game_timer.time_remaining / 20.0;
-            node.width = Val::Percent(progress * 100.0);
+        // Always show progress bar based on time remaining
+        let progress = game_timer.time_remaining / 20.0;
+        node.width = Val::Percent(progress * 100.0);
 
-            *bg_color = match game_timer.winning_army {
-                Some(Army::Red) => BackgroundColor(Color::srgb(0.9, 0.2, 0.2)),
-                Some(Army::Blue) => BackgroundColor(Color::srgb(0.2, 0.4, 0.9)),
-                None => BackgroundColor(Color::srgb(0.2, 0.8, 0.2)),
-            };
-        } else {
-            node.width = Val::Percent(0.0);
-        }
+        // Change color based on winning army (yellow when no owner)
+        *bg_color = match game_timer.winning_army {
+            Some(Army::Red) => BackgroundColor(Color::srgb(0.9, 0.2, 0.2)),
+            Some(Army::Blue) => BackgroundColor(Color::srgb(0.2, 0.4, 0.9)),
+            None => BackgroundColor(Color::srgb(0.8, 0.7, 0.0)), // Darker yellow for no owner
+        };
     }
 
     if let Ok(mut text) = text_query.single_mut() {
-        if game_timer.is_active {
-            let winning_army_name = match game_timer.winning_army {
-                Some(Army::Red) => "RED",
-                Some(Army::Blue) => "BLUE",
-                None => "",
-            };
-            **text = format!(
-                "{} {:.1}s",
-                winning_army_name, game_timer.time_remaining
-            );
-        } else {
-            **text = String::new();
-        }
+        // Always show the time remaining
+        **text = format!("{:.1}s", game_timer.time_remaining);
     }
 }
 
