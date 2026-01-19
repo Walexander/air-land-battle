@@ -2,8 +2,17 @@ use bevy::prelude::*;
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use bevy_inspector_egui::bevy_egui::EguiPlugin;
 
-mod hex_map;
-use hex_map::HexMapPlugin;
+mod map;
+mod units;
+mod selection;
+mod launch_pads;
+mod ui;
+
+use map::MapPlugin;
+use units::UnitsPlugin;
+use selection::SelectionPlugin;
+use launch_pads::LaunchPadsPlugin;
+use ui::UIPlugin;
 
 // #[derive(Component)]
 // struct Position {
@@ -58,7 +67,11 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_plugins(EguiPlugin::default())
         .add_plugins(WorldInspectorPlugin::new())
-        .add_plugins(HexMapPlugin)
+        .add_plugins(MapPlugin)
+        .add_plugins(UnitsPlugin)
+        .add_plugins(SelectionPlugin)
+        .add_plugins(LaunchPadsPlugin)
+        .add_plugins(UIPlugin)
         .run();
 }
 
