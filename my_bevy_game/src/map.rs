@@ -2,6 +2,8 @@ use bevy::prelude::*;
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 
+use crate::ui::GameCamera;
+
 // Hex grid constants
 const HEX_WIDTH: f32 = 128.0;
 const HEX_HEIGHT: f32 = HEX_WIDTH * 0.866025404; // width * sqrt(3)/2
@@ -220,7 +222,8 @@ fn setup_hex_map(
     commands.spawn((
         Camera3d::default(),
         Projection::Orthographic(orthographic),
-        Transform::from_xyz(400.0, 400.0, 400.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_xyz(0.0, 300.0, 400.0).looking_at(Vec3::ZERO, Vec3::Y),
+        GameCamera,
     ));
 
     // Add directional light
