@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use bevy::gltf::GltfAssetLabel;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::asset::RenderAssetUsages;
+use std::time::Duration;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::cmp::Ordering;
 
@@ -404,7 +405,7 @@ fn update_unit_animations(
         With<Unit>,
     >,
     children_query: Query<&Children>,
-    mut players_query: Query<&mut AnimationPlayer>,
+    mut players_query: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
 ) {
     for (unit_entity, anim_graphs, mut anim_state, mut graph_handle, movement) in
         units_query.iter_mut()
@@ -421,23 +422,20 @@ fn update_unit_animations(
         if is_moving != anim_state.is_moving {
             anim_state.is_moving = is_moving;
 
-            let (new_graph, new_index) = if is_moving {
-                (anim_graphs.moving_graph.clone(), anim_graphs.moving_index)
+            let new_index = if is_moving {
+                anim_graphs.moving_index
             } else {
-                (anim_graphs.idle_graph.clone(), anim_graphs.idle_index)
+                anim_graphs.idle_index
             };
-
-            *graph_handle = AnimationGraphHandle(new_graph.clone());
 
             let mut found_player = false;
             for descendant in children_query.iter_descendants(unit_entity) {
-                if let Ok(mut player) = players_query.get_mut(descendant) {
-                    commands
-                        .entity(descendant)
-                        .insert(AnimationGraphHandle(new_graph.clone()));
+                if let Ok((mut player, mut transitions)) = players_query.get_mut(descendant) {
+                    // Both animations are in the same graph now, so transitions work in both directions
+                    transitions
+                        .play(&mut player, new_index, Duration::from_secs_f32(0.2))
+                        .repeat();
 
-                    player.stop_all();
-                    player.play(new_index).repeat();
                     println!(
                         "Switched to {} animation (index {:?}) for unit {:?} on entity {:?}",
                         if is_moving { "moving" } else { "idle" },
@@ -486,7 +484,10 @@ fn play_animation_when_loaded(
 
                 commands
                     .entity(player_entity)
-                    .insert(graph_handle.clone());
+                    .insert((
+                        graph_handle.clone(),
+                        AnimationTransitions::new(),
+                    ));
 
                 player.play(anim_graphs.idle_index).repeat();
                 println!(
@@ -610,14 +611,19 @@ fn setup_units(
             let world_pos = axial_to_world_pos(*q, *r);
             let unit_pos = world_pos + Vec3::new(0.0, 5.0, 0.0);
 
-            let (idle_graph, idle_index) = AnimationGraph::from_clip(
+            // Create a single animation graph with both idle and walking animations
+            let mut animation_graph = AnimationGraph::new();
+            let idle_index = animation_graph.add_clip(
                 asset_server.load(GltfAssetLabel::Animation(0).from_asset("Fox.glb")),
+                1.0,
+                animation_graph.root,
             );
-            let (moving_graph, moving_index) = AnimationGraph::from_clip(
+            let moving_index = animation_graph.add_clip(
                 asset_server.load(GltfAssetLabel::Animation(2).from_asset("Fox.glb")),
+                1.0,
+                animation_graph.root,
             );
-            let idle_graph_handle = animation_graphs.add(idle_graph);
-            let moving_graph_handle = animation_graphs.add(moving_graph);
+            let graph_handle = animation_graphs.add(animation_graph);
 
             let unit_entity = parent
                 .spawn((
@@ -629,11 +635,11 @@ fn setup_units(
                         _sprite_index: *unit_index,
                         army: *army,
                     },
-                    AnimationGraphHandle(idle_graph_handle.clone()),
+                    AnimationGraphHandle(graph_handle.clone()),
                     AnimationGraphs {
-                        idle_graph: idle_graph_handle,
+                        idle_graph: graph_handle.clone(),
                         idle_index,
-                        moving_graph: moving_graph_handle,
+                        moving_graph: graph_handle.clone(),
                         moving_index,
                     },
                     CurrentAnimationState { is_moving: false },
@@ -733,14 +739,19 @@ fn setup_units(
             let world_pos = axial_to_world_pos(*q, *r);
             let unit_pos = world_pos + Vec3::new(0.0, 5.0, 0.0);
 
-            let (idle_graph, idle_index) = AnimationGraph::from_clip(
+            // Create a single animation graph with both idle and walking animations
+            let mut animation_graph = AnimationGraph::new();
+            let idle_index = animation_graph.add_clip(
                 asset_server.load(GltfAssetLabel::Animation(0).from_asset("Fox.glb")),
+                1.0,
+                animation_graph.root,
             );
-            let (moving_graph, moving_index) = AnimationGraph::from_clip(
+            let moving_index = animation_graph.add_clip(
                 asset_server.load(GltfAssetLabel::Animation(2).from_asset("Fox.glb")),
+                1.0,
+                animation_graph.root,
             );
-            let idle_graph_handle = animation_graphs.add(idle_graph);
-            let moving_graph_handle = animation_graphs.add(moving_graph);
+            let graph_handle = animation_graphs.add(animation_graph);
 
             let unit_entity = parent
                 .spawn((
@@ -752,11 +763,11 @@ fn setup_units(
                         _sprite_index: *unit_index,
                         army: *army,
                     },
-                    AnimationGraphHandle(idle_graph_handle.clone()),
+                    AnimationGraphHandle(graph_handle.clone()),
                     AnimationGraphs {
-                        idle_graph: idle_graph_handle,
+                        idle_graph: graph_handle.clone(),
                         idle_index,
-                        moving_graph: moving_graph_handle,
+                        moving_graph: graph_handle.clone(),
                         moving_index,
                     },
                     CurrentAnimationState { is_moving: false },
