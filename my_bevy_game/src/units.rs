@@ -16,7 +16,7 @@ pub struct RedArmy;
 #[derive(Component)]
 pub struct BlueArmy;
 
-#[derive(Component, Clone, Copy, PartialEq, Eq)]
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Army {
     Red,
     Blue,
@@ -56,6 +56,12 @@ pub struct CurrentAnimationState {
 pub struct Health {
     pub current: f32,
     pub max: f32,
+}
+
+#[derive(Component)]
+pub struct Combat {
+    pub last_attack_time: f32,
+    pub attack_cooldown: f32, // Seconds between attacks
 }
 
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
@@ -315,6 +321,121 @@ fn move_units(
             let current_pos = start_pos.lerp(target_pos, movement.progress);
             transform.translation.x = current_pos.x;
             transform.translation.z = current_pos.z;
+        }
+    }
+}
+
+fn combat_system(
+    time: Res<Time>,
+    mut attacker_query: Query<(Entity, &Unit, &Army, &UnitStats, &mut Combat)>,
+    mut defender_query: Query<(Entity, &Unit, &Army, &UnitStats, &mut Health)>,
+) {
+    let current_time = time.elapsed_secs();
+    let mut attacks = Vec::new();
+
+    println!("=== Combat System Tick at {:.1}s ===", current_time);
+    println!("Total attackers: {}", attacker_query.iter().count());
+
+    // Find all valid attacks (collect first to avoid borrow issues)
+    for (attacker_entity, attacker_unit, attacker_army, attacker_stats, mut attacker_combat) in attacker_query.iter_mut() {
+        println!("Checking attacker {:?} ({:?}) at ({}, {})", attacker_entity, attacker_army, attacker_unit.q, attacker_unit.r);
+
+        // Check if cooldown has passed
+        if current_time - attacker_combat.last_attack_time < attacker_combat.attack_cooldown {
+            println!("  - Still on cooldown (last attack: {:.1}s ago)", current_time - attacker_combat.last_attack_time);
+            continue;
+        }
+
+        // Get adjacent hexes
+        let adjacent_hexes = [
+            (attacker_unit.q + 1, attacker_unit.r),
+            (attacker_unit.q - 1, attacker_unit.r),
+            (attacker_unit.q, attacker_unit.r + 1),
+            (attacker_unit.q, attacker_unit.r - 1),
+            (attacker_unit.q + 1, attacker_unit.r - 1),
+            (attacker_unit.q - 1, attacker_unit.r + 1),
+        ];
+        println!("  - Adjacent hexes: {:?}", adjacent_hexes);
+
+        // Check each adjacent hex for enemy units
+        let mut found_enemy = false;
+        for (defender_entity, defender_unit, defender_army, defender_stats, _) in defender_query.iter() {
+            // Skip if same army
+            if attacker_army == defender_army {
+                continue;
+            }
+
+            println!("  - Checking potential target {:?} ({:?}) at ({}, {})", defender_entity, defender_army, defender_unit.q, defender_unit.r);
+
+            // Check if defender is adjacent
+            if adjacent_hexes.contains(&(defender_unit.q, defender_unit.r)) {
+                // Calculate damage: attack - (armor / 2), minimum 5 damage
+                let raw_damage = attacker_stats.attack - (defender_stats.armor / 2.0);
+                let damage = raw_damage.max(5.0);
+
+                println!("  - ADJACENT ENEMY FOUND! Will deal {:.1} damage", damage);
+                attacks.push((attacker_entity, defender_entity, damage));
+                attacker_combat.last_attack_time = current_time;
+                found_enemy = true;
+                break; // Only attack one enemy per cooldown
+            }
+        }
+
+        if !found_enemy {
+            println!("  - No adjacent enemies found");
+        }
+    }
+
+    println!("Total attacks to apply: {}", attacks.len());
+
+    // Apply damage
+    for (_attacker_entity, defender_entity, damage) in attacks {
+        if let Ok((_, _, _, _, mut defender_health)) = defender_query.get_mut(defender_entity) {
+            defender_health.current -= damage;
+            println!(
+                "✓ Attack dealt {:.1} damage! Defender health: {:.1}/{:.1}",
+                damage, defender_health.current, defender_health.max
+            );
+        } else {
+            println!("✗ Failed to apply damage to {:?}", defender_entity);
+        }
+    }
+}
+
+fn remove_dead_units(
+    mut commands: Commands,
+    unit_query: Query<(Entity, &Health, &Unit)>,
+    children_query: Query<&Children>,
+    health_bar_query: Query<(Entity, &HealthBar)>,
+    selection_ring_query: Query<(Entity, &crate::selection::SelectionRing)>,
+) {
+    for (entity, health, _unit) in &unit_query {
+        if health.current <= 0.0 {
+            println!("Unit {:?} has been destroyed!", entity);
+
+            // Despawn all children (Infantry models, etc.)
+            if let Ok(children) = children_query.get(entity) {
+                for child in children.iter() {
+                    commands.entity(child).despawn();
+                }
+            }
+
+            // Despawn health bars that reference this unit
+            for (bar_entity, health_bar) in &health_bar_query {
+                if health_bar.unit_entity == entity {
+                    commands.entity(bar_entity).despawn();
+                }
+            }
+
+            // Despawn selection ring that references this unit
+            for (ring_entity, selection_ring) in &selection_ring_query {
+                if selection_ring.unit_entity == entity {
+                    commands.entity(ring_entity).despawn();
+                }
+            }
+
+            // Despawn the unit itself
+            commands.entity(entity).despawn();
         }
     }
 }
@@ -645,8 +766,11 @@ fn update_health_bars(
             bar_transform.scale.x = health_percentage;
 
             // Update position to follow unit
+            // Offset X to make bar shrink from right to left (keep left edge fixed)
+            let bar_width = 40.0;
+            let x_offset = -(bar_width * (1.0 - health_percentage)) / 2.0;
             let unit_world_pos = unit_transform.translation;
-            bar_transform.translation = unit_world_pos + Vec3::new(0.0, 70.2, 0.0);
+            bar_transform.translation = unit_world_pos + Vec3::new(x_offset, 70.2, 0.0);
         }
     }
 
@@ -712,6 +836,17 @@ fn setup_units(
             // Get stats for this class
             let stats = unit_class.default_stats();
 
+            // Prepare health bar meshes
+            let bar_width = 40.0;
+            let bar_height = 10.0;
+            let border_width_sides = 4.0;
+            let border_height_extra = 8.0;
+            let health_bar_mesh = meshes.add(create_health_bar_mesh(bar_width, bar_height));
+            let border_mesh = meshes.add(create_health_bar_mesh(
+                bar_width + border_width_sides,
+                bar_height + border_height_extra,
+            ));
+
             // Create unit entity based on class
             let unit_entity = if *unit_class == UnitClass::Infantry {
                 // Infantry: spawn 3 model instances as children in triangle formation
@@ -745,6 +880,7 @@ fn setup_units(
                             _sprite_index: *unit_index,
                             army: *army,
                         },
+                        *army,
                         *unit_class,
                         stats.clone(),
                         AnimationGraphHandle(graph_handle.clone()),
@@ -759,9 +895,14 @@ fn setup_units(
                             current: stats.max_health,
                             max: stats.max_health,
                         },
+                        Combat {
+                            last_attack_time: -10.0, // Start ready to attack
+                            attack_cooldown: 1.0,    // Attack once per second
+                        },
                         Name::new(format!("{:?} {} ({}, {})", unit_class, unit_index, q, r)),
                     ))
                     .with_children(|unit_parent| {
+                        // Spawn model instances
                         for (i, offset) in offsets.iter().enumerate() {
                             let scene: Handle<Scene> = asset_server.load(&format!("{}#Scene0", model_path));
 
@@ -801,6 +942,7 @@ fn setup_units(
                             _sprite_index: *unit_index,
                             army: *army,
                         },
+                        *army,
                         *unit_class,
                         stats.clone(),
                         AnimationGraphHandle(graph_handle.clone()),
@@ -815,42 +957,21 @@ fn setup_units(
                             current: stats.max_health,
                             max: stats.max_health,
                         },
+                        Combat {
+                            last_attack_time: -10.0, // Start ready to attack
+                            attack_cooldown: 1.0,    // Attack once per second
+                        },
                         Name::new(format!("{:?} {} ({}, {})", unit_class, unit_index, q, r)),
                     ))
                     .id()
             };
 
-            let ring_pos = world_pos + Vec3::new(0.0, 6.0, 0.0);
-            let ring_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
-            parent.spawn((
-                Mesh3d(ring_mesh.clone()),
-                MeshMaterial3d(ring_material.clone()),
-                Transform::from_translation(ring_pos)
-                    .with_rotation(ring_rotation)
-                    .with_scale(Vec3::splat(0.75)),
-                SelectionRing {
-                    unit_entity,
-                    animation_timer: 0.0,
-                    bounce_count: 0,
-                },
-                Visibility::Hidden,
-            ));
-
-            // Spawn health bar above unit
-            let bar_width = 40.0;
-            let bar_height = 10.0;
-            let border_width_sides = 4.0;
-            let border_height_extra = 8.0; // 4px extra on top and bottom (2px more each)
-            let bar_pos = world_pos + Vec3::new(0.0, 70.0, 0.0);
-            let health_bar_mesh = meshes.add(create_health_bar_mesh(bar_width, bar_height));
-            let border_mesh = meshes.add(create_health_bar_mesh(
-                bar_width + border_width_sides,
-                bar_height + border_height_extra,
-            ));
+            // Spawn health bars (as siblings of unit, children of Army)
+            let bar_pos_world = world_pos + Vec3::new(0.0, 70.0, 0.0);
 
             // Border (black)
             parent.spawn((
-                Mesh3d(border_mesh),
+                Mesh3d(border_mesh.clone()),
                 MeshMaterial3d(materials.add(StandardMaterial {
                     base_color: Color::srgb(0.0, 0.0, 0.0),
                     emissive: Color::srgb(0.0, 0.0, 0.0).into(),
@@ -859,7 +980,7 @@ fn setup_units(
                     cull_mode: None,
                     ..default()
                 })),
-                Transform::from_translation(bar_pos),
+                Transform::from_translation(bar_pos_world),
                 HealthBar { unit_entity },
                 HealthBarBorder,
             ));
@@ -875,7 +996,7 @@ fn setup_units(
                     cull_mode: None,
                     ..default()
                 })),
-                Transform::from_translation(bar_pos + Vec3::new(0.0, 0.1, 0.0)),
+                Transform::from_translation(bar_pos_world + Vec3::new(0.0, 0.1, 0.0)),
                 HealthBar { unit_entity },
             ));
 
@@ -890,9 +1011,25 @@ fn setup_units(
                     cull_mode: None,
                     ..default()
                 })),
-                Transform::from_translation(bar_pos + Vec3::new(0.0, 0.2, 0.0)),
+                Transform::from_translation(bar_pos_world + Vec3::new(0.0, 0.2, 0.0)),
                 HealthBar { unit_entity },
                 HealthBarFill,
+            ));
+
+            let ring_pos = world_pos + Vec3::new(0.0, 6.0, 0.0);
+            let ring_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
+            parent.spawn((
+                Mesh3d(ring_mesh.clone()),
+                MeshMaterial3d(ring_material.clone()),
+                Transform::from_translation(ring_pos)
+                    .with_rotation(ring_rotation)
+                    .with_scale(Vec3::splat(0.75)),
+                SelectionRing {
+                    unit_entity,
+                    animation_timer: 0.0,
+                    bounce_count: 0,
+                },
+                Visibility::Hidden,
             ));
         }
     });
@@ -914,6 +1051,17 @@ fn setup_units(
             // Get stats for this class
             let stats = unit_class.default_stats();
 
+            // Prepare health bar meshes
+            let bar_width = 40.0;
+            let bar_height = 10.0;
+            let border_width_sides = 4.0;
+            let border_height_extra = 8.0;
+            let health_bar_mesh = meshes.add(create_health_bar_mesh(bar_width, bar_height));
+            let border_mesh = meshes.add(create_health_bar_mesh(
+                bar_width + border_width_sides,
+                bar_height + border_height_extra,
+            ));
+
             // Create unit entity based on class
             let unit_entity = if *unit_class == UnitClass::Infantry {
                 // Infantry: spawn 3 model instances as children in triangle formation
@@ -947,6 +1095,7 @@ fn setup_units(
                             _sprite_index: *unit_index,
                             army: *army,
                         },
+                        *army,
                         *unit_class,
                         stats.clone(),
                         AnimationGraphHandle(graph_handle.clone()),
@@ -961,9 +1110,14 @@ fn setup_units(
                             current: stats.max_health,
                             max: stats.max_health,
                         },
+                        Combat {
+                            last_attack_time: -10.0, // Start ready to attack
+                            attack_cooldown: 1.0,    // Attack once per second
+                        },
                         Name::new(format!("{:?} {} ({}, {})", unit_class, unit_index, q, r)),
                     ))
                     .with_children(|unit_parent| {
+                        // Spawn model instances
                         for (i, offset) in offsets.iter().enumerate() {
                             let scene: Handle<Scene> = asset_server.load(&format!("{}#Scene0", model_path));
 
@@ -1003,6 +1157,7 @@ fn setup_units(
                             _sprite_index: *unit_index,
                             army: *army,
                         },
+                        *army,
                         *unit_class,
                         stats.clone(),
                         AnimationGraphHandle(graph_handle.clone()),
@@ -1017,10 +1172,64 @@ fn setup_units(
                             current: stats.max_health,
                             max: stats.max_health,
                         },
+                        Combat {
+                            last_attack_time: -10.0, // Start ready to attack
+                            attack_cooldown: 1.0,    // Attack once per second
+                        },
                         Name::new(format!("{:?} {} ({}, {})", unit_class, unit_index, q, r)),
                     ))
                     .id()
             };
+
+            // Spawn health bars (as siblings of unit, children of Army)
+            let bar_pos_world = world_pos + Vec3::new(0.0, 70.0, 0.0);
+
+            // Border (black)
+            parent.spawn((
+                Mesh3d(border_mesh.clone()),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.0, 0.0, 0.0),
+                    emissive: Color::srgb(0.0, 0.0, 0.0).into(),
+                    unlit: true,
+                    double_sided: true,
+                    cull_mode: None,
+                    ..default()
+                })),
+                Transform::from_translation(bar_pos_world),
+                HealthBar { unit_entity },
+                HealthBarBorder,
+            ));
+
+            // Background (dark gray)
+            parent.spawn((
+                Mesh3d(health_bar_mesh.clone()),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.2, 0.2, 0.2),
+                    emissive: Color::srgb(0.2, 0.2, 0.2).into(),
+                    unlit: true,
+                    double_sided: true,
+                    cull_mode: None,
+                    ..default()
+                })),
+                Transform::from_translation(bar_pos_world + Vec3::new(0.0, 0.1, 0.0)),
+                HealthBar { unit_entity },
+            ));
+
+            // Fill (blue for blue army)
+            parent.spawn((
+                Mesh3d(health_bar_mesh.clone()),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.2, 0.4, 0.9),
+                    emissive: Color::srgb(0.2, 0.4, 0.9).into(),
+                    unlit: true,
+                    double_sided: true,
+                    cull_mode: None,
+                    ..default()
+                })),
+                Transform::from_translation(bar_pos_world + Vec3::new(0.0, 0.2, 0.0)),
+                HealthBar { unit_entity },
+                HealthBarFill,
+            ));
 
             let ring_pos = world_pos + Vec3::new(0.0, 6.0, 0.0);
             let ring_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
@@ -1037,65 +1246,6 @@ fn setup_units(
                 },
                 Visibility::Hidden,
             ));
-
-            // Spawn health bar above unit
-            let bar_width = 40.0;
-            let bar_height = 10.0;
-            let border_width_sides = 4.0;
-            let border_height_extra = 8.0; // 4px extra on top and bottom (2px more each)
-            let bar_pos = world_pos + Vec3::new(0.0, 70.0, 0.0);
-            let health_bar_mesh = meshes.add(create_health_bar_mesh(bar_width, bar_height));
-            let border_mesh = meshes.add(create_health_bar_mesh(
-                bar_width + border_width_sides,
-                bar_height + border_height_extra,
-            ));
-
-            // Border (black)
-            parent.spawn((
-                Mesh3d(border_mesh),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::srgb(0.0, 0.0, 0.0),
-                    emissive: Color::srgb(0.0, 0.0, 0.0).into(),
-                    unlit: true,
-                    double_sided: true,
-                    cull_mode: None,
-                    ..default()
-                })),
-                Transform::from_translation(bar_pos),
-                HealthBar { unit_entity },
-                HealthBarBorder,
-            ));
-
-            // Background (dark gray)
-            parent.spawn((
-                Mesh3d(health_bar_mesh.clone()),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::srgb(0.2, 0.2, 0.2),
-                    emissive: Color::srgb(0.2, 0.2, 0.2).into(),
-                    unlit: true,
-                    double_sided: true,
-                    cull_mode: None,
-                    ..default()
-                })),
-                Transform::from_translation(bar_pos + Vec3::new(0.0, 0.1, 0.0)),
-                HealthBar { unit_entity },
-            ));
-
-            // Fill (blue for blue army)
-            parent.spawn((
-                Mesh3d(health_bar_mesh.clone()),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::srgb(0.2, 0.4, 0.9),
-                    emissive: Color::srgb(0.2, 0.4, 0.9).into(),
-                    unlit: true,
-                    double_sided: true,
-                    cull_mode: None,
-                    ..default()
-                })),
-                Transform::from_translation(bar_pos + Vec3::new(0.0, 0.2, 0.0)),
-                HealthBar { unit_entity },
-                HealthBarFill,
-            ));
         }
     });
 }
@@ -1111,6 +1261,8 @@ impl Plugin for UnitsPlugin {
                 Update,
                 (
                     move_units,
+                    combat_system,
+                    remove_dead_units,
                     update_occupancy_intent,
                     update_occupancy,
                     detect_collisions_and_repath,
