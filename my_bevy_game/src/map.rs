@@ -67,6 +67,7 @@ impl Plugin for MapPlugin {
         app.insert_resource(HexMapConfig { map_radius: 5 })
             .insert_resource(HoveredHex::default())
             .insert_resource(obstacles)
+            .insert_resource(ClearColor(Color::srgb(0.53, 0.81, 0.92))) // Light sky blue
             .add_systems(Startup, setup_hex_map)
             .add_systems(Update, (hex_hover_system, update_outline_colors, update_launch_pad_colors, billboard_sprites));
     }
@@ -154,6 +155,47 @@ fn create_hexagon_prism_mesh(height: f32) -> Mesh {
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
         .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
         .with_inserted_indices(Indices::U32(indices))
+}
+
+fn create_filled_hexagon_mesh() -> Mesh {
+    // Create a simple filled hexagon like the example
+    let center = ([0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.5, 0.5]);
+
+    let x = |i: f32| HEX_RADIUS * (i * 2.0 * std::f32::consts::PI / 6.0).cos();
+    let z = |i: f32| HEX_RADIUS * (i * 2.0 * std::f32::consts::PI / 6.0).sin();
+
+    let spike0 = ([x(0.0), 0.0, z(0.0)], [0.0, 1.0, 0.0], [1.0, 0.5]);
+    let spike1 = ([x(1.0), 0.0, z(1.0)], [0.0, 1.0, 0.0], [0.75, 1.0]);
+    let spike2 = ([x(2.0), 0.0, z(2.0)], [0.0, 1.0, 0.0], [0.25, 1.0]);
+    let spike3 = ([x(3.0), 0.0, z(3.0)], [0.0, 1.0, 0.0], [0.0, 0.5]);
+    let spike4 = ([x(4.0), 0.0, z(4.0)], [0.0, 1.0, 0.0], [0.25, 0.0]);
+    let spike5 = ([x(5.0), 0.0, z(5.0)], [0.0, 1.0, 0.0], [0.75, 0.0]);
+
+    let vertices = [center, spike0, spike1, spike2, spike3, spike4, spike5];
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut uvs = Vec::new();
+
+    for (position, normal, uv) in vertices.iter() {
+        positions.push(*position);
+        normals.push(*normal);
+        uvs.push(*uv);
+    }
+
+    let indices = Indices::U32(vec![
+        0, 1, 2,
+        0, 2, 3,
+        0, 3, 4,
+        0, 4, 5,
+        0, 5, 6,
+        0, 6, 1
+    ]);
+
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+        .with_inserted_indices(indices)
 }
 
 fn create_billboard_mesh(width: f32, height: f32) -> Mesh {
@@ -288,10 +330,11 @@ fn setup_hex_map(
         Transform::from_xyz(4.0, 8.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 
-    let prism_height = 5.0;
+    let prism_height = 20.0;
 
     // Reuse meshes
     let hex_mesh = meshes.add(create_hexagon_prism_mesh(prism_height));
+    let filled_hex_mesh = meshes.add(create_filled_hexagon_mesh());
     let outline_mesh = meshes.add(create_hexagon_outline_mesh());
     let billboard_mesh = meshes.add(create_billboard_mesh(HEX_WIDTH - 32.0, HEX_WIDTH - 32.0));
 
@@ -321,17 +364,28 @@ fn setup_hex_map(
                 });
                 let is_launch_pad = pad_index.is_some();
 
-                let color = Color::srgb(0.0, 0.0, 0.0);
+                // Alternate tile colors based on hex coordinates
+                let color = if (q + r) % 2 == 0 {
+                    Color::srgb(0.2, 0.6, 0.2) // Green
+                } else {
+                    Color::srgb(0.15, 0.4, 0.15) // Dark green
+                };
 
                 let hex_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
+
+                // Spawn filled hexagon (no prism for now)
+                let filled_hex_pos = world_pos + Vec3::new(0.0, 0.5, 0.0);
                 let mut hex_entity_commands = parent.spawn((
-                    Mesh3d(hex_mesh.clone()),
+                    Mesh3d(filled_hex_mesh.clone()),
                     MeshMaterial3d(materials.add(StandardMaterial {
                         base_color: color,
-                        unlit: false,
+                        emissive: color.into(),
+                        unlit: true,
+                        double_sided: true,
+                        cull_mode: None,
                         ..default()
                     })),
-                    Transform::from_translation(world_pos).with_rotation(hex_rotation),
+                    Transform::from_translation(filled_hex_pos).with_rotation(hex_rotation),
                     HexTile { q, r, _height: height },
                     Name::new(format!("Hex ({}, {})", q, r)),
                 ));
@@ -344,7 +398,7 @@ fn setup_hex_map(
                 let hex_entity = hex_entity_commands.id();
 
                 // Spawn hex outline (skip for obstacles since they use sprites)
-                let base_outline_height = prism_height + 0.5;
+                let base_outline_height = 1.0;
                 let outline_pos = if is_launch_pad {
                     world_pos + Vec3::new(0.0, base_outline_height + 0.2, 0.0)
                 } else {
@@ -356,7 +410,7 @@ fn setup_hex_map(
 
                 if is_obstacle {
                     // Spawn billboard mesh with texture for obstacles
-                    let sprite_height = prism_height + 10.0;
+                    let sprite_height = 10.0;
                     let sprite_pos = world_pos + Vec3::new(0.0, sprite_height, 0.0);
 
                     parent.spawn((
