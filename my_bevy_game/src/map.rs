@@ -4,6 +4,7 @@ use bevy::mesh::{Indices, PrimitiveTopology};
 
 use crate::ui::GameCamera;
 use crate::launch_pads::{LaunchPads, LaunchPadOwner, LaunchPadOwnership};
+use crate::selection::create_hexagon_outline_mesh;
 
 // Hex grid constants
 const HEX_WIDTH: f32 = 128.0;
@@ -520,6 +521,7 @@ fn setup_hex_map(
     let _hex_mesh = meshes.add(create_hexagon_prism_mesh(prism_height));
     let filled_hex_mesh = meshes.add(create_filled_hexagon_mesh());
     let hex_border_mesh = meshes.add(create_filled_hexagon_border_mesh());
+    let hover_outline_mesh = meshes.add(create_hexagon_outline_mesh(63.0, 4.0)); // Same as destination ring
     let billboard_mesh = meshes.add(create_billboard_mesh(HEX_WIDTH - 32.0, HEX_WIDTH - 32.0));
 
     // Load obstacle sprite texture
@@ -713,13 +715,14 @@ fn setup_hex_map(
 
                 // Always spawn hover highlight for all tiles (not obstacles)
                 if !is_obstacle {
-                    // Hover highlight positioned higher and slightly smaller
-                    let hover_pos = world_pos + Vec3::new(0.0, 2.0, 0.0);
+                    // Hover highlight positioned higher to avoid z-fighting
+                    let hover_pos = world_pos + Vec3::new(0.0, 2.5, 0.0);
+                    let hover_color = Color::srgb(0.7, 0.7, 0.7); // Light grey to match destination ring
                     parent.spawn((
-                        Mesh3d(filled_hex_mesh.clone()),
+                        Mesh3d(hover_outline_mesh.clone()),
                         MeshMaterial3d(materials.add(StandardMaterial {
-                            base_color: outline_color,
-                            emissive: outline_color.into(),
+                            base_color: hover_color,
+                            emissive: hover_color.into(),
                             unlit: true,
                             double_sided: true,
                             cull_mode: None,
@@ -727,7 +730,7 @@ fn setup_hex_map(
                         })),
                         Transform::from_translation(hover_pos)
                             .with_rotation(outline_rotation)
-                            .with_scale(Vec3::splat(0.75)), // 15% smaller
+                            .with_scale(Vec3::splat(0.75)), // Match destination ring resting scale
                         HexOutline { hex_entity },
                         Visibility::Hidden,
                     ));

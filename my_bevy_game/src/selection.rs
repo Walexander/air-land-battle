@@ -79,7 +79,7 @@ pub fn create_selection_ring_mesh(inner_radius: f32, outer_radius: f32) -> Mesh 
     mesh
 }
 
-fn create_hexagon_outline_mesh(radius: f32, line_width: f32) -> Mesh {
+pub fn create_hexagon_outline_mesh(radius: f32, line_width: f32) -> Mesh {
     let mut positions = Vec::new();
     let mut normals = Vec::new();
     let mut uvs = Vec::new();
@@ -726,7 +726,7 @@ fn animate_selection_rings(
 
                     if ring.bounce_count < max_bounces {
                         let min_scale = 0.75;
-                        let max_scale = 2.0;
+                        let max_scale = 1.75;
                         let ease_progress = (cycle_progress * std::f32::consts::PI).sin();
                         let current_scale = min_scale + (max_scale - min_scale) * ease_progress;
                         ring_transform.scale = Vec3::splat(current_scale);
@@ -773,9 +773,9 @@ fn animate_destination_rings(
             }
 
             if ring.bounce_count < max_bounces {
-                // Animate between 2.0 and 0.75
+                // Animate between 1.75 and 0.75
                 let min_scale = 0.75;
-                let max_scale = 2.0;
+                let max_scale = 1.75;
                 // Use a smoother easing function for bounce effect
                 let ease_progress = (cycle_progress * std::f32::consts::PI).sin();
                 let current_scale = min_scale + (max_scale - min_scale) * ease_progress;
