@@ -253,15 +253,16 @@ fn create_billboard_mesh(width: f32, height: f32) -> Mesh {
         .with_inserted_indices(Indices::U32(indices))
 }
 
-fn create_launch_pad_outline_mesh(perimeter_edges: &[((i32, i32), (i32, i32))]) -> Mesh {
+fn create_launch_pad_outline_mesh(perimeter_edges: &[((i32, i32), (i32, i32))], pad_center: Vec3) -> Mesh {
     // Create a mesh from the perimeter edges
+    // All positions are relative to pad_center so scaling works correctly
     let mut positions = Vec::new();
     let mut normals = Vec::new();
     let mut uvs = Vec::new();
     let mut indices = Vec::new();
 
     let y = 0.0;
-    let line_width = 4.0; // Make the outline thicker and more visible
+    let line_width = 2.0; // Line thickness
 
     // Collect all unique corner positions (in 3D world space)
     let mut corner_positions: Vec<[f32; 3]> = Vec::new();
@@ -278,6 +279,9 @@ fn create_launch_pad_outline_mesh(perimeter_edges: &[((i32, i32), (i32, i32))]) 
             0.0,
             (pos1.z + pos2.z) / 2.0,
         );
+
+        // Make positions relative to pad center
+        let midpoint_relative = midpoint - pad_center;
 
         // Direction from cell1 to cell2
         let edge_vec = Vec3::new(pos2.x - pos1.x, 0.0, pos2.z - pos1.z);
@@ -296,40 +300,42 @@ fn create_launch_pad_outline_mesh(perimeter_edges: &[((i32, i32), (i32, i32))]) 
         let base_idx = positions.len() as u32;
 
         // Store the actual geometric corners (without line_width offset in edge direction)
+        // Use relative positions
         let corner1 = [
-            midpoint.x + perp.x * half_edge_len,
+            midpoint_relative.x + perp.x * half_edge_len,
             y,
-            midpoint.z + perp.z * half_edge_len,
+            midpoint_relative.z + perp.z * half_edge_len,
         ];
         let corner2 = [
-            midpoint.x - perp.x * half_edge_len,
+            midpoint_relative.x - perp.x * half_edge_len,
             y,
-            midpoint.z - perp.z * half_edge_len,
+            midpoint_relative.z - perp.z * half_edge_len,
         ];
         corner_positions.push(corner1);
         corner_positions.push(corner2);
 
         // Create 4 vertices for this edge segment
         // Edge extends perpendicular to the line between centers
+        // Use relative positions
         let v0 = [
-            midpoint.x + perp.x * half_edge_len + edge_dir.x * line_width,
+            midpoint_relative.x + perp.x * half_edge_len + edge_dir.x * line_width,
             y,
-            midpoint.z + perp.z * half_edge_len + edge_dir.z * line_width,
+            midpoint_relative.z + perp.z * half_edge_len + edge_dir.z * line_width,
         ];
         let v1 = [
-            midpoint.x + perp.x * half_edge_len - edge_dir.x * line_width,
+            midpoint_relative.x + perp.x * half_edge_len - edge_dir.x * line_width,
             y,
-            midpoint.z + perp.z * half_edge_len - edge_dir.z * line_width,
+            midpoint_relative.z + perp.z * half_edge_len - edge_dir.z * line_width,
         ];
         let v2 = [
-            midpoint.x - perp.x * half_edge_len + edge_dir.x * line_width,
+            midpoint_relative.x - perp.x * half_edge_len + edge_dir.x * line_width,
             y,
-            midpoint.z - perp.z * half_edge_len + edge_dir.z * line_width,
+            midpoint_relative.z - perp.z * half_edge_len + edge_dir.z * line_width,
         ];
         let v3 = [
-            midpoint.x - perp.x * half_edge_len - edge_dir.x * line_width,
+            midpoint_relative.x - perp.x * half_edge_len - edge_dir.x * line_width,
             y,
-            midpoint.z - perp.z * half_edge_len - edge_dir.z * line_width,
+            midpoint_relative.z - perp.z * half_edge_len - edge_dir.z * line_width,
         ];
 
         positions.push(v0);
@@ -376,7 +382,7 @@ fn create_launch_pad_outline_mesh(perimeter_edges: &[((i32, i32), (i32, i32))]) 
 
     // Add circles at each unique corner to fill in the gaps
     let circle_segments = 12;
-    let circle_radius = line_width * 1.5; // Larger radius to fully cover corner gaps
+    let circle_radius = line_width * 1.00; // Larger radius to fully cover corner gaps
     for corner_pos in unique_corners {
         let center_idx = positions.len() as u32;
 
@@ -543,7 +549,9 @@ fn setup_hex_map(
                 let is_launch_pad = pad_index.is_some();
 
                 // Alternate tile colors based on hex coordinates
-                let color = if (q + r) % 2 == 0 {
+                let color = if is_launch_pad {
+                    Color::srgb(0.3, 0.3, 0.3) // Dark grey for launch pads
+                } else if (q + r) % 2 == 0 {
                     Color::srgb(0.35, 0.75, 0.35) // Light green
                 } else {
                     Color::srgb(0.3, 0.65, 0.3) // Lighter medium green
@@ -662,10 +670,22 @@ fn setup_hex_map(
                             .map(|(edge, _)| edge)
                             .collect();
 
+                        // Calculate the center of the launch pad
+                        let mut center_x = 0.0;
+                        let mut center_z = 0.0;
+                        for &(cell_q, cell_r) in pad_cells {
+                            let pos = axial_to_world_pos(cell_q, cell_r);
+                            center_x += pos.x;
+                            center_z += pos.z;
+                        }
+                        center_x /= pad_cells.len() as f32;
+                        center_z /= pad_cells.len() as f32;
+                        let pad_center = Vec3::new(center_x, 0.0, center_z);
+
                         // Create outline mesh from perimeter edges
                         println!("Launch pad {} has {} perimeter edges", pad_idx, perimeter_edges.len());
                         if !perimeter_edges.is_empty() {
-                            let outline_mesh = create_launch_pad_outline_mesh(&perimeter_edges);
+                            let outline_mesh = create_launch_pad_outline_mesh(&perimeter_edges, pad_center);
                             let outline_mesh_handle = meshes.add(outline_mesh);
 
                             // Position at Y height
@@ -681,7 +701,8 @@ fn setup_hex_map(
                                     cull_mode: None,
                                     ..default()
                                 })),
-                                Transform::from_translation(Vec3::new(0.0, outline_y, 0.0)),
+                                Transform::from_translation(Vec3::new(pad_center.x, outline_y, pad_center.z))
+                                    .with_scale(Vec3::splat(0.90)),
                                 LaunchPadOutline {
                                     pad_index: pad_idx,
                                 },
