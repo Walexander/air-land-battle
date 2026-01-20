@@ -248,8 +248,9 @@ fn create_hexagon_outline_mesh() -> Mesh {
     let mut indices = Vec::new();
 
     let y = 0.0;
-    let outer_radius = HEX_RADIUS + (OUTLINE_WIDTH / 2.0);
-    let inner_radius = HEX_RADIUS - (OUTLINE_WIDTH / 2.0);
+    // Make outline 8px smaller
+    let outer_radius = HEX_RADIUS + (OUTLINE_WIDTH / 2.0) - 8.0;
+    let inner_radius = HEX_RADIUS - (OUTLINE_WIDTH / 2.0) - 8.0;
 
     // Create 6 pairs of vertices around the hexagon
     for i in 0..6 {
@@ -405,7 +406,7 @@ fn setup_hex_map(
                     world_pos + Vec3::new(0.0, base_outline_height, 0.0)
                 };
 
-                let outline_color = Color::srgb(0.5, 0.5, 0.5);
+                let outline_color = Color::srgb(1.0, 1.0, 1.0); // White
                 let outline_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
 
                 if is_obstacle {
@@ -437,16 +438,27 @@ fn setup_hex_map(
                         HexOutline { hex_entity },
                         LaunchPadOutline,
                     ));
-                } else {
+                }
+
+                // Always spawn hover highlight for all tiles (not obstacles)
+                if !is_obstacle {
+                    // Hover highlight positioned higher and slightly smaller
+                    let hover_pos = world_pos + Vec3::new(0.0, 2.0, 0.0);
                     parent.spawn((
-                        Mesh3d(outline_mesh.clone()),
+                        Mesh3d(filled_hex_mesh.clone()),
                         MeshMaterial3d(materials.add(StandardMaterial {
                             base_color: outline_color,
+                            emissive: outline_color.into(),
                             unlit: true,
+                            double_sided: true,
+                            cull_mode: None,
                             ..default()
                         })),
-                        Transform::from_translation(outline_pos).with_rotation(outline_rotation),
+                        Transform::from_translation(hover_pos)
+                            .with_rotation(outline_rotation)
+                            .with_scale(Vec3::splat(0.75)), // 15% smaller
                         HexOutline { hex_entity },
+                        Visibility::Hidden,
                     ));
                 }
 
@@ -531,23 +543,19 @@ fn hex_hover_system(
 fn update_outline_colors(
     hovered_hex: Res<HoveredHex>,
     mut outline_query: Query<
-        (&HexOutline, &MeshMaterial3d<StandardMaterial>, &mut Transform),
+        (&HexOutline, &mut Visibility),
         Without<LaunchPadOutline>,
     >,
-    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    for (outline, material_handle, mut transform) in &mut outline_query {
-        if let Some(material) = materials.get_mut(&material_handle.0) {
-            let is_hovered = hovered_hex.entity == Some(outline.hex_entity);
+    for (outline, mut visibility) in &mut outline_query {
+        let is_hovered = hovered_hex.entity == Some(outline.hex_entity);
 
-            if is_hovered {
-                material.base_color = Color::srgb(1.0, 1.0, 1.0);
-                transform.scale = Vec3::splat(1.05);
-            } else {
-                material.base_color = Color::srgb(0.5, 0.5, 0.5);
-                transform.scale = Vec3::splat(1.0);
-            }
-        }
+        // Only show outline when hovered
+        *visibility = if is_hovered {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
     }
 }
 
