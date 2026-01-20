@@ -557,10 +557,10 @@ fn setup_units(
         (4, 1, 3, Army::Blue),
     ];
 
-    let ring_mesh = meshes.add(create_selection_ring_mesh(20.0, 30.0));
+    let ring_mesh = meshes.add(create_selection_ring_mesh(55.0, 63.0));
     let ring_material = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 1.0, 1.0),
-        emissive: Color::srgb(1.0, 1.0, 1.0).into(),
+        base_color: Color::srgb(0.7, 0.7, 0.7),
+        emissive: Color::srgb(0.7, 0.7, 0.7).into(),
         unlit: true,
         ..default()
     });
@@ -616,10 +616,13 @@ fn setup_units(
             parent.spawn((
                 Mesh3d(ring_mesh.clone()),
                 MeshMaterial3d(ring_material.clone()),
-                Transform::from_translation(ring_pos).with_rotation(ring_rotation),
+                Transform::from_translation(ring_pos)
+                    .with_rotation(ring_rotation)
+                    .with_scale(Vec3::splat(0.75)),
                 SelectionRing {
                     unit_entity,
                     animation_timer: 0.0,
+                    bounce_count: 0,
                 },
                 Visibility::Hidden,
             ));
@@ -736,10 +739,13 @@ fn setup_units(
             parent.spawn((
                 Mesh3d(ring_mesh.clone()),
                 MeshMaterial3d(ring_material.clone()),
-                Transform::from_translation(ring_pos).with_rotation(ring_rotation),
+                Transform::from_translation(ring_pos)
+                    .with_rotation(ring_rotation)
+                    .with_scale(Vec3::splat(0.75)),
                 SelectionRing {
                     unit_entity,
                     animation_timer: 0.0,
+                    bounce_count: 0,
                 },
                 Visibility::Hidden,
             ));

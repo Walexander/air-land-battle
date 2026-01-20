@@ -262,7 +262,7 @@ fn create_launch_pad_outline_mesh(perimeter_edges: &[((i32, i32), (i32, i32))], 
     let mut indices = Vec::new();
 
     let y = 0.0;
-    let line_width = 2.0; // Line thickness
+    let line_width = 4.0; // Line thickness
 
     // Collect all unique corner positions (in 3D world space)
     let mut corner_positions: Vec<[f32; 3]> = Vec::new();
@@ -702,7 +702,7 @@ fn setup_hex_map(
                                     ..default()
                                 })),
                                 Transform::from_translation(Vec3::new(pad_center.x, outline_y, pad_center.z))
-                                    .with_scale(Vec3::splat(0.90)),
+                                    .with_scale(Vec3::splat(1.0)),
                                 LaunchPadOutline {
                                     pad_index: pad_idx,
                                 },
