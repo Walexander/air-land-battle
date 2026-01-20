@@ -517,6 +517,7 @@ fn handle_unit_selection(
                                             current_waypoint: 0,
                                             progress: 0.0,
                                             speed: 100.0,
+                                            segment_start: current_cell,
                                         });
 
                                         spawn_destination_ring(
@@ -557,10 +558,17 @@ fn handle_unit_selection(
                                             new_path.extend_from_slice(&path[1..]);
                                         }
 
+                                        // Only update unit position if we've already claimed next_cell (>= 0.5 progress)
+                                        let unit_position = if movement.progress >= 0.5 {
+                                            next_cell
+                                        } else {
+                                            current_cell
+                                        };
+
                                         commands.entity(selected_entity).insert((
                                             Unit {
-                                                q: next_cell.0,
-                                                r: next_cell.1,
+                                                q: unit_position.0,
+                                                r: unit_position.1,
                                                 _sprite_index: selected_unit._sprite_index,
                                                 army: selected_unit.army,
                                             },
@@ -569,6 +577,7 @@ fn handle_unit_selection(
                                                 current_waypoint: 0,
                                                 progress: 1.0 - movement.progress,
                                                 speed: 100.0,
+                                                segment_start: next_cell,
                                             },
                                         ));
 
@@ -592,11 +601,13 @@ fn handle_unit_selection(
                                         }
 
                                         if new_full_path.len() > 1 {
+                                            // Keep current segment_start to maintain visual position
                                             commands.entity(selected_entity).insert(UnitMovement {
                                                 path: new_full_path,
                                                 current_waypoint: 0,
                                                 progress: movement.progress,
                                                 speed: 100.0,
+                                                segment_start: movement.segment_start,
                                             });
 
                                             spawn_destination_ring(
@@ -633,6 +644,7 @@ fn handle_unit_selection(
                                         current_waypoint: 0,
                                         progress: 0.0,
                                         speed: 100.0,
+                                        segment_start: start,
                                     });
 
                                     spawn_destination_ring(

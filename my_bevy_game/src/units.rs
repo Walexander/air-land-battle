@@ -35,6 +35,7 @@ pub struct UnitMovement {
     pub current_waypoint: usize,
     pub progress: f32,
     pub speed: f32,
+    pub segment_start: (i32, i32), // The hex position where this segment started
 }
 
 #[derive(Component)]
@@ -187,10 +188,10 @@ fn move_units(
             continue;
         }
 
-        let current_hex = (unit.q, unit.r);
         let target_hex = movement.path[movement.current_waypoint];
+        let start_hex = movement.segment_start;
 
-        let start_pos = axial_to_world_pos(current_hex.0, current_hex.1);
+        let start_pos = axial_to_world_pos(start_hex.0, start_hex.1);
         let target_pos = axial_to_world_pos(target_hex.0, target_hex.1);
         let distance = start_pos.distance(target_pos);
 
@@ -213,7 +214,14 @@ fn move_units(
             movement.progress = 1.0;
         }
 
+        // Update unit occupancy at halfway point
+        if movement.progress >= 0.5 && (unit.q, unit.r) == start_hex {
+            unit.q = target_hex.0;
+            unit.r = target_hex.1;
+        }
+
         if movement.progress >= 1.0 {
+            // Ensure unit position is correct
             unit.q = target_hex.0;
             unit.r = target_hex.1;
             transform.translation.x = target_pos.x;
@@ -221,6 +229,11 @@ fn move_units(
 
             movement.current_waypoint += 1;
             movement.progress = 0.0;
+
+            // Update segment_start for next waypoint
+            if movement.current_waypoint < movement.path.len() {
+                movement.segment_start = target_hex;
+            }
 
             if movement.current_waypoint >= movement.path.len() {
                 commands.entity(entity).remove::<UnitMovement>();
@@ -241,12 +254,20 @@ fn update_occupancy_intent(
     for (entity, unit, movement) in &unit_query {
         if movement.current_waypoint < movement.path.len() {
             if movement.progress >= 0.5 {
+                // At >= 0.5, unit already occupies current target, so intent is for next cell if it exists
+                if movement.current_waypoint + 1 < movement.path.len() {
+                    let next_cell = movement.path[movement.current_waypoint + 1];
+                    occupancy_intent.intentions.insert(entity, next_cell);
+                } else {
+                    // No next cell, intent is current position
+                    occupancy_intent
+                        .intentions
+                        .insert(entity, (unit.q, unit.r));
+                }
+            } else {
+                // At < 0.5, intent is for the current target
                 let next_cell = movement.path[movement.current_waypoint];
                 occupancy_intent.intentions.insert(entity, next_cell);
-            } else {
-                occupancy_intent
-                    .intentions
-                    .insert(entity, (unit.q, unit.r));
             }
         } else {
             occupancy_intent
@@ -262,21 +283,28 @@ fn update_occupancy(
 ) {
     occupancy.positions.clear();
     occupancy.position_to_entity.clear();
-    for (entity, unit, movement_opt) in &unit_query {
-        let current_cell = (unit.q, unit.r);
-
-        let occupied_cell = if let Some(movement) = movement_opt {
-            if movement.current_waypoint < movement.path.len() && movement.progress >= 0.5 {
-                movement.path[movement.current_waypoint]
-            } else {
-                current_cell
-            }
-        } else {
-            current_cell
-        };
-
+    for (entity, unit, _movement_opt) in &unit_query {
+        // Unit.q/r is now updated at 0.5 progress, so it always reflects the occupied cell
+        let occupied_cell = (unit.q, unit.r);
         occupancy.positions.insert(occupied_cell);
         occupancy.position_to_entity.insert(occupied_cell, entity);
+    }
+}
+
+// Helper function to determine conflict resolution
+// Uses XOR of entity bits to create a consistent but "random" 50/50 choice
+fn should_entity_yield_to(entity_a: Entity, entity_b: Entity) -> bool {
+    // XOR the entity bits and check the least significant bit
+    // Then use entity ordering as a tiebreaker to ensure asymmetry
+    let xor = entity_a.to_bits() ^ entity_b.to_bits();
+    let bit = xor & 1;
+
+    // If bit is 0, lower entity ID yields; if bit is 1, higher entity ID yields
+    // This ensures exactly one unit yields in any conflict
+    if bit == 0 {
+        entity_a.to_bits() < entity_b.to_bits()
+    } else {
+        entity_a.to_bits() > entity_b.to_bits()
     }
 }
 
@@ -296,7 +324,7 @@ fn detect_collisions_and_repath(
 
             let should_yield_to_occupied_cell =
                 if let Some(&occupying_entity) = occupancy.position_to_entity.get(&next_cell) {
-                    next_cell != current_cell && entity.to_bits() > occupying_entity.to_bits()
+                    next_cell != current_cell && should_entity_yield_to(entity, occupying_entity)
                 } else {
                     false
                 };
@@ -305,7 +333,7 @@ fn detect_collisions_and_repath(
                 && occupancy_intent.intentions.iter().any(
                     |(other_entity, &intent_pos)| {
                         if *other_entity != entity && intent_pos == next_cell {
-                            entity.to_bits() > other_entity.to_bits()
+                            should_entity_yield_to(entity, *other_entity)
                         } else {
                             false
                         }
@@ -342,12 +370,18 @@ fn detect_collisions_and_repath(
 
                 if new_path != old_movement.path {
                     if let Ok((_, mut unit_component, mut movement)) = unit_query.get_mut(entity) {
+                        // Update unit's stored position to next_cell so lerp works correctly
+                        // Visual position is currently: segment_start.lerp(next_cell, progress)
+                        // We want to maintain that position while reversing direction
+                        // By setting unit position to next_cell and segment_start to next_cell, inverting progress:
+                        // new visual = next_cell.lerp(current_cell, 1.0 - progress) = segment_start.lerp(next_cell, progress) ✓
                         unit_component.q = next_cell.0;
                         unit_component.r = next_cell.1;
 
                         movement.path = new_path;
                         movement.current_waypoint = 0;
                         movement.progress = 1.0 - old_movement.progress;
+                        movement.segment_start = next_cell;
                     }
 
                     println!("Unit repathing to avoid collision!");
