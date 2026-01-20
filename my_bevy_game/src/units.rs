@@ -58,6 +58,78 @@ pub struct Health {
     pub max: f32,
 }
 
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum UnitClass {
+    Infantry,
+    Cavalry,
+    Artillery,
+}
+
+#[derive(Component, Clone)]
+pub struct UnitStats {
+    pub max_health: f32,
+    pub speed: f32,
+    pub armor: f32,
+    pub attack: f32,
+}
+
+impl UnitClass {
+    pub fn default_stats(&self) -> UnitStats {
+        match self {
+            UnitClass::Infantry => UnitStats {
+                max_health: 100.0,
+                speed: 100.0,
+                armor: 50.0,
+                attack: 40.0,
+            },
+            UnitClass::Cavalry => UnitStats {
+                max_health: 80.0,
+                speed: 150.0,
+                armor: 30.0,
+                attack: 40.0,
+            },
+            UnitClass::Artillery => UnitStats {
+                max_health: 120.0,
+                speed: 50.0,
+                armor: 70.0,
+                attack: 80.0,
+            },
+        }
+    }
+
+    pub fn model_path(&self) -> &'static str {
+        match self {
+            UnitClass::Infantry => "walking-rifle.glb",
+            UnitClass::Cavalry => "Fox.glb",
+            UnitClass::Artillery => "stickman.glb",
+        }
+    }
+
+    pub fn scale(&self) -> f32 {
+        match self {
+            UnitClass::Infantry => 12.0,
+            UnitClass::Cavalry => 0.5,
+            UnitClass::Artillery => 8.0,
+        }
+    }
+
+    pub fn idle_animation_index(&self) -> usize {
+        match self {
+            UnitClass::Infantry => 0,
+            UnitClass::Cavalry => 0,
+            UnitClass::Artillery => 0,
+        }
+    }
+
+    pub fn moving_animation_index(&self) -> usize {
+        match self {
+            UnitClass::Infantry => 0,  // walking-rifle only has Animation0
+            UnitClass::Cavalry => 2,
+            UnitClass::Artillery => 2,
+        }
+    }
+}
+
 #[derive(Component)]
 pub struct HealthBar {
     pub unit_entity: Entity,
@@ -181,9 +253,9 @@ pub fn find_path(
 fn move_units(
     time: Res<Time>,
     mut commands: Commands,
-    mut query: Query<(Entity, &mut Transform, &mut Unit, &mut UnitMovement)>,
+    mut query: Query<(Entity, &mut Transform, &mut Unit, &mut UnitMovement, &UnitStats)>,
 ) {
-    for (entity, mut transform, mut unit, mut movement) in &mut query {
+    for (entity, mut transform, mut unit, mut movement, stats) in &mut query {
         if movement.current_waypoint >= movement.path.len() {
             commands.entity(entity).remove::<UnitMovement>();
             continue;
@@ -210,7 +282,7 @@ fn move_units(
             .slerp(target_rotation, time.delta_secs() * rotation_speed);
 
         if distance > 0.0 {
-            movement.progress += (time.delta_secs() * movement.speed) / distance;
+            movement.progress += (time.delta_secs() * stats.speed) / distance;
         } else {
             movement.progress = 1.0;
         }
@@ -428,29 +500,48 @@ fn update_unit_animations(
                 anim_graphs.idle_index
             };
 
-            let mut found_player = false;
+            // Check if idle and moving animations are the same (e.g., Infantry with only one animation)
+            let same_animation = anim_graphs.idle_index == anim_graphs.moving_index;
+
+            let mut found_players = 0;
             for descendant in children_query.iter_descendants(unit_entity) {
                 if let Ok((mut player, mut transitions)) = players_query.get_mut(descendant) {
-                    // Both animations are in the same graph now, so transitions work in both directions
-                    transitions
-                        .play(&mut player, new_index, Duration::from_secs_f32(0.2))
-                        .repeat();
+                    if same_animation {
+                        // Same animation for idle and moving - pause when idle, play when moving
+                        if is_moving {
+                            player.resume_all();
+                            println!("Resumed animation for unit {:?} on entity {:?}", unit_entity, descendant);
+                        } else {
+                            player.pause_all();
+                            println!("Paused animation for unit {:?} on entity {:?}", unit_entity, descendant);
+                        }
+                    } else {
+                        // Different animations - transition between them
+                        transitions
+                            .play(&mut player, new_index, Duration::from_secs_f32(0.2))
+                            .repeat();
 
-                    println!(
-                        "Switched to {} animation (index {:?}) for unit {:?} on entity {:?}",
-                        if is_moving { "moving" } else { "idle" },
-                        new_index,
-                        unit_entity,
-                        descendant
-                    );
-                    found_player = true;
-                    break;
+                        println!(
+                            "Switched to {} animation (index {:?}) for unit {:?} on entity {:?}",
+                            if is_moving { "moving" } else { "idle" },
+                            new_index,
+                            unit_entity,
+                            descendant
+                        );
+                    }
+                    found_players += 1;
                 }
             }
 
-            if !found_player {
+            if found_players == 0 {
                 println!(
                     "Warning: Could not find AnimationPlayer for unit {:?}",
+                    unit_entity
+                );
+            } else {
+                println!(
+                    "Updated {} AnimationPlayer(s) for unit {:?}",
+                    found_players,
                     unit_entity
                 );
             }
@@ -555,7 +646,7 @@ fn update_health_bars(
 
             // Update position to follow unit
             let unit_world_pos = unit_transform.translation;
-            bar_transform.translation = unit_world_pos + Vec3::new(0.0, 40.2, 0.0);
+            bar_transform.translation = unit_world_pos + Vec3::new(0.0, 70.2, 0.0);
         }
     }
 
@@ -563,7 +654,7 @@ fn update_health_bars(
     for (health_bar, mut bar_transform) in &mut health_bar_bg_query {
         if let Ok((_, unit_transform)) = unit_query.get(health_bar.unit_entity) {
             let unit_world_pos = unit_transform.translation;
-            bar_transform.translation = unit_world_pos + Vec3::new(0.0, 40.1, 0.0);
+            bar_transform.translation = unit_world_pos + Vec3::new(0.0, 70.1, 0.0);
         }
     }
 
@@ -571,7 +662,7 @@ fn update_health_bars(
     for (health_bar, mut bar_transform) in &mut health_bar_border_query {
         if let Ok((_, unit_transform)) = unit_query.get(health_bar.unit_entity) {
             let unit_world_pos = unit_transform.translation;
-            bar_transform.translation = unit_world_pos + Vec3::new(0.0, 40.0, 0.0);
+            bar_transform.translation = unit_world_pos + Vec3::new(0.0, 70.0, 0.0);
         }
     }
 }
@@ -583,13 +674,17 @@ fn setup_units(
     mut animation_graphs: ResMut<Assets<AnimationGraph>>,
     asset_server: Res<AssetServer>,
 ) {
-    let stickman_scene: Handle<Scene> = asset_server.load("Fox.glb#Scene0");
-
+    // (q, r, unit_index, army, class)
     let units = vec![
-        (-3, 1, 0, Army::Red),
-        (3, 1, 1, Army::Blue),
-        (-4, 1, 2, Army::Red),
-        (4, 1, 3, Army::Blue),
+        // Red Army - One of each type
+        (-3, 1, 0, Army::Red, UnitClass::Infantry),
+        (-4, 1, 1, Army::Red, UnitClass::Cavalry),
+        (-4, 2, 2, Army::Red, UnitClass::Artillery),
+
+        // Blue Army - Mirrored positions
+        (3, 1, 3, Army::Blue, UnitClass::Infantry),
+        (4, 0, 4, Army::Blue, UnitClass::Cavalry),
+        (3, 2, 5, Army::Blue, UnitClass::Artillery),
     ];
 
     let ring_mesh = meshes.add(create_selection_ring_mesh(55.0, 63.0));
@@ -607,49 +702,123 @@ fn setup_units(
         Visibility::default(),
         Name::new("Red Army"),
     )).with_children(|parent| {
-        for (q, r, unit_index, army) in units.iter().filter(|(_, _, _, a)| *a == Army::Red) {
+        for (q, r, unit_index, army, unit_class) in units.iter().filter(|(_, _, _, a, _)| *a == Army::Red) {
             let world_pos = axial_to_world_pos(*q, *r);
             let unit_pos = world_pos + Vec3::new(0.0, 5.0, 0.0);
 
-            // Create a single animation graph with both idle and walking animations
-            let mut animation_graph = AnimationGraph::new();
-            let idle_index = animation_graph.add_clip(
-                asset_server.load(GltfAssetLabel::Animation(0).from_asset("Fox.glb")),
-                1.0,
-                animation_graph.root,
-            );
-            let moving_index = animation_graph.add_clip(
-                asset_server.load(GltfAssetLabel::Animation(2).from_asset("Fox.glb")),
-                1.0,
-                animation_graph.root,
-            );
-            let graph_handle = animation_graphs.add(animation_graph);
+            // Load model based on class
+            let model_path = unit_class.model_path();
 
-            let unit_entity = parent
-                .spawn((
-                    SceneRoot(stickman_scene.clone()),
-                    Transform::from_translation(unit_pos).with_scale(Vec3::splat(0.5)),
-                    Unit {
-                        q: *q,
-                        r: *r,
-                        _sprite_index: *unit_index,
-                        army: *army,
-                    },
-                    AnimationGraphHandle(graph_handle.clone()),
-                    AnimationGraphs {
-                        idle_graph: graph_handle.clone(),
-                        idle_index,
-                        moving_graph: graph_handle.clone(),
-                        moving_index,
-                    },
-                    CurrentAnimationState { is_moving: false },
-                    Health {
-                        current: 100.0,
-                        max: 100.0,
-                    },
-                    Name::new(format!("Unit {} ({}, {})", unit_index, q, r)),
-                ))
-                .id();
+            // Get stats for this class
+            let stats = unit_class.default_stats();
+
+            // Create unit entity based on class
+            let unit_entity = if *unit_class == UnitClass::Infantry {
+                // Infantry: spawn 3 model instances as children in triangle formation
+                let spacing = 20.0;
+                let offsets = [
+                    Vec3::new(0.0, 0.0, spacing),      // Front
+                    Vec3::new(-spacing, 0.0, -spacing), // Back Left
+                    Vec3::new(spacing, 0.0, -spacing),  // Back Right
+                ];
+
+                // Create animation graph for parent (needed for animation system)
+                let mut animation_graph = AnimationGraph::new();
+                let idle_index = animation_graph.add_clip(
+                    asset_server.load(GltfAssetLabel::Animation(unit_class.idle_animation_index()).from_asset(model_path)),
+                    1.0,
+                    animation_graph.root,
+                );
+                let moving_index = animation_graph.add_clip(
+                    asset_server.load(GltfAssetLabel::Animation(unit_class.moving_animation_index()).from_asset(model_path)),
+                    1.0,
+                    animation_graph.root,
+                );
+                let graph_handle = animation_graphs.add(animation_graph);
+
+                parent
+                    .spawn((
+                        Transform::from_translation(unit_pos),
+                        Unit {
+                            q: *q,
+                            r: *r,
+                            _sprite_index: *unit_index,
+                            army: *army,
+                        },
+                        *unit_class,
+                        stats.clone(),
+                        AnimationGraphHandle(graph_handle.clone()),
+                        AnimationGraphs {
+                            idle_graph: graph_handle.clone(),
+                            idle_index,
+                            moving_graph: graph_handle.clone(),
+                            moving_index,
+                        },
+                        CurrentAnimationState { is_moving: false },
+                        Health {
+                            current: stats.max_health,
+                            max: stats.max_health,
+                        },
+                        Name::new(format!("{:?} {} ({}, {})", unit_class, unit_index, q, r)),
+                    ))
+                    .with_children(|unit_parent| {
+                        for (i, offset) in offsets.iter().enumerate() {
+                            let scene: Handle<Scene> = asset_server.load(&format!("{}#Scene0", model_path));
+
+                            unit_parent.spawn((
+                                SceneRoot(scene),
+                                Transform::from_translation(*offset)
+                                    .with_scale(Vec3::splat(unit_class.scale())),
+                                Name::new(format!("Infantry Model {}", i)),
+                            ));
+                        }
+                    })
+                    .id()
+            } else {
+                // Other classes: single model instance
+                let scene: Handle<Scene> = asset_server.load(&format!("{}#Scene0", model_path));
+                let mut animation_graph = AnimationGraph::new();
+                let idle_index = animation_graph.add_clip(
+                    asset_server.load(GltfAssetLabel::Animation(unit_class.idle_animation_index()).from_asset(model_path)),
+                    1.0,
+                    animation_graph.root,
+                );
+                let moving_index = animation_graph.add_clip(
+                    asset_server.load(GltfAssetLabel::Animation(unit_class.moving_animation_index()).from_asset(model_path)),
+                    1.0,
+                    animation_graph.root,
+                );
+                let graph_handle = animation_graphs.add(animation_graph);
+
+                parent
+                    .spawn((
+                        SceneRoot(scene),
+                        Transform::from_translation(unit_pos)
+                            .with_scale(Vec3::splat(unit_class.scale())),
+                        Unit {
+                            q: *q,
+                            r: *r,
+                            _sprite_index: *unit_index,
+                            army: *army,
+                        },
+                        *unit_class,
+                        stats.clone(),
+                        AnimationGraphHandle(graph_handle.clone()),
+                        AnimationGraphs {
+                            idle_graph: graph_handle.clone(),
+                            idle_index,
+                            moving_graph: graph_handle.clone(),
+                            moving_index,
+                        },
+                        CurrentAnimationState { is_moving: false },
+                        Health {
+                            current: stats.max_health,
+                            max: stats.max_health,
+                        },
+                        Name::new(format!("{:?} {} ({}, {})", unit_class, unit_index, q, r)),
+                    ))
+                    .id()
+            };
 
             let ring_pos = world_pos + Vec3::new(0.0, 6.0, 0.0);
             let ring_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
@@ -672,7 +841,7 @@ fn setup_units(
             let bar_height = 10.0;
             let border_width_sides = 4.0;
             let border_height_extra = 8.0; // 4px extra on top and bottom (2px more each)
-            let bar_pos = world_pos + Vec3::new(0.0, 40.0, 0.0);
+            let bar_pos = world_pos + Vec3::new(0.0, 70.0, 0.0);
             let health_bar_mesh = meshes.add(create_health_bar_mesh(bar_width, bar_height));
             let border_mesh = meshes.add(create_health_bar_mesh(
                 bar_width + border_width_sides,
@@ -735,49 +904,123 @@ fn setup_units(
         Visibility::default(),
         Name::new("Blue Army"),
     )).with_children(|parent| {
-        for (q, r, unit_index, army) in units.iter().filter(|(_, _, _, a)| *a == Army::Blue) {
+        for (q, r, unit_index, army, unit_class) in units.iter().filter(|(_, _, _, a, _)| *a == Army::Blue) {
             let world_pos = axial_to_world_pos(*q, *r);
             let unit_pos = world_pos + Vec3::new(0.0, 5.0, 0.0);
 
-            // Create a single animation graph with both idle and walking animations
-            let mut animation_graph = AnimationGraph::new();
-            let idle_index = animation_graph.add_clip(
-                asset_server.load(GltfAssetLabel::Animation(0).from_asset("Fox.glb")),
-                1.0,
-                animation_graph.root,
-            );
-            let moving_index = animation_graph.add_clip(
-                asset_server.load(GltfAssetLabel::Animation(2).from_asset("Fox.glb")),
-                1.0,
-                animation_graph.root,
-            );
-            let graph_handle = animation_graphs.add(animation_graph);
+            // Load model based on class
+            let model_path = unit_class.model_path();
 
-            let unit_entity = parent
-                .spawn((
-                    SceneRoot(stickman_scene.clone()),
-                    Transform::from_translation(unit_pos).with_scale(Vec3::splat(0.5)),
-                    Unit {
-                        q: *q,
-                        r: *r,
-                        _sprite_index: *unit_index,
-                        army: *army,
-                    },
-                    AnimationGraphHandle(graph_handle.clone()),
-                    AnimationGraphs {
-                        idle_graph: graph_handle.clone(),
-                        idle_index,
-                        moving_graph: graph_handle.clone(),
-                        moving_index,
-                    },
-                    CurrentAnimationState { is_moving: false },
-                    Health {
-                        current: 100.0,
-                        max: 100.0,
-                    },
-                    Name::new(format!("Unit {} ({}, {})", unit_index, q, r)),
-                ))
-                .id();
+            // Get stats for this class
+            let stats = unit_class.default_stats();
+
+            // Create unit entity based on class
+            let unit_entity = if *unit_class == UnitClass::Infantry {
+                // Infantry: spawn 3 model instances as children in triangle formation
+                let spacing = 20.0;
+                let offsets = [
+                    Vec3::new(0.0, 0.0, spacing),      // Front
+                    Vec3::new(-spacing, 0.0, -spacing), // Back Left
+                    Vec3::new(spacing, 0.0, -spacing),  // Back Right
+                ];
+
+                // Create animation graph for parent (needed for animation system)
+                let mut animation_graph = AnimationGraph::new();
+                let idle_index = animation_graph.add_clip(
+                    asset_server.load(GltfAssetLabel::Animation(unit_class.idle_animation_index()).from_asset(model_path)),
+                    1.0,
+                    animation_graph.root,
+                );
+                let moving_index = animation_graph.add_clip(
+                    asset_server.load(GltfAssetLabel::Animation(unit_class.moving_animation_index()).from_asset(model_path)),
+                    1.0,
+                    animation_graph.root,
+                );
+                let graph_handle = animation_graphs.add(animation_graph);
+
+                parent
+                    .spawn((
+                        Transform::from_translation(unit_pos),
+                        Unit {
+                            q: *q,
+                            r: *r,
+                            _sprite_index: *unit_index,
+                            army: *army,
+                        },
+                        *unit_class,
+                        stats.clone(),
+                        AnimationGraphHandle(graph_handle.clone()),
+                        AnimationGraphs {
+                            idle_graph: graph_handle.clone(),
+                            idle_index,
+                            moving_graph: graph_handle.clone(),
+                            moving_index,
+                        },
+                        CurrentAnimationState { is_moving: false },
+                        Health {
+                            current: stats.max_health,
+                            max: stats.max_health,
+                        },
+                        Name::new(format!("{:?} {} ({}, {})", unit_class, unit_index, q, r)),
+                    ))
+                    .with_children(|unit_parent| {
+                        for (i, offset) in offsets.iter().enumerate() {
+                            let scene: Handle<Scene> = asset_server.load(&format!("{}#Scene0", model_path));
+
+                            unit_parent.spawn((
+                                SceneRoot(scene),
+                                Transform::from_translation(*offset)
+                                    .with_scale(Vec3::splat(unit_class.scale())),
+                                Name::new(format!("Infantry Model {}", i)),
+                            ));
+                        }
+                    })
+                    .id()
+            } else {
+                // Other classes: single model instance
+                let scene: Handle<Scene> = asset_server.load(&format!("{}#Scene0", model_path));
+                let mut animation_graph = AnimationGraph::new();
+                let idle_index = animation_graph.add_clip(
+                    asset_server.load(GltfAssetLabel::Animation(unit_class.idle_animation_index()).from_asset(model_path)),
+                    1.0,
+                    animation_graph.root,
+                );
+                let moving_index = animation_graph.add_clip(
+                    asset_server.load(GltfAssetLabel::Animation(unit_class.moving_animation_index()).from_asset(model_path)),
+                    1.0,
+                    animation_graph.root,
+                );
+                let graph_handle = animation_graphs.add(animation_graph);
+
+                parent
+                    .spawn((
+                        SceneRoot(scene),
+                        Transform::from_translation(unit_pos)
+                            .with_scale(Vec3::splat(unit_class.scale())),
+                        Unit {
+                            q: *q,
+                            r: *r,
+                            _sprite_index: *unit_index,
+                            army: *army,
+                        },
+                        *unit_class,
+                        stats.clone(),
+                        AnimationGraphHandle(graph_handle.clone()),
+                        AnimationGraphs {
+                            idle_graph: graph_handle.clone(),
+                            idle_index,
+                            moving_graph: graph_handle.clone(),
+                            moving_index,
+                        },
+                        CurrentAnimationState { is_moving: false },
+                        Health {
+                            current: stats.max_health,
+                            max: stats.max_health,
+                        },
+                        Name::new(format!("{:?} {} ({}, {})", unit_class, unit_index, q, r)),
+                    ))
+                    .id()
+            };
 
             let ring_pos = world_pos + Vec3::new(0.0, 6.0, 0.0);
             let ring_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
@@ -800,7 +1043,7 @@ fn setup_units(
             let bar_height = 10.0;
             let border_width_sides = 4.0;
             let border_height_extra = 8.0; // 4px extra on top and bottom (2px more each)
-            let bar_pos = world_pos + Vec3::new(0.0, 40.0, 0.0);
+            let bar_pos = world_pos + Vec3::new(0.0, 70.0, 0.0);
             let health_bar_mesh = meshes.add(create_health_bar_mesh(bar_width, bar_height));
             let border_mesh = meshes.add(create_health_bar_mesh(
                 bar_width + border_width_sides,

@@ -31,6 +31,9 @@ pub struct CameraSettings {
     pub scale: f32,
 }
 
+#[derive(Resource)]
+pub struct CameraControlsVisible(pub bool);
+
 // Systems
 fn setup_ui(mut commands: Commands) {
     commands
@@ -445,6 +448,29 @@ fn handle_camera_slider_input(
     }
 }
 
+fn toggle_camera_controls_visibility(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut visible: ResMut<CameraControlsVisible>,
+) {
+    if keyboard.just_pressed(KeyCode::KeyH) {
+        visible.0 = !visible.0;
+        println!("Camera controls visibility toggled: {}", visible.0);
+    }
+}
+
+fn update_camera_controls_panel_visibility(
+    visible: Res<CameraControlsVisible>,
+    mut query: Query<&mut Visibility, With<CameraControlsPanel>>,
+) {
+    for mut visibility in &mut query {
+        *visibility = if visible.0 {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+}
+
 pub struct UIPlugin;
 
 impl Plugin for UIPlugin {
@@ -458,6 +484,7 @@ impl Plugin for UIPlugin {
             look_at_z: 0.0,
             scale: 0.8,
         })
+        .insert_resource(CameraControlsVisible(false))
         .add_systems(Startup, (setup_ui, setup_camera_controls))
         .add_systems(
             Update,
@@ -467,6 +494,8 @@ impl Plugin for UIPlugin {
                 handle_restart,
                 handle_camera_slider_input,
                 update_camera_from_settings,
+                toggle_camera_controls_visibility,
+                update_camera_controls_panel_visibility,
             ),
         );
     }

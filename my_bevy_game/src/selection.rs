@@ -3,7 +3,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 
 use crate::map::{axial_to_world_pos, HexMapConfig, HexTile, HoveredHex, Obstacles};
-use crate::units::{find_path, Occupancy, OccupancyIntent, Unit, UnitMovement, Army};
+use crate::units::{find_path, Occupancy, OccupancyIntent, Unit, UnitMovement, Army, UnitStats};
 
 // Components
 #[derive(Component)]
@@ -426,7 +426,7 @@ fn handle_unit_selection(
     occupancy: Res<Occupancy>,
     occupancy_intent: Res<OccupancyIntent>,
     unit_query: Query<(Entity, &Unit, Option<&UnitMovement>), Without<Selected>>,
-    selected_query: Query<(Entity, &Unit, Option<&UnitMovement>, &Transform), With<Selected>>,
+    selected_query: Query<(Entity, &Unit, &UnitStats, Option<&UnitMovement>, &Transform), With<Selected>>,
     path_viz_query: Query<(Entity, &PathVisualization)>,
     dest_ring_query: Query<(Entity, &DestinationRing)>,
     mut selection_ring_query: Query<&mut SelectionRing>,
@@ -449,12 +449,12 @@ fn handle_unit_selection(
                 }
 
                 if let Some(unit_entity) = clicked_unit {
-                    for (entity, _, _, _) in &selected_query {
+                    for (entity, _, _, _, _) in &selected_query {
                         commands.entity(entity).remove::<Selected>();
                     }
                     commands.entity(unit_entity).insert(Selected);
                 } else {
-                    if let Ok((selected_entity, selected_unit, existing_movement, _unit_transform)) =
+                    if let Ok((selected_entity, selected_unit, stats, existing_movement, _unit_transform)) =
                         selected_query.single()
                     {
                         let goal = (hovered_tile.q, hovered_tile.r);
@@ -516,7 +516,7 @@ fn handle_unit_selection(
                                             path: path_to_follow,
                                             current_waypoint: 0,
                                             progress: 0.0,
-                                            speed: 100.0,
+                                            speed: stats.speed,
                                             segment_start: current_cell,
                                         });
 
@@ -576,7 +576,7 @@ fn handle_unit_selection(
                                                 path: new_path,
                                                 current_waypoint: 0,
                                                 progress: 1.0 - movement.progress,
-                                                speed: 100.0,
+                                                speed: stats.speed,
                                                 segment_start: next_cell,
                                             },
                                         ));
@@ -606,7 +606,7 @@ fn handle_unit_selection(
                                                 path: new_full_path,
                                                 current_waypoint: 0,
                                                 progress: movement.progress,
-                                                speed: 100.0,
+                                                speed: stats.speed,
                                                 segment_start: movement.segment_start,
                                             });
 
