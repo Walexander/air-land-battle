@@ -1,5 +1,7 @@
 use bevy::prelude::*;
 use bevy::gltf::GltfAssetLabel;
+use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::asset::RenderAssetUsages;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::cmp::Ordering;
 
@@ -47,6 +49,23 @@ pub struct AnimationGraphs {
 pub struct CurrentAnimationState {
     pub is_moving: bool,
 }
+
+#[derive(Component)]
+pub struct Health {
+    pub current: f32,
+    pub max: f32,
+}
+
+#[derive(Component)]
+pub struct HealthBar {
+    pub unit_entity: Entity,
+}
+
+#[derive(Component)]
+pub struct HealthBarFill;
+
+#[derive(Component)]
+pub struct HealthBarBorder;
 
 // Resources
 #[derive(Resource, Default)]
@@ -447,6 +466,81 @@ fn play_animation_when_loaded(
     }
 }
 
+fn create_health_bar_mesh(width: f32, height: f32) -> Mesh {
+    let half_width = width / 2.0;
+    let half_height = height / 2.0;
+
+    let positions = vec![
+        [-half_width, 0.0, -half_height],
+        [half_width, 0.0, -half_height],
+        [half_width, 0.0, half_height],
+        [-half_width, 0.0, half_height],
+    ];
+
+    let normals = vec![
+        [0.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+    ];
+
+    let uvs = vec![
+        [0.0, 0.0],
+        [1.0, 0.0],
+        [1.0, 1.0],
+        [0.0, 1.0],
+    ];
+
+    let indices = Indices::U32(vec![0, 1, 2, 0, 2, 3]);
+
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+    .with_inserted_indices(indices)
+}
+
+
+fn update_health_bars(
+    unit_query: Query<(&Health, &Transform), With<Unit>>,
+    mut health_bar_fill_query: Query<(&HealthBar, &mut Transform), (With<HealthBarFill>, Without<Unit>, Without<HealthBarBorder>)>,
+    mut health_bar_bg_query: Query<(&HealthBar, &mut Transform), (With<HealthBar>, Without<HealthBarFill>, Without<HealthBarBorder>, Without<Unit>)>,
+    mut health_bar_border_query: Query<(&HealthBar, &mut Transform), (With<HealthBarBorder>, Without<Unit>, Without<HealthBarFill>)>,
+) {
+    // Update fill bars
+    for (health_bar, mut bar_transform) in &mut health_bar_fill_query {
+        if let Ok((health, unit_transform)) = unit_query.get(health_bar.unit_entity) {
+            let health_percentage = (health.current / health.max).max(0.0).min(1.0);
+
+            // Update scale based on health percentage
+            bar_transform.scale.x = health_percentage;
+
+            // Update position to follow unit
+            let unit_world_pos = unit_transform.translation;
+            bar_transform.translation = unit_world_pos + Vec3::new(0.0, 40.2, 0.0);
+        }
+    }
+
+    // Update background bars
+    for (health_bar, mut bar_transform) in &mut health_bar_bg_query {
+        if let Ok((_, unit_transform)) = unit_query.get(health_bar.unit_entity) {
+            let unit_world_pos = unit_transform.translation;
+            bar_transform.translation = unit_world_pos + Vec3::new(0.0, 40.1, 0.0);
+        }
+    }
+
+    // Update border bars
+    for (health_bar, mut bar_transform) in &mut health_bar_border_query {
+        if let Ok((_, unit_transform)) = unit_query.get(health_bar.unit_entity) {
+            let unit_world_pos = unit_transform.translation;
+            bar_transform.translation = unit_world_pos + Vec3::new(0.0, 40.0, 0.0);
+        }
+    }
+}
+
 fn setup_units(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -509,6 +603,10 @@ fn setup_units(
                         moving_index,
                     },
                     CurrentAnimationState { is_moving: false },
+                    Health {
+                        current: 100.0,
+                        max: 100.0,
+                    },
                     Name::new(format!("Unit {} ({}, {})", unit_index, q, r)),
                 ))
                 .id();
@@ -524,6 +622,65 @@ fn setup_units(
                     animation_timer: 0.0,
                 },
                 Visibility::Hidden,
+            ));
+
+            // Spawn health bar above unit
+            let bar_width = 40.0;
+            let bar_height = 10.0;
+            let border_width_sides = 4.0;
+            let border_height_extra = 8.0; // 4px extra on top and bottom (2px more each)
+            let bar_pos = world_pos + Vec3::new(0.0, 40.0, 0.0);
+            let health_bar_mesh = meshes.add(create_health_bar_mesh(bar_width, bar_height));
+            let border_mesh = meshes.add(create_health_bar_mesh(
+                bar_width + border_width_sides,
+                bar_height + border_height_extra,
+            ));
+
+            // Border (black)
+            parent.spawn((
+                Mesh3d(border_mesh),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.0, 0.0, 0.0),
+                    emissive: Color::srgb(0.0, 0.0, 0.0).into(),
+                    unlit: true,
+                    double_sided: true,
+                    cull_mode: None,
+                    ..default()
+                })),
+                Transform::from_translation(bar_pos),
+                HealthBar { unit_entity },
+                HealthBarBorder,
+            ));
+
+            // Background (dark gray)
+            parent.spawn((
+                Mesh3d(health_bar_mesh.clone()),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.2, 0.2, 0.2),
+                    emissive: Color::srgb(0.2, 0.2, 0.2).into(),
+                    unlit: true,
+                    double_sided: true,
+                    cull_mode: None,
+                    ..default()
+                })),
+                Transform::from_translation(bar_pos + Vec3::new(0.0, 0.1, 0.0)),
+                HealthBar { unit_entity },
+            ));
+
+            // Fill (red for red army)
+            parent.spawn((
+                Mesh3d(health_bar_mesh.clone()),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.9, 0.2, 0.2),
+                    emissive: Color::srgb(0.9, 0.2, 0.2).into(),
+                    unlit: true,
+                    double_sided: true,
+                    cull_mode: None,
+                    ..default()
+                })),
+                Transform::from_translation(bar_pos + Vec3::new(0.0, 0.2, 0.0)),
+                HealthBar { unit_entity },
+                HealthBarFill,
             ));
         }
     });
@@ -566,6 +723,10 @@ fn setup_units(
                         moving_index,
                     },
                     CurrentAnimationState { is_moving: false },
+                    Health {
+                        current: 100.0,
+                        max: 100.0,
+                    },
                     Name::new(format!("Unit {} ({}, {})", unit_index, q, r)),
                 ))
                 .id();
@@ -581,6 +742,65 @@ fn setup_units(
                     animation_timer: 0.0,
                 },
                 Visibility::Hidden,
+            ));
+
+            // Spawn health bar above unit
+            let bar_width = 40.0;
+            let bar_height = 10.0;
+            let border_width_sides = 4.0;
+            let border_height_extra = 8.0; // 4px extra on top and bottom (2px more each)
+            let bar_pos = world_pos + Vec3::new(0.0, 40.0, 0.0);
+            let health_bar_mesh = meshes.add(create_health_bar_mesh(bar_width, bar_height));
+            let border_mesh = meshes.add(create_health_bar_mesh(
+                bar_width + border_width_sides,
+                bar_height + border_height_extra,
+            ));
+
+            // Border (black)
+            parent.spawn((
+                Mesh3d(border_mesh),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.0, 0.0, 0.0),
+                    emissive: Color::srgb(0.0, 0.0, 0.0).into(),
+                    unlit: true,
+                    double_sided: true,
+                    cull_mode: None,
+                    ..default()
+                })),
+                Transform::from_translation(bar_pos),
+                HealthBar { unit_entity },
+                HealthBarBorder,
+            ));
+
+            // Background (dark gray)
+            parent.spawn((
+                Mesh3d(health_bar_mesh.clone()),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.2, 0.2, 0.2),
+                    emissive: Color::srgb(0.2, 0.2, 0.2).into(),
+                    unlit: true,
+                    double_sided: true,
+                    cull_mode: None,
+                    ..default()
+                })),
+                Transform::from_translation(bar_pos + Vec3::new(0.0, 0.1, 0.0)),
+                HealthBar { unit_entity },
+            ));
+
+            // Fill (blue for blue army)
+            parent.spawn((
+                Mesh3d(health_bar_mesh.clone()),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.2, 0.4, 0.9),
+                    emissive: Color::srgb(0.2, 0.4, 0.9).into(),
+                    unlit: true,
+                    double_sided: true,
+                    cull_mode: None,
+                    ..default()
+                })),
+                Transform::from_translation(bar_pos + Vec3::new(0.0, 0.2, 0.0)),
+                HealthBar { unit_entity },
+                HealthBarFill,
             ));
         }
     });
@@ -602,6 +822,7 @@ impl Plugin for UnitsPlugin {
                     detect_collisions_and_repath,
                     update_unit_animations,
                     play_animation_when_loaded,
+                    update_health_bars,
                 ),
             );
     }
