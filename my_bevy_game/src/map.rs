@@ -31,7 +31,9 @@ pub struct HexOutline {
 pub struct ObstacleSprite;
 
 #[derive(Component)]
-pub struct LaunchPadOutline;
+pub struct LaunchPadOutline {
+    pub pad_index: usize,
+}
 
 #[derive(Component)]
 pub struct LaunchPadTile {
@@ -251,7 +253,168 @@ fn create_billboard_mesh(width: f32, height: f32) -> Mesh {
         .with_inserted_indices(Indices::U32(indices))
 }
 
-fn create_hexagon_outline_mesh() -> Mesh {
+fn create_launch_pad_outline_mesh(perimeter_edges: &[((i32, i32), (i32, i32))]) -> Mesh {
+    // Create a mesh from the perimeter edges
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut uvs = Vec::new();
+    let mut indices = Vec::new();
+
+    let y = 0.0;
+    let line_width = 4.0; // Make the outline thicker and more visible
+
+    // Collect all unique corner positions (in 3D world space)
+    let mut corner_positions: Vec<[f32; 3]> = Vec::new();
+
+    // For each edge, create a quad representing the shared boundary between two hexes
+    for (cell1, cell2) in perimeter_edges {
+        // Convert axial coords to world positions
+        let pos1 = axial_to_world_pos(cell1.0, cell1.1);
+        let pos2 = axial_to_world_pos(cell2.0, cell2.1);
+
+        // The edge is at the midpoint between the two hex centers
+        let midpoint = Vec3::new(
+            (pos1.x + pos2.x) / 2.0,
+            0.0,
+            (pos1.z + pos2.z) / 2.0,
+        );
+
+        // Direction from cell1 to cell2
+        let edge_vec = Vec3::new(pos2.x - pos1.x, 0.0, pos2.z - pos1.z);
+        let edge_len = edge_vec.length();
+        if edge_len < 0.001 {
+            continue;
+        }
+        let edge_dir = edge_vec / edge_len;
+
+        // The actual edge is perpendicular to the direction between centers
+        let perp = Vec3::new(-edge_dir.z, 0.0, edge_dir.x);
+
+        // For a pointy-top hex, the edge length is HEX_RADIUS
+        let half_edge_len = HEX_RADIUS / 2.0;
+
+        let base_idx = positions.len() as u32;
+
+        // Store the actual geometric corners (without line_width offset in edge direction)
+        let corner1 = [
+            midpoint.x + perp.x * half_edge_len,
+            y,
+            midpoint.z + perp.z * half_edge_len,
+        ];
+        let corner2 = [
+            midpoint.x - perp.x * half_edge_len,
+            y,
+            midpoint.z - perp.z * half_edge_len,
+        ];
+        corner_positions.push(corner1);
+        corner_positions.push(corner2);
+
+        // Create 4 vertices for this edge segment
+        // Edge extends perpendicular to the line between centers
+        let v0 = [
+            midpoint.x + perp.x * half_edge_len + edge_dir.x * line_width,
+            y,
+            midpoint.z + perp.z * half_edge_len + edge_dir.z * line_width,
+        ];
+        let v1 = [
+            midpoint.x + perp.x * half_edge_len - edge_dir.x * line_width,
+            y,
+            midpoint.z + perp.z * half_edge_len - edge_dir.z * line_width,
+        ];
+        let v2 = [
+            midpoint.x - perp.x * half_edge_len + edge_dir.x * line_width,
+            y,
+            midpoint.z - perp.z * half_edge_len + edge_dir.z * line_width,
+        ];
+        let v3 = [
+            midpoint.x - perp.x * half_edge_len - edge_dir.x * line_width,
+            y,
+            midpoint.z - perp.z * half_edge_len - edge_dir.z * line_width,
+        ];
+
+        positions.push(v0);
+        normals.push([0.0, 1.0, 0.0]);
+        uvs.push([0.0, 0.0]);
+
+        positions.push(v1);
+        normals.push([0.0, 1.0, 0.0]);
+        uvs.push([0.0, 1.0]);
+
+        positions.push(v2);
+        normals.push([0.0, 1.0, 0.0]);
+        uvs.push([1.0, 0.0]);
+
+        positions.push(v3);
+        normals.push([0.0, 1.0, 0.0]);
+        uvs.push([1.0, 1.0]);
+
+        // Two triangles for the quad
+        indices.push(base_idx);
+        indices.push(base_idx + 1);
+        indices.push(base_idx + 2);
+
+        indices.push(base_idx + 1);
+        indices.push(base_idx + 3);
+        indices.push(base_idx + 2);
+    }
+
+    // Deduplicate corner positions (merge positions that are very close)
+    let threshold = 0.1; // Consider positions within 0.1 units as the same
+    let mut unique_corners: Vec<[f32; 3]> = Vec::new();
+
+    for corner in corner_positions {
+        let is_duplicate = unique_corners.iter().any(|existing| {
+            let dx = existing[0] - corner[0];
+            let dz = existing[2] - corner[2];
+            (dx * dx + dz * dz).sqrt() < threshold
+        });
+
+        if !is_duplicate {
+            unique_corners.push(corner);
+        }
+    }
+
+    // Add circles at each unique corner to fill in the gaps
+    let circle_segments = 12;
+    let circle_radius = line_width * 1.5; // Larger radius to fully cover corner gaps
+    for corner_pos in unique_corners {
+        let center_idx = positions.len() as u32;
+
+        // Center vertex
+        positions.push(corner_pos);
+        normals.push([0.0, 1.0, 0.0]);
+        uvs.push([0.5, 0.5]);
+
+        // Create circle vertices
+        for i in 0..circle_segments {
+            let angle = (i as f32 / circle_segments as f32) * 2.0 * std::f32::consts::PI;
+            let x = corner_pos[0] + circle_radius * angle.cos();
+            let z = corner_pos[2] + circle_radius * angle.sin();
+
+            positions.push([x, y, z]);
+            normals.push([0.0, 1.0, 0.0]);
+            uvs.push([0.0, 0.0]);
+        }
+
+        // Create triangles for the circle
+        for i in 0..circle_segments {
+            let next_i = (i + 1) % circle_segments;
+            indices.push(center_idx);
+            indices.push(center_idx + 1 + i);
+            indices.push(center_idx + 1 + next_i);
+        }
+    }
+
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+        .with_inserted_indices(Indices::U32(indices))
+}
+
+fn create_hexagon_edges_mesh(edges: &[bool; 6]) -> Mesh {
+    // Create a mesh with only specific edges enabled
+    // edges[i] = true means draw edge i
     let mut positions = Vec::new();
     let mut normals = Vec::new();
     let mut uvs = Vec::new();
@@ -262,46 +425,50 @@ fn create_hexagon_outline_mesh() -> Mesh {
     let outer_radius = HEX_RADIUS + (OUTLINE_WIDTH / 2.0) - 8.0;
     let inner_radius = HEX_RADIUS - (OUTLINE_WIDTH / 2.0) - 8.0;
 
-    // Create 6 pairs of vertices around the hexagon
+    // Create vertices only for enabled edges
     for i in 0..6 {
+        if !edges[i] {
+            continue;
+        }
+
         let angle = std::f32::consts::PI / 3.0 * i as f32;
-        let cos = angle.cos();
-        let sin = angle.sin();
+        let next_angle = std::f32::consts::PI / 3.0 * ((i + 1) % 6) as f32;
 
-        let outer_x = outer_radius * cos;
-        let outer_z = outer_radius * sin;
-        let inner_x = inner_radius * cos;
-        let inner_z = inner_radius * sin;
+        let cos1 = angle.cos();
+        let sin1 = angle.sin();
+        let cos2 = next_angle.cos();
+        let sin2 = next_angle.sin();
 
-        // Outer vertex
-        positions.push([outer_x, y, outer_z]);
+        let base_idx = positions.len() as u32;
+
+        // First corner outer
+        positions.push([outer_radius * cos1, y, outer_radius * sin1]);
         normals.push([0.0, 1.0, 0.0]);
         uvs.push([1.0, 0.0]);
 
-        // Inner vertex
-        positions.push([inner_x, y, inner_z]);
+        // First corner inner
+        positions.push([inner_radius * cos1, y, inner_radius * sin1]);
         normals.push([0.0, 1.0, 0.0]);
         uvs.push([0.0, 0.0]);
-    }
 
-    // Create triangles
-    for i in 0..6 {
-        let next_i = (i + 1) % 6;
+        // Second corner outer
+        positions.push([outer_radius * cos2, y, outer_radius * sin2]);
+        normals.push([0.0, 1.0, 0.0]);
+        uvs.push([1.0, 0.0]);
 
-        let outer_current = (i * 2) as u32;
-        let inner_current = (i * 2 + 1) as u32;
-        let outer_next = (next_i * 2) as u32;
-        let inner_next = (next_i * 2 + 1) as u32;
+        // Second corner inner
+        positions.push([inner_radius * cos2, y, inner_radius * sin2]);
+        normals.push([0.0, 1.0, 0.0]);
+        uvs.push([0.0, 0.0]);
 
-        // First triangle
-        indices.push(outer_current);
-        indices.push(inner_current);
-        indices.push(outer_next);
+        // Create triangles for this edge
+        indices.push(base_idx);
+        indices.push(base_idx + 1);
+        indices.push(base_idx + 2);
 
-        // Second triangle
-        indices.push(outer_next);
-        indices.push(inner_current);
-        indices.push(inner_next);
+        indices.push(base_idx + 1);
+        indices.push(base_idx + 3);
+        indices.push(base_idx + 2);
     }
 
     Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
@@ -344,10 +511,9 @@ fn setup_hex_map(
     let prism_height = 20.0;
 
     // Reuse meshes
-    let hex_mesh = meshes.add(create_hexagon_prism_mesh(prism_height));
+    let _hex_mesh = meshes.add(create_hexagon_prism_mesh(prism_height));
     let filled_hex_mesh = meshes.add(create_filled_hexagon_mesh());
     let hex_border_mesh = meshes.add(create_filled_hexagon_border_mesh());
-    let outline_mesh = meshes.add(create_hexagon_outline_mesh());
     let billboard_mesh = meshes.add(create_billboard_mesh(HEX_WIDTH - 32.0, HEX_WIDTH - 32.0));
 
     // Load obstacle sprite texture
@@ -452,18 +618,76 @@ fn setup_hex_map(
                         ObstacleSprite,
                     ));
                 } else if is_launch_pad {
-                    parent.spawn((
-                        Mesh3d(outline_mesh.clone()),
-                        MeshMaterial3d(materials.add(StandardMaterial {
-                            base_color: Color::srgb(0.2, 0.6, 1.0),
-                            emissive: Color::srgb(0.2, 0.6, 1.0).into(),
-                            unlit: true,
-                            ..default()
-                        })),
-                        Transform::from_translation(outline_pos).with_rotation(outline_rotation),
-                        HexOutline { hex_entity },
-                        LaunchPadOutline,
-                    ));
+                    // Only process this once per pad (only for the first hex in the pad)
+                    let pad_idx = pad_index.unwrap();
+                    let pad_cells = &launch_pads.pads[pad_idx];
+                    let is_first_cell = pad_cells.first() == Some(&(q, r));
+
+                    if is_first_cell {
+                        // Build hull by collecting all edges and removing duplicates
+                        use std::collections::HashMap;
+
+                        // Edge represented as sorted pair of axial coordinates
+                        type Edge = ((i32, i32), (i32, i32));
+                        let mut edge_counts: HashMap<Edge, usize> = HashMap::new();
+
+                        // For each cell in the pad, add all 6 edges
+                        for &(cell_q, cell_r) in pad_cells {
+                            // 6 neighbors define the 6 edges
+                            let neighbors = [
+                                (cell_q + 1, cell_r),
+                                (cell_q + 1, cell_r - 1),
+                                (cell_q, cell_r - 1),
+                                (cell_q - 1, cell_r),
+                                (cell_q - 1, cell_r + 1),
+                                (cell_q, cell_r + 1),
+                            ];
+
+                            // Each edge is between this cell and a neighbor
+                            for neighbor in neighbors {
+                                // Normalize edge representation (smaller coord first)
+                                let edge = if (cell_q, cell_r) < neighbor {
+                                    ((cell_q, cell_r), neighbor)
+                                } else {
+                                    (neighbor, (cell_q, cell_r))
+                                };
+                                *edge_counts.entry(edge).or_insert(0) += 1;
+                            }
+                        }
+
+                        // Edges that appear exactly once are on the perimeter
+                        let perimeter_edges: Vec<Edge> = edge_counts
+                            .into_iter()
+                            .filter(|(_, count)| *count == 1)
+                            .map(|(edge, _)| edge)
+                            .collect();
+
+                        // Create outline mesh from perimeter edges
+                        println!("Launch pad {} has {} perimeter edges", pad_idx, perimeter_edges.len());
+                        if !perimeter_edges.is_empty() {
+                            let outline_mesh = create_launch_pad_outline_mesh(&perimeter_edges);
+                            let outline_mesh_handle = meshes.add(outline_mesh);
+
+                            // Position at Y height
+                            let outline_y = 1.2;
+
+                            parent.spawn((
+                                Mesh3d(outline_mesh_handle),
+                                MeshMaterial3d(materials.add(StandardMaterial {
+                                    base_color: Color::srgb(0.8, 0.7, 0.0), // Start with yellow (neutral)
+                                    emissive: Color::srgb(0.8, 0.7, 0.0).into(),
+                                    unlit: true,
+                                    double_sided: true,
+                                    cull_mode: None,
+                                    ..default()
+                                })),
+                                Transform::from_translation(Vec3::new(0.0, outline_y, 0.0)),
+                                LaunchPadOutline {
+                                    pad_index: pad_idx,
+                                },
+                            ));
+                        }
+                    }
                 }
 
                 // Always spawn hover highlight for all tiles (not obstacles)
@@ -587,34 +811,25 @@ fn update_outline_colors(
 
 fn update_launch_pad_colors(
     pad_ownership: Res<LaunchPadOwnership>,
-    launch_pads: Res<LaunchPads>,
-    mut outline_query: Query<(&HexOutline, &MeshMaterial3d<StandardMaterial>), With<LaunchPadOutline>>,
-    hex_query: Query<&HexTile>,
+    mut outline_query: Query<(&LaunchPadOutline, &MeshMaterial3d<StandardMaterial>)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     for (outline, material_handle) in &mut outline_query {
-        if let Ok(hex_tile) = hex_query.get(outline.hex_entity) {
-            // Find which pad this hex belongs to
-            if let Some(pad_index) = launch_pads.pads.iter().position(|platform| {
-                platform.contains(&(hex_tile.q, hex_tile.r))
-            }) {
-                // Get the owner of this pad
-                let owner = pad_ownership.owners.get(pad_index)
-                    .copied()
-                    .unwrap_or(LaunchPadOwner::Neutral);
+        // Get the owner of this pad
+        let owner = pad_ownership.owners.get(outline.pad_index)
+            .copied()
+            .unwrap_or(LaunchPadOwner::Neutral);
 
-                // Update color based on owner
-                let color = match owner {
-                    LaunchPadOwner::Red => Color::srgb(1.0, 0.0, 0.0),
-                    LaunchPadOwner::Blue => Color::srgb(0.0, 0.0, 1.0),
-                    LaunchPadOwner::Neutral => Color::srgb(0.8, 0.7, 0.0), // Darker yellow
-                };
+        // Update color based on owner
+        let color = match owner {
+            LaunchPadOwner::Red => Color::srgb(0.9, 0.2, 0.2),
+            LaunchPadOwner::Blue => Color::srgb(0.2, 0.4, 0.9),
+            LaunchPadOwner::Neutral => Color::srgb(0.8, 0.7, 0.0), // Darker yellow
+        };
 
-                if let Some(material) = materials.get_mut(&material_handle.0) {
-                    material.base_color = color;
-                    material.emissive = color.into();
-                }
-            }
+        if let Some(material) = materials.get_mut(&material_handle.0) {
+            material.base_color = color;
+            material.emissive = color.into();
         }
     }
 }
