@@ -157,12 +157,12 @@ fn create_hexagon_prism_mesh(height: f32) -> Mesh {
         .with_inserted_indices(Indices::U32(indices))
 }
 
-fn create_filled_hexagon_mesh() -> Mesh {
-    // Create a simple filled hexagon like the example
+fn create_filled_hexagon_mesh_with_radius(radius: f32) -> Mesh {
+    // Create a simple filled hexagon with custom radius
     let center = ([0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.5, 0.5]);
 
-    let x = |i: f32| HEX_RADIUS * (i * 2.0 * std::f32::consts::PI / 6.0).cos();
-    let z = |i: f32| HEX_RADIUS * (i * 2.0 * std::f32::consts::PI / 6.0).sin();
+    let x = |i: f32| radius * (i * 2.0 * std::f32::consts::PI / 6.0).cos();
+    let z = |i: f32| radius * (i * 2.0 * std::f32::consts::PI / 6.0).sin();
 
     let spike0 = ([x(0.0), 0.0, z(0.0)], [0.0, 1.0, 0.0], [1.0, 0.5]);
     let spike1 = ([x(1.0), 0.0, z(1.0)], [0.0, 1.0, 0.0], [0.75, 1.0]);
@@ -196,6 +196,16 @@ fn create_filled_hexagon_mesh() -> Mesh {
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
         .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
         .with_inserted_indices(indices)
+}
+
+fn create_filled_hexagon_mesh() -> Mesh {
+    // Make the colored tile 1px smaller so the border shows
+    create_filled_hexagon_mesh_with_radius(HEX_RADIUS - 1.0)
+}
+
+fn create_filled_hexagon_border_mesh() -> Mesh {
+    // Border uses the full hex radius
+    create_filled_hexagon_mesh_with_radius(HEX_RADIUS)
 }
 
 fn create_billboard_mesh(width: f32, height: f32) -> Mesh {
@@ -336,6 +346,7 @@ fn setup_hex_map(
     // Reuse meshes
     let hex_mesh = meshes.add(create_hexagon_prism_mesh(prism_height));
     let filled_hex_mesh = meshes.add(create_filled_hexagon_mesh());
+    let hex_border_mesh = meshes.add(create_filled_hexagon_border_mesh());
     let outline_mesh = meshes.add(create_hexagon_outline_mesh());
     let billboard_mesh = meshes.add(create_billboard_mesh(HEX_WIDTH - 32.0, HEX_WIDTH - 32.0));
 
@@ -367,12 +378,27 @@ fn setup_hex_map(
 
                 // Alternate tile colors based on hex coordinates
                 let color = if (q + r) % 2 == 0 {
-                    Color::srgb(0.2, 0.6, 0.2) // Green
+                    Color::srgb(0.35, 0.75, 0.35) // Light green
                 } else {
-                    Color::srgb(0.15, 0.4, 0.15) // Dark green
+                    Color::srgb(0.3, 0.65, 0.3) // Lighter medium green
                 };
 
                 let hex_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
+
+                // Spawn border hexagon (light gray, slightly larger and below the tile)
+                let border_pos = world_pos + Vec3::new(0.0, 0.4, 0.0);
+                parent.spawn((
+                    Mesh3d(hex_border_mesh.clone()),
+                    MeshMaterial3d(materials.add(StandardMaterial {
+                        base_color: Color::srgb(0.7, 0.7, 0.7),
+                        emissive: Color::srgb(0.7, 0.7, 0.7).into(),
+                        unlit: true,
+                        double_sided: true,
+                        cull_mode: None,
+                        ..default()
+                    })),
+                    Transform::from_translation(border_pos).with_rotation(hex_rotation),
+                ));
 
                 // Spawn filled hexagon (no prism for now)
                 let filled_hex_pos = world_pos + Vec3::new(0.0, 0.5, 0.0);
