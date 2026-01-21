@@ -90,20 +90,28 @@ impl UnitClass {
                 max_health: 100.0,
                 speed: 100.0,
                 armor: 50.0,
-                attack: 40.0,
+                attack: 15.0,
             },
             UnitClass::Cavalry => UnitStats {
                 max_health: 80.0,
                 speed: 150.0,
                 armor: 30.0,
-                attack: 40.0,
+                attack: 12.0,
             },
             UnitClass::Artillery => UnitStats {
                 max_health: 120.0,
                 speed: 50.0,
                 armor: 70.0,
-                attack: 80.0,
+                attack: 25.0,
             },
+        }
+    }
+
+    pub fn base_cooldown(&self) -> f32 {
+        match self {
+            UnitClass::Infantry => 2.0,
+            UnitClass::Cavalry => 1.5,
+            UnitClass::Artillery => 3.0,
         }
     }
 
@@ -1124,10 +1132,7 @@ fn setup_units(
                         },
                         Combat {
                             last_attack_time: -10.0, // Start ready to attack
-                            attack_cooldown: {
-                                let mut rng = rand::thread_rng();
-                                rng.gen_range(0.8..=1.2) // Randomize cooldown: 0.8 to 1.2 seconds
-                            },
+                            attack_cooldown: unit_class.base_cooldown(),
                             last_movement_time: -10.0, // Start ready to fire
                             movement_cooldown: 0.5, // 0.5 second cooldown after moving
                         },
@@ -1191,10 +1196,7 @@ fn setup_units(
                         },
                         Combat {
                             last_attack_time: -10.0, // Start ready to attack
-                            attack_cooldown: {
-                                let mut rng = rand::thread_rng();
-                                rng.gen_range(0.8..=1.2) // Randomize cooldown: 0.8 to 1.2 seconds
-                            },
+                            attack_cooldown: unit_class.base_cooldown(),
                             last_movement_time: -10.0, // Start ready to fire
                             movement_cooldown: 0.5, // 0.5 second cooldown after moving
                         },
@@ -1349,10 +1351,7 @@ fn setup_units(
                         },
                         Combat {
                             last_attack_time: -10.0, // Start ready to attack
-                            attack_cooldown: {
-                                let mut rng = rand::thread_rng();
-                                rng.gen_range(0.8..=1.2) // Randomize cooldown: 0.8 to 1.2 seconds
-                            },
+                            attack_cooldown: unit_class.base_cooldown(),
                             last_movement_time: -10.0, // Start ready to fire
                             movement_cooldown: 0.5, // 0.5 second cooldown after moving
                         },
@@ -1416,10 +1415,7 @@ fn setup_units(
                         },
                         Combat {
                             last_attack_time: -10.0, // Start ready to attack
-                            attack_cooldown: {
-                                let mut rng = rand::thread_rng();
-                                rng.gen_range(0.8..=1.2) // Randomize cooldown: 0.8 to 1.2 seconds
-                            },
+                            attack_cooldown: unit_class.base_cooldown(),
                             last_movement_time: -10.0, // Start ready to fire
                             movement_cooldown: 0.5, // 0.5 second cooldown after moving
                         },

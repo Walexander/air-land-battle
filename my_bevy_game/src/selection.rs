@@ -438,11 +438,8 @@ fn handle_unit_selection(
         if let Some(hovered_entity) = hovered_hex.entity {
             if let Ok(hovered_tile) = hex_query.get(hovered_entity) {
                 let mut clicked_unit = None;
-                for (entity, unit, movement) in &unit_query {
-                    if movement.is_none()
-                        && unit.q == hovered_tile.q
-                        && unit.r == hovered_tile.r
-                    {
+                for (entity, unit, _movement) in &unit_query {
+                    if unit.q == hovered_tile.q && unit.r == hovered_tile.r {
                         clicked_unit = Some(entity);
                         break;
                     }
