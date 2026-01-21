@@ -696,8 +696,8 @@ fn setup_hex_map(
                             parent.spawn((
                                 Mesh3d(outline_mesh_handle),
                                 MeshMaterial3d(materials.add(StandardMaterial {
-                                    base_color: Color::srgb(0.8, 0.7, 0.0), // Start with yellow (neutral)
-                                    emissive: Color::srgb(0.8, 0.7, 0.0).into(),
+                                    base_color: Color::srgb(0.7, 0.7, 0.7), // Start with light gray
+                                    emissive: Color::srgb(0.7, 0.7, 0.7).into(),
                                     unlit: true,
                                     double_sided: true,
                                     cull_mode: None,
@@ -848,7 +848,8 @@ fn update_launch_pad_colors(
         let color = match owner {
             LaunchPadOwner::Red => Color::srgb(0.9, 0.2, 0.2),
             LaunchPadOwner::Blue => Color::srgb(0.2, 0.4, 0.9),
-            LaunchPadOwner::Neutral => Color::srgb(0.8, 0.7, 0.0), // Darker yellow
+            LaunchPadOwner::Neutral => Color::srgb(0.7, 0.7, 0.7), // Light gray when no one owns it
+            LaunchPadOwner::Contested => Color::srgb(0.8, 0.7, 0.0), // Yellow when both armies are on it
         };
 
         if let Some(material) = materials.get_mut(&material_handle.0) {

@@ -6,6 +6,7 @@ use crate::units::{Army, Unit};
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum LaunchPadOwner {
     Neutral,
+    Contested,
     Red,
     Blue,
 }
@@ -74,7 +75,7 @@ fn check_launch_pad_ownership(
         }
 
         let owner = if has_red && has_blue {
-            LaunchPadOwner::Neutral
+            LaunchPadOwner::Contested
         } else if has_red {
             LaunchPadOwner::Red
         } else if has_blue {
