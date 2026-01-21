@@ -111,7 +111,7 @@ impl UnitClass {
         match self {
             UnitClass::Infantry => "walking-rifle.glb",
             UnitClass::Cavalry => "Fox.glb",
-            UnitClass::Artillery => "stickman.glb",
+            UnitClass::Artillery => "CesiumMan.glb",
         }
     }
 
@@ -119,7 +119,7 @@ impl UnitClass {
         match self {
             UnitClass::Infantry => 12.0,
             UnitClass::Cavalry => 0.5,
-            UnitClass::Artillery => 8.0,
+            UnitClass::Artillery => 30.0,
         }
     }
 
@@ -127,7 +127,7 @@ impl UnitClass {
         match self {
             UnitClass::Infantry => 0,
             UnitClass::Cavalry => 0,
-            UnitClass::Artillery => 0,
+            UnitClass::Artillery => 0, // CesiumMan has walking animation at index 0
         }
     }
 
@@ -135,7 +135,7 @@ impl UnitClass {
         match self {
             UnitClass::Infantry => 0,  // walking-rifle only has Animation0
             UnitClass::Cavalry => 2,
-            UnitClass::Artillery => 2,
+            UnitClass::Artillery => 0, // CesiumMan only has one animation at index 0
         }
     }
 }
