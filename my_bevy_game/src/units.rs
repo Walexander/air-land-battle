@@ -5,9 +5,11 @@ use bevy::asset::RenderAssetUsages;
 use std::time::Duration;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::cmp::Ordering;
+use rand::Rng;
 
 use crate::map::{axial_to_world_pos, HexMapConfig, Obstacles};
 use crate::selection::{SelectionRing, create_selection_ring_mesh};
+use crate::launch_pads::{GameState, GameTimer};
 
 // Components
 #[derive(Component)]
@@ -327,22 +329,28 @@ fn move_units(
 
 fn combat_system(
     time: Res<Time>,
-    mut attacker_query: Query<(Entity, &Unit, &Army, &UnitStats, &mut Combat)>,
-    mut defender_query: Query<(Entity, &Unit, &Army, &UnitStats, &mut Health)>,
+    mut unit_query: Query<(Entity, &Unit, &Army, &UnitStats, &mut Combat, &mut Health)>,
 ) {
     let current_time = time.elapsed_secs();
-    let mut attacks = Vec::new();
 
-    println!("=== Combat System Tick at {:.1}s ===", current_time);
-    println!("Total attackers: {}", attacker_query.iter().count());
+    // Process attacks immediately to prevent simultaneous kills
+    // Collect list of (attacker_entity, defender_entity, damage) to apply
+    let mut attacks_to_apply = Vec::new();
 
-    // Find all valid attacks (collect first to avoid borrow issues)
-    for (attacker_entity, attacker_unit, attacker_army, attacker_stats, mut attacker_combat) in attacker_query.iter_mut() {
-        println!("Checking attacker {:?} ({:?}) at ({}, {})", attacker_entity, attacker_army, attacker_unit.q, attacker_unit.r);
+    // First pass: identify all potential attacks
+    // Use a non-mutable iteration to collect attack information
+    let units: Vec<_> = unit_query.iter().map(|(e, u, a, s, c, h)| {
+        (e, u.clone(), *a, s.clone(), c.last_attack_time, h.current)
+    }).collect();
+
+    for (attacker_entity, attacker_unit, attacker_army, attacker_stats, last_attack_time, attacker_health) in &units {
+        // Skip dead attackers
+        if *attacker_health <= 0.0 {
+            continue;
+        }
 
         // Check if cooldown has passed
-        if current_time - attacker_combat.last_attack_time < attacker_combat.attack_cooldown {
-            println!("  - Still on cooldown (last attack: {:.1}s ago)", current_time - attacker_combat.last_attack_time);
+        if current_time - last_attack_time < 1.0 { // attack_cooldown is 1.0
             continue;
         }
 
@@ -355,49 +363,63 @@ fn combat_system(
             (attacker_unit.q + 1, attacker_unit.r - 1),
             (attacker_unit.q - 1, attacker_unit.r + 1),
         ];
-        println!("  - Adjacent hexes: {:?}", adjacent_hexes);
 
         // Check each adjacent hex for enemy units
-        let mut found_enemy = false;
-        for (defender_entity, defender_unit, defender_army, defender_stats, _) in defender_query.iter() {
+        for (defender_entity, defender_unit, defender_army, defender_stats, _, defender_health) in &units {
+            // Skip dead defenders
+            if *defender_health <= 0.0 {
+                continue;
+            }
+
             // Skip if same army
             if attacker_army == defender_army {
                 continue;
             }
 
-            println!("  - Checking potential target {:?} ({:?}) at ({}, {})", defender_entity, defender_army, defender_unit.q, defender_unit.r);
-
             // Check if defender is adjacent
             if adjacent_hexes.contains(&(defender_unit.q, defender_unit.r)) {
                 // Calculate damage: attack - (armor / 2), minimum 5 damage
-                let raw_damage = attacker_stats.attack - (defender_stats.armor / 2.0);
-                let damage = raw_damage.max(5.0);
+                let base_damage = attacker_stats.attack - (defender_stats.armor / 2.0);
 
-                println!("  - ADJACENT ENEMY FOUND! Will deal {:.1} damage", damage);
-                attacks.push((attacker_entity, defender_entity, damage));
-                attacker_combat.last_attack_time = current_time;
-                found_enemy = true;
+                // Add randomness: ±30% variation
+                let mut rng = rand::thread_rng();
+                let variation = rng.gen_range(-0.3..=0.3);
+                let damage = (base_damage * (1.0 + variation)).max(5.0);
+
+                attacks_to_apply.push((*attacker_entity, *defender_entity, damage, *attacker_army, *defender_army));
                 break; // Only attack one enemy per cooldown
             }
         }
-
-        if !found_enemy {
-            println!("  - No adjacent enemies found");
-        }
     }
 
-    println!("Total attacks to apply: {}", attacks.len());
-
-    // Apply damage
-    for (_attacker_entity, defender_entity, damage) in attacks {
-        if let Ok((_, _, _, _, mut defender_health)) = defender_query.get_mut(defender_entity) {
-            defender_health.current -= damage;
-            println!(
-                "✓ Attack dealt {:.1} damage! Defender health: {:.1}/{:.1}",
-                damage, defender_health.current, defender_health.max
-            );
+    // Second pass: apply attacks one at a time so first killer prevents return fire
+    for (attacker_entity, defender_entity, damage, attacker_army, defender_army) in attacks_to_apply {
+        // Check if attacker is still alive
+        let attacker_alive = if let Ok((_, _, _, _, _, attacker_health)) = unit_query.get(attacker_entity) {
+            attacker_health.current > 0.0
         } else {
-            println!("✗ Failed to apply damage to {:?}", defender_entity);
+            false
+        };
+
+        if !attacker_alive {
+            continue; // Dead units can't attack
+        }
+
+        // Check if defender is still alive before applying damage
+        if let Ok((_, _, _, _, _, mut defender_health)) = unit_query.get_mut(defender_entity) {
+            if defender_health.current <= 0.0 {
+                continue; // Already dead
+            }
+
+            defender_health.current -= damage;
+            println!("⚔️  {:?} {:?} attacks {:?} {:?} for {:.1} damage!",
+                attacker_army, attacker_entity, defender_army, defender_entity, damage);
+            println!("   └─ Defender health: {:.1}/{:.1}", defender_health.current, defender_health.max);
+
+            // Update attacker's last attack time
+            if let Ok((_, _, _, _, mut attacker_combat, _)) = unit_query.get_mut(attacker_entity) {
+                attacker_combat.last_attack_time = current_time;
+            }
         }
     }
 }
@@ -437,6 +459,62 @@ fn remove_dead_units(
             // Despawn the unit itself
             commands.entity(entity).despawn();
         }
+    }
+}
+
+fn reset_game(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    army_query: Query<Entity, Or<(With<RedArmy>, With<BlueArmy>)>>,
+    children_query: Query<&Children>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut animation_graphs: ResMut<Assets<AnimationGraph>>,
+    asset_server: Res<AssetServer>,
+    mut occupancy: ResMut<Occupancy>,
+    mut occupancy_intent: ResMut<OccupancyIntent>,
+    mut game_state: ResMut<GameState>,
+    mut game_timer: ResMut<GameTimer>,
+) {
+    if keyboard.just_pressed(KeyCode::KeyR) {
+        println!("Resetting game...");
+
+        // Despawn all army entities and their children
+        for army_entity in &army_query {
+            // Manually despawn all descendants
+            let mut to_despawn = vec![army_entity];
+            let mut i = 0;
+            while i < to_despawn.len() {
+                if let Ok(children) = children_query.get(to_despawn[i]) {
+                    to_despawn.extend(children.iter());
+                }
+                i += 1;
+            }
+
+            // Despawn in reverse order (children first, then parents)
+            for entity in to_despawn.into_iter().rev() {
+                commands.entity(entity).despawn();
+            }
+        }
+
+        // Clear occupancy data
+        occupancy.positions.clear();
+        occupancy.position_to_entity.clear();
+        occupancy_intent.intentions.clear();
+
+        // Reset game state
+        game_state.game_over = false;
+        game_state.winner = None;
+
+        // Reset game timer
+        game_timer.time_remaining = 20.0;
+        game_timer.is_active = false;
+        game_timer.winning_army = None;
+
+        // Respawn units by calling setup_units logic
+        setup_units(commands, meshes, materials, animation_graphs, asset_server);
+
+        println!("Game reset complete!");
     }
 }
 
@@ -1260,6 +1338,7 @@ impl Plugin for UnitsPlugin {
             .add_systems(
                 Update,
                 (
+                    reset_game,
                     move_units,
                     combat_system,
                     remove_dead_units,
