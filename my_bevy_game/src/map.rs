@@ -4,7 +4,8 @@ use bevy::mesh::{Indices, PrimitiveTopology};
 
 use crate::ui::GameCamera;
 use crate::launch_pads::{LaunchPads, LaunchPadOwner, LaunchPadOwnership};
-use crate::selection::create_hexagon_outline_mesh;
+use crate::selection::{create_hexagon_outline_mesh, Selected};
+use crate::units::Unit;
 
 // Hex grid constants
 const HEX_WIDTH: f32 = 128.0;
@@ -820,12 +821,28 @@ fn update_outline_colors(
         (&HexOutline, &mut Visibility),
         Without<LaunchPadOutline>,
     >,
+    unit_query: Query<(&Unit, Has<Selected>)>,
+    hex_query: Query<&HexTile>,
 ) {
+    // Find if there's an unselected unit at the hovered position
+    let has_unselected_unit = if let Some(hovered_entity) = hovered_hex.entity {
+        if let Ok(hex_tile) = hex_query.get(hovered_entity) {
+            let (hovered_q, hovered_r) = (hex_tile.q, hex_tile.r);
+            unit_query.iter().any(|(unit, is_selected)| {
+                unit.q == hovered_q && unit.r == hovered_r && !is_selected
+            })
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
     for (outline, mut visibility) in &mut outline_query {
         let is_hovered = hovered_hex.entity == Some(outline.hex_entity);
 
-        // Only show outline when hovered
-        *visibility = if is_hovered {
+        // Only show outline when hovered AND there's an unselected unit on the hex
+        *visibility = if is_hovered && has_unselected_unit {
             Visibility::Visible
         } else {
             Visibility::Hidden

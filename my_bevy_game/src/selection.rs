@@ -79,6 +79,47 @@ pub fn create_selection_ring_mesh(inner_radius: f32, outer_radius: f32) -> Mesh 
     mesh
 }
 
+fn create_filled_hexagon_mesh(radius: f32) -> Mesh {
+    // Create a simple filled hexagon with custom radius
+    let center = ([0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.5, 0.5]);
+
+    let x = |i: f32| radius * (i * 2.0 * std::f32::consts::PI / 6.0).cos();
+    let z = |i: f32| radius * (i * 2.0 * std::f32::consts::PI / 6.0).sin();
+
+    let spike0 = ([x(0.0), 0.0, z(0.0)], [0.0, 1.0, 0.0], [1.0, 0.5]);
+    let spike1 = ([x(1.0), 0.0, z(1.0)], [0.0, 1.0, 0.0], [0.75, 1.0]);
+    let spike2 = ([x(2.0), 0.0, z(2.0)], [0.0, 1.0, 0.0], [0.25, 1.0]);
+    let spike3 = ([x(3.0), 0.0, z(3.0)], [0.0, 1.0, 0.0], [0.0, 0.5]);
+    let spike4 = ([x(4.0), 0.0, z(4.0)], [0.0, 1.0, 0.0], [0.25, 0.0]);
+    let spike5 = ([x(5.0), 0.0, z(5.0)], [0.0, 1.0, 0.0], [0.75, 0.0]);
+
+    let vertices = [center, spike0, spike1, spike2, spike3, spike4, spike5];
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut uvs = Vec::new();
+
+    for (position, normal, uv) in vertices.iter() {
+        positions.push(*position);
+        normals.push(*normal);
+        uvs.push(*uv);
+    }
+
+    let indices = Indices::U32(vec![
+        0, 1, 2,
+        0, 2, 3,
+        0, 3, 4,
+        0, 4, 5,
+        0, 5, 6,
+        0, 6, 1
+    ]);
+
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+        .with_inserted_indices(indices)
+}
+
 pub fn create_hexagon_outline_mesh(radius: f32, line_width: f32) -> Mesh {
     let mut positions = Vec::new();
     let mut normals = Vec::new();
@@ -189,13 +230,26 @@ pub fn spawn_destination_ring(
     let dest_pos = axial_to_world_pos(destination.0, destination.1);
     let hex_pos = dest_pos + Vec3::new(0.0, 2.5, 0.0);
 
-    let color = Color::srgb(0.7, 0.7, 0.7); // Light grey
+    let color = Color::srgba(1.0, 1.0, 1.0, 0.5); // White with 50% opacity
+    let border_color = Color::srgb(0.0, 0.0, 0.0); // Black
 
-    // Use a hexagon outline with radius 63 (HEX_RADIUS - 1.0) and 4 unit line width
-    let hex_mesh = meshes.add(create_hexagon_outline_mesh(63.0, 4.0));
+    // Use a filled hexagon
+    let hex_mesh = meshes.add(create_filled_hexagon_mesh(63.0));
     let hex_material = materials.add(StandardMaterial {
         base_color: color,
-        emissive: color.into(),
+        emissive: LinearRgba::new(1.0, 1.0, 1.0, 0.5).into(),
+        unlit: true,
+        double_sided: true,
+        cull_mode: None,
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    });
+
+    // Create black border outline (slightly larger)
+    let border_mesh = meshes.add(create_hexagon_outline_mesh(63.0, 4.0));
+    let border_material = materials.add(StandardMaterial {
+        base_color: border_color,
+        emissive: border_color.into(),
         unlit: true,
         double_sided: true,
         cull_mode: None,
@@ -203,18 +257,27 @@ pub fn spawn_destination_ring(
     });
 
     let hex_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
+
+    // Spawn the main white hexagon with border as child
     commands.spawn((
         Mesh3d(hex_mesh),
         MeshMaterial3d(hex_material),
         Transform::from_translation(hex_pos)
             .with_rotation(hex_rotation)
-            .with_scale(Vec3::splat(0.75)), // Start at 0.75x scale
+            .with_scale(Vec3::splat(0.65)), // Resting state at 0.65x scale
         DestinationRing {
             unit_entity,
             animation_timer: 0.0,
             bounce_count: 0,
         },
-    ));
+    )).with_children(|parent| {
+        // Add border slightly below the filled hexagon
+        parent.spawn((
+            Mesh3d(border_mesh),
+            MeshMaterial3d(border_material),
+            Transform::from_translation(Vec3::new(0.0, -0.1, 0.0)),
+        ));
+    });
 }
 
 fn create_path_line_mesh(
@@ -780,35 +843,51 @@ fn animate_destination_rings(
             continue;
         }
 
-        let max_bounces = 2;
+        ring.animation_timer += time.delta_secs();
+
+        let max_bounces = 1; // Single animation cycle
 
         if ring.bounce_count < max_bounces {
-            ring.animation_timer += time.delta_secs();
-
-            let bounce_duration = 0.5; // Each bounce takes 0.5 seconds
+            let bounce_duration = 0.5; // Animation takes 0.5 seconds
             let cycle_progress = (ring.animation_timer / bounce_duration) % 1.0;
 
-            // Check if we completed a bounce
+            // Check if we completed the animation
             let current_bounce = (ring.animation_timer / bounce_duration).floor() as u32;
             if current_bounce > ring.bounce_count {
                 ring.bounce_count = current_bounce;
             }
 
             if ring.bounce_count < max_bounces {
-                // Animate between 1.75 and 0.75
-                let min_scale = 0.75;
-                let max_scale = 1.75;
-                // Use a smoother easing function for bounce effect
-                let ease_progress = (cycle_progress * std::f32::consts::PI).sin();
-                let current_scale = min_scale + (max_scale - min_scale) * ease_progress;
+                // Scale parameters
+                let min_scale = 0.65;
+                let max_scale = 1.0;
+
+                // Hold at max scale for first half, then ease down
+                let current_scale = if cycle_progress < 0.5 {
+                    // Hold at max for first half
+                    max_scale
+                } else {
+                    // Ease down in second half using cosine for smooth deceleration
+                    let ease_progress = (cycle_progress - 0.5) * 2.0; // Map 0.5-1.0 to 0.0-1.0
+                    let ease = (ease_progress * std::f32::consts::PI / 2.0).cos();
+                    max_scale - (max_scale - min_scale) * (1.0 - ease)
+                };
+
+                // Update transform scale
                 ring_transform.scale = Vec3::splat(current_scale);
-            } else {
-                // Rest at 0.75 scale after bounces complete
-                ring_transform.scale = Vec3::splat(0.75);
             }
         } else {
-            // Stay at rest scale
-            ring_transform.scale = Vec3::splat(0.75);
+            // Continuous pulsing animation in resting state
+            let pulse_duration = 2.0; // Slow pulse over 2 seconds
+            let pulse_progress = (ring.animation_timer / pulse_duration) % 1.0;
+
+            // Subtle scale variation using sine wave
+            let base_scale = 0.65;
+            let pulse_amplitude = 0.03; // Subtle +/- 3% variation
+            let pulse = (pulse_progress * 2.0 * std::f32::consts::PI).sin();
+            let current_scale = base_scale + pulse * pulse_amplitude;
+
+            ring_transform.scale = Vec3::splat(current_scale);
         }
     }
 
