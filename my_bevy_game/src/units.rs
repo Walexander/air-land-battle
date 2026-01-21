@@ -1046,10 +1046,10 @@ fn setup_units(
         (3, 2, 5, Army::Blue, UnitClass::Artillery),
     ];
 
-    let ring_mesh = meshes.add(create_selection_ring_mesh(55.0, 63.0));
+    let ring_mesh = meshes.add(create_selection_ring_mesh(53.0, 63.0));
     let ring_material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.7, 0.7, 0.7),
-        emissive: Color::srgb(0.7, 0.7, 0.7).into(),
+        base_color: Color::srgb(1.0, 1.0, 1.0), // White
+        emissive: Color::srgb(1.0, 1.0, 1.0).into(), // White
         unlit: true,
         ..default()
     });
@@ -1262,7 +1262,7 @@ fn setup_units(
                 MeshMaterial3d(ring_material.clone()),
                 Transform::from_translation(ring_pos)
                     .with_rotation(ring_rotation)
-                    .with_scale(Vec3::splat(0.75)),
+                    .with_scale(Vec3::splat(0.5)),
                 SelectionRing {
                     unit_entity,
                     animation_timer: 0.0,
@@ -1481,7 +1481,7 @@ fn setup_units(
                 MeshMaterial3d(ring_material.clone()),
                 Transform::from_translation(ring_pos)
                     .with_rotation(ring_rotation)
-                    .with_scale(Vec3::splat(0.75)),
+                    .with_scale(Vec3::splat(0.5)),
                 SelectionRing {
                     unit_entity,
                     animation_timer: 0.0,
