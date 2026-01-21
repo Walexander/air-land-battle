@@ -64,6 +64,8 @@ pub struct Health {
 pub struct Combat {
     pub last_attack_time: f32,
     pub attack_cooldown: f32, // Seconds between attacks
+    pub last_movement_time: f32, // Last time unit finished moving
+    pub movement_cooldown: f32, // Cooldown after moving before can attack
 }
 
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
@@ -148,6 +150,17 @@ pub struct HealthBarFill;
 
 #[derive(Component)]
 pub struct HealthBarBorder;
+
+#[derive(Component)]
+pub struct FlashEffect {
+    pub timer: f32,
+    pub duration: f32,
+}
+
+#[derive(Component)]
+pub struct FlashVisual {
+    pub timer: f32,
+}
 
 // Resources
 #[derive(Resource, Default)]
@@ -261,10 +274,16 @@ pub fn find_path(
 fn move_units(
     time: Res<Time>,
     mut commands: Commands,
-    mut query: Query<(Entity, &mut Transform, &mut Unit, &mut UnitMovement, &UnitStats)>,
+    mut query: Query<(Entity, &mut Transform, &mut Unit, &mut UnitMovement, &UnitStats, Option<&mut Combat>)>,
 ) {
-    for (entity, mut transform, mut unit, mut movement, stats) in &mut query {
+    let current_time = time.elapsed_secs();
+
+    for (entity, mut transform, mut unit, mut movement, stats, combat_opt) in &mut query {
         if movement.current_waypoint >= movement.path.len() {
+            // Update last_movement_time when movement ends
+            if let Some(mut combat) = combat_opt {
+                combat.last_movement_time = current_time;
+            }
             commands.entity(entity).remove::<UnitMovement>();
             continue;
         }
@@ -317,6 +336,10 @@ fn move_units(
             }
 
             if movement.current_waypoint >= movement.path.len() {
+                // Update last_movement_time when movement ends
+                if let Some(mut combat) = combat_opt {
+                    combat.last_movement_time = current_time;
+                }
                 commands.entity(entity).remove::<UnitMovement>();
             }
         } else {
@@ -327,9 +350,67 @@ fn move_units(
     }
 }
 
+fn rotate_units_toward_enemies(
+    time: Res<Time>,
+    mut unit_query: Query<(Entity, &Unit, &Army, &Health, &mut Transform), Without<UnitMovement>>,
+) {
+    // Collect all unit positions first to avoid borrowing issues
+    let units: Vec<_> = unit_query.iter().map(|(e, u, a, h, t)| {
+        (e, u.q, u.r, *a, h.current, t.translation)
+    }).collect();
+
+    for (entity, q, r, army, health, pos) in &units {
+        // Skip dead units
+        if *health <= 0.0 {
+            continue;
+        }
+
+        // Get adjacent hexes
+        let adjacent_hexes = [
+            (q + 1, *r),
+            (q - 1, *r),
+            (*q, r + 1),
+            (*q, r - 1),
+            (q + 1, r - 1),
+            (q - 1, r + 1),
+        ];
+
+        // Find nearest enemy in adjacent hexes
+        let mut nearest_enemy_pos: Option<Vec3> = None;
+        for (other_entity, other_q, other_r, other_army, other_health, other_pos) in &units {
+            if other_entity == entity || *other_health <= 0.0 || other_army == army {
+                continue;
+            }
+
+            if adjacent_hexes.contains(&(*other_q, *other_r)) {
+                nearest_enemy_pos = Some(*other_pos);
+                break;
+            }
+        }
+
+        // Rotate toward nearest enemy if found
+        if let Some(enemy_pos) = nearest_enemy_pos {
+            if let Ok((_, _, _, _, mut transform)) = unit_query.get_mut(*entity) {
+                let direction = (enemy_pos - *pos).normalize();
+                let distance = pos.distance(enemy_pos);
+
+                if distance > 0.0 {
+                    let angle = direction.z.atan2(direction.x);
+                    let target_rotation = Quat::from_rotation_y(-angle + std::f32::consts::PI / 2.0);
+
+                    // Smooth rotation over time
+                    let rotation_speed = 8.0;
+                    transform.rotation = transform.rotation.slerp(target_rotation, time.delta_secs() * rotation_speed);
+                }
+            }
+        }
+    }
+}
+
 fn combat_system(
     time: Res<Time>,
-    mut unit_query: Query<(Entity, &Unit, &Army, &UnitStats, &mut Combat, &mut Health)>,
+    mut commands: Commands,
+    mut unit_query: Query<(Entity, &Unit, &Army, &UnitStats, &mut Combat, &mut Health, Option<&UnitMovement>)>,
 ) {
     let current_time = time.elapsed_secs();
 
@@ -339,18 +420,28 @@ fn combat_system(
 
     // First pass: identify all potential attacks
     // Use a non-mutable iteration to collect attack information
-    let units: Vec<_> = unit_query.iter().map(|(e, u, a, s, c, h)| {
-        (e, u.clone(), *a, s.clone(), c.last_attack_time, h.current)
+    let units: Vec<_> = unit_query.iter().map(|(e, u, a, s, c, h, m)| {
+        (e, u.clone(), *a, s.clone(), c.last_attack_time, c.attack_cooldown, c.last_movement_time, c.movement_cooldown, h.current, m.is_some())
     }).collect();
 
-    for (attacker_entity, attacker_unit, attacker_army, attacker_stats, last_attack_time, attacker_health) in &units {
+    for (attacker_entity, attacker_unit, attacker_army, attacker_stats, last_attack_time, attack_cooldown, last_movement_time, movement_cooldown, attacker_health, is_moving) in &units {
         // Skip dead attackers
         if *attacker_health <= 0.0 {
             continue;
         }
 
-        // Check if cooldown has passed
-        if current_time - last_attack_time < 1.0 { // attack_cooldown is 1.0
+        // Skip if currently moving
+        if *is_moving {
+            continue;
+        }
+
+        // Check if attack cooldown has passed
+        if current_time - last_attack_time < *attack_cooldown {
+            continue;
+        }
+
+        // Check if movement cooldown has passed (can't fire while recently moved)
+        if current_time - last_movement_time < *movement_cooldown {
             continue;
         }
 
@@ -365,7 +456,7 @@ fn combat_system(
         ];
 
         // Check each adjacent hex for enemy units
-        for (defender_entity, defender_unit, defender_army, defender_stats, _, defender_health) in &units {
+        for (defender_entity, defender_unit, defender_army, defender_stats, _, _, _, _, defender_health, _) in &units {
             // Skip dead defenders
             if *defender_health <= 0.0 {
                 continue;
@@ -395,7 +486,7 @@ fn combat_system(
     // Second pass: apply attacks one at a time so first killer prevents return fire
     for (attacker_entity, defender_entity, damage, attacker_army, defender_army) in attacks_to_apply {
         // Check if attacker is still alive
-        let attacker_alive = if let Ok((_, _, _, _, _, attacker_health)) = unit_query.get(attacker_entity) {
+        let attacker_alive = if let Ok((_, _, _, _, _, attacker_health, _)) = unit_query.get(attacker_entity) {
             attacker_health.current > 0.0
         } else {
             false
@@ -406,7 +497,7 @@ fn combat_system(
         }
 
         // Check if defender is still alive before applying damage
-        if let Ok((_, _, _, _, _, mut defender_health)) = unit_query.get_mut(defender_entity) {
+        if let Ok((_, _, _, _, _, mut defender_health, _)) = unit_query.get_mut(defender_entity) {
             if defender_health.current <= 0.0 {
                 continue; // Already dead
             }
@@ -417,9 +508,15 @@ fn combat_system(
             println!("   └─ Defender health: {:.1}/{:.1}", defender_health.current, defender_health.max);
 
             // Update attacker's last attack time
-            if let Ok((_, _, _, _, mut attacker_combat, _)) = unit_query.get_mut(attacker_entity) {
+            if let Ok((_, _, _, _, mut attacker_combat, _, _)) = unit_query.get_mut(attacker_entity) {
                 attacker_combat.last_attack_time = current_time;
             }
+
+            // Add flash effect to attacker
+            commands.entity(attacker_entity).insert(FlashEffect {
+                timer: 0.0,
+                duration: 0.15, // Flash for 0.15 seconds
+            });
         }
     }
 }
@@ -829,6 +926,58 @@ fn create_health_bar_mesh(width: f32, height: f32) -> Mesh {
 }
 
 
+fn handle_flash_effects(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut flash_query: Query<(Entity, &mut FlashEffect, &Transform)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for (entity, mut flash, transform) in &mut flash_query {
+        if flash.timer == 0.0 {
+            // First frame - spawn flash visual as an independent entity
+            let flash_mesh = meshes.add(Sphere::new(30.0).mesh().ico(2).unwrap());
+            let flash_material = materials.add(StandardMaterial {
+                base_color: Color::srgb(3.0, 3.0, 0.0), // Very bright yellow
+                emissive: Color::srgb(3.0, 3.0, 0.0).into(),
+                unlit: true,
+                alpha_mode: AlphaMode::Blend,
+                ..default()
+            });
+
+            let flash_pos = transform.translation + Vec3::new(0.0, 10.0, 0.0);
+            commands.spawn((
+                Mesh3d(flash_mesh),
+                MeshMaterial3d(flash_material),
+                Transform::from_translation(flash_pos),
+                FlashVisual { timer: 0.0 },
+            ));
+        }
+
+        flash.timer += time.delta_secs();
+
+        if flash.timer >= flash.duration {
+            // Remove flash effect component
+            commands.entity(entity).remove::<FlashEffect>();
+        }
+    }
+}
+
+fn cleanup_flash_visuals(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut flash_visuals: Query<(Entity, &mut FlashVisual)>,
+) {
+    for (entity, mut flash_visual) in &mut flash_visuals {
+        flash_visual.timer += time.delta_secs();
+
+        // Despawn after 0.15 seconds
+        if flash_visual.timer >= 0.15 {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
 fn update_health_bars(
     unit_query: Query<(&Health, &Transform), With<Unit>>,
     mut health_bar_fill_query: Query<(&HealthBar, &mut Transform), (With<HealthBarFill>, Without<Unit>, Without<HealthBarBorder>)>,
@@ -975,7 +1124,12 @@ fn setup_units(
                         },
                         Combat {
                             last_attack_time: -10.0, // Start ready to attack
-                            attack_cooldown: 1.0,    // Attack once per second
+                            attack_cooldown: {
+                                let mut rng = rand::thread_rng();
+                                rng.gen_range(0.8..=1.2) // Randomize cooldown: 0.8 to 1.2 seconds
+                            },
+                            last_movement_time: -10.0, // Start ready to fire
+                            movement_cooldown: 0.5, // 0.5 second cooldown after moving
                         },
                         Name::new(format!("{:?} {} ({}, {})", unit_class, unit_index, q, r)),
                     ))
@@ -1037,7 +1191,12 @@ fn setup_units(
                         },
                         Combat {
                             last_attack_time: -10.0, // Start ready to attack
-                            attack_cooldown: 1.0,    // Attack once per second
+                            attack_cooldown: {
+                                let mut rng = rand::thread_rng();
+                                rng.gen_range(0.8..=1.2) // Randomize cooldown: 0.8 to 1.2 seconds
+                            },
+                            last_movement_time: -10.0, // Start ready to fire
+                            movement_cooldown: 0.5, // 0.5 second cooldown after moving
                         },
                         Name::new(format!("{:?} {} ({}, {})", unit_class, unit_index, q, r)),
                     ))
@@ -1190,7 +1349,12 @@ fn setup_units(
                         },
                         Combat {
                             last_attack_time: -10.0, // Start ready to attack
-                            attack_cooldown: 1.0,    // Attack once per second
+                            attack_cooldown: {
+                                let mut rng = rand::thread_rng();
+                                rng.gen_range(0.8..=1.2) // Randomize cooldown: 0.8 to 1.2 seconds
+                            },
+                            last_movement_time: -10.0, // Start ready to fire
+                            movement_cooldown: 0.5, // 0.5 second cooldown after moving
                         },
                         Name::new(format!("{:?} {} ({}, {})", unit_class, unit_index, q, r)),
                     ))
@@ -1252,7 +1416,12 @@ fn setup_units(
                         },
                         Combat {
                             last_attack_time: -10.0, // Start ready to attack
-                            attack_cooldown: 1.0,    // Attack once per second
+                            attack_cooldown: {
+                                let mut rng = rand::thread_rng();
+                                rng.gen_range(0.8..=1.2) // Randomize cooldown: 0.8 to 1.2 seconds
+                            },
+                            last_movement_time: -10.0, // Start ready to fire
+                            movement_cooldown: 0.5, // 0.5 second cooldown after moving
                         },
                         Name::new(format!("{:?} {} ({}, {})", unit_class, unit_index, q, r)),
                     ))
@@ -1340,7 +1509,10 @@ impl Plugin for UnitsPlugin {
                 (
                     reset_game,
                     move_units,
+                    rotate_units_toward_enemies,
                     combat_system,
+                    handle_flash_effects,
+                    cleanup_flash_visuals,
                     remove_dead_units,
                     update_occupancy_intent,
                     update_occupancy,
