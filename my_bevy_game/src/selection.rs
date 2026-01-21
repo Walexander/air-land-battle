@@ -828,17 +828,20 @@ fn animate_selection_rings(
 
 fn animate_destination_rings(
     time: Res<Time>,
-    unit_query: Query<(Entity, &UnitMovement)>,
+    unit_query: Query<(Entity, &UnitMovement, Has<Selected>)>,
     mut ring_query: Query<(Entity, &mut DestinationRing, &mut Transform)>,
     mut commands: Commands,
 ) {
-    let moving_units: std::collections::HashSet<Entity> =
-        unit_query.iter().map(|(e, _)| e).collect();
+    let selected_moving_units: std::collections::HashSet<Entity> =
+        unit_query.iter()
+            .filter(|(_, _, is_selected)| *is_selected)
+            .map(|(e, _, _)| e)
+            .collect();
 
     let mut to_despawn = Vec::new();
 
     for (entity, mut ring, mut ring_transform) in &mut ring_query {
-        if !moving_units.contains(&ring.unit_entity) {
+        if !selected_moving_units.contains(&ring.unit_entity) {
             to_despawn.push(entity);
             continue;
         }
@@ -901,24 +904,27 @@ fn update_path_visualizations(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    unit_query: Query<(Entity, &Unit, &Transform, Option<&UnitMovement>)>,
+    unit_query: Query<(Entity, &Unit, &Transform, Option<&UnitMovement>, Has<Selected>)>,
     mut path_viz_query: Query<(Entity, &mut PathVisualization, &mut Mesh3d)>,
 ) {
-    let mut units_with_movement = std::collections::HashSet::new();
-    for (unit_entity, _, _, movement) in &unit_query {
-        if movement.is_some() {
-            units_with_movement.insert(unit_entity);
+    let mut selected_units_with_movement = std::collections::HashSet::new();
+    for (unit_entity, _, _, movement, is_selected) in &unit_query {
+        if movement.is_some() && is_selected {
+            selected_units_with_movement.insert(unit_entity);
         }
     }
 
     for (viz_entity, path_viz, _) in &path_viz_query {
-        if !units_with_movement.contains(&path_viz.unit_entity) {
+        if !selected_units_with_movement.contains(&path_viz.unit_entity) {
             commands.entity(viz_entity).despawn();
         }
     }
 
-    for (unit_entity, unit, transform, movement) in &unit_query {
+    for (unit_entity, unit, transform, movement, is_selected) in &unit_query {
         if let Some(movement) = movement {
+            if !is_selected {
+                continue;
+            }
             let remaining_path = &movement.path[movement.current_waypoint..];
 
             let mut total_length = 0.0;
