@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::launch_pads::{GameState, GameTimer};
-use crate::units::Army;
+use crate::units::{Army, Economy, UnitClass, UnitSpawnRequest, UnitSpawnQueue, SpawnCooldowns};
 
 // Components
 #[derive(Component)]
@@ -18,6 +18,24 @@ pub struct CameraControlsPanel;
 
 #[derive(Component)]
 pub struct GameCamera;
+
+#[derive(Component)]
+pub struct RedMoneyText;
+
+#[derive(Component)]
+pub struct BlueMoneyText;
+
+#[derive(Component)]
+pub enum UnitSpawnButton {
+    Infantry,
+    Cavalry,
+    Artillery,
+}
+
+#[derive(Component)]
+pub struct SpawnButtonFill {
+    pub button_type: UnitSpawnButton,
+}
 
 // Resources for camera controls
 #[derive(Resource)]
@@ -36,6 +54,188 @@ pub struct CameraControlsVisible(pub bool);
 
 // Systems
 fn setup_ui(mut commands: Commands) {
+    // Red army money display and unit buttons (top-left)
+    commands
+        .spawn(Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(10.0),
+            left: Val::Px(10.0),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Start,
+            row_gap: Val::Px(10.0),
+            ..default()
+        })
+        .with_children(|parent| {
+            // Money display
+            parent.spawn((
+                Text::new("Red: $100"),
+                TextFont {
+                    font_size: 24.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.9, 0.2, 0.2)),
+                RedMoneyText,
+            ));
+
+            // Infantry button
+            parent
+                .spawn((
+                    Button,
+                    Node {
+                        width: Val::Px(40.0),
+                        height: Val::Px(40.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::End,
+                        border: UiRect::all(Val::Px(3.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.0, 0.0, 0.0)),
+                    BorderColor::all(Color::srgb(0.2, 0.2, 0.2)),
+                    UnitSpawnButton::Infantry,
+                ))
+                .with_children(|button_parent| {
+                    // Progress fill bar (starts at bottom)
+                    button_parent.spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            height: Val::Percent(0.0),
+                            position_type: PositionType::Absolute,
+                            bottom: Val::Px(0.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.0, 0.6, 0.0)),
+                        SpawnButtonFill {
+                            button_type: UnitSpawnButton::Infantry,
+                        },
+                    ));
+
+                    // Text on top
+                    button_parent.spawn((
+                        Text::new("I"),
+                        TextFont {
+                            font_size: 20.0,
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                        Node {
+                            position_type: PositionType::Absolute,
+                            ..default()
+                        },
+                    ));
+                });
+
+            // Cavalry button
+            parent
+                .spawn((
+                    Button,
+                    Node {
+                        width: Val::Px(40.0),
+                        height: Val::Px(40.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::End,
+                        border: UiRect::all(Val::Px(3.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.0, 0.0, 0.0)),
+                    BorderColor::all(Color::srgb(0.2, 0.2, 0.2)),
+                    UnitSpawnButton::Cavalry,
+                ))
+                .with_children(|button_parent| {
+                    // Progress fill bar (starts at bottom)
+                    button_parent.spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            height: Val::Percent(0.0),
+                            position_type: PositionType::Absolute,
+                            bottom: Val::Px(0.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.0, 0.6, 0.0)),
+                        SpawnButtonFill {
+                            button_type: UnitSpawnButton::Cavalry,
+                        },
+                    ));
+
+                    // Text on top
+                    button_parent.spawn((
+                        Text::new("C"),
+                        TextFont {
+                            font_size: 20.0,
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                        Node {
+                            position_type: PositionType::Absolute,
+                            ..default()
+                        },
+                    ));
+                });
+
+            // Artillery button
+            parent
+                .spawn((
+                    Button,
+                    Node {
+                        width: Val::Px(40.0),
+                        height: Val::Px(40.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::End,
+                        border: UiRect::all(Val::Px(3.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.0, 0.0, 0.0)),
+                    BorderColor::all(Color::srgb(0.2, 0.2, 0.2)),
+                    UnitSpawnButton::Artillery,
+                ))
+                .with_children(|button_parent| {
+                    // Progress fill bar (starts at bottom)
+                    button_parent.spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            height: Val::Percent(0.0),
+                            position_type: PositionType::Absolute,
+                            bottom: Val::Px(0.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.0, 0.6, 0.0)),
+                        SpawnButtonFill {
+                            button_type: UnitSpawnButton::Artillery,
+                        },
+                    ));
+
+                    // Text on top
+                    button_parent.spawn((
+                        Text::new("A"),
+                        TextFont {
+                            font_size: 20.0,
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                        Node {
+                            position_type: PositionType::Absolute,
+                            ..default()
+                        },
+                    ));
+                });
+        });
+
+    // Blue army money display (top-right)
+    commands.spawn((
+        Text::new("Blue: $100"),
+        TextFont {
+            font_size: 24.0,
+            ..default()
+        },
+        TextColor(Color::srgb(0.2, 0.4, 0.9)),
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(10.0),
+            right: Val::Px(10.0),
+            ..default()
+        },
+        BlueMoneyText,
+    ));
+
     commands
         .spawn(Node {
             width: Val::Percent(100.0),
@@ -107,6 +307,130 @@ fn update_timer_ui(
     if let Ok(mut text) = text_query.single_mut() {
         // Always show the time remaining
         **text = format!("{:.1}s", game_timer.time_remaining);
+    }
+}
+
+fn update_money_ui(
+    economy: Res<Economy>,
+    mut red_query: Query<&mut Text, (With<RedMoneyText>, Without<BlueMoneyText>)>,
+    mut blue_query: Query<&mut Text, (With<BlueMoneyText>, Without<RedMoneyText>)>,
+) {
+    if let Ok(mut text) = red_query.single_mut() {
+        **text = format!("Red: ${}", economy.red_money);
+    }
+
+    if let Ok(mut text) = blue_query.single_mut() {
+        **text = format!("Blue: ${}", economy.blue_money);
+    }
+}
+
+fn handle_unit_spawn_buttons(
+    mut interaction_query: Query<
+        (&Interaction, &UnitSpawnButton, &mut BorderColor, &mut Node),
+        Changed<Interaction>,
+    >,
+    economy: Res<Economy>,
+    spawn_cooldowns: Res<SpawnCooldowns>,
+    mut spawn_queue: ResMut<UnitSpawnQueue>,
+) {
+    for (interaction, button, mut border_color, mut node) in &mut interaction_query {
+        let unit_class = match button {
+            UnitSpawnButton::Infantry => UnitClass::Infantry,
+            UnitSpawnButton::Cavalry => UnitClass::Cavalry,
+            UnitSpawnButton::Artillery => UnitClass::Artillery,
+        };
+
+        match *interaction {
+            Interaction::Pressed => {
+                let cost = unit_class.cost();
+                let can_afford = economy.red_money >= cost;
+                let red_cooldowns = spawn_cooldowns.get_army_cooldowns(Army::Red);
+                let cooldown_ready = red_cooldowns.is_ready(unit_class);
+
+                // Visual: make button look pressed
+                node.border = UiRect {
+                    left: Val::Px(3.0),
+                    right: Val::Px(3.0),
+                    top: Val::Px(4.0),
+                    bottom: Val::Px(2.0),
+                };
+
+                if can_afford && cooldown_ready {
+                    spawn_queue.requests.push(UnitSpawnRequest {
+                        unit_class,
+                        army: Army::Red,
+                    });
+                    *border_color = BorderColor::all(Color::srgb(0.1, 0.1, 0.1));
+                } else if !can_afford {
+                    // Flash red border if not enough money
+                    *border_color = BorderColor::all(Color::srgb(0.8, 0.2, 0.2));
+                } else {
+                    // Pressed but on cooldown - darker border
+                    *border_color = BorderColor::all(Color::srgb(0.1, 0.1, 0.1));
+                }
+            }
+            Interaction::Hovered => {
+                // Reset border to uniform
+                node.border = UiRect::all(Val::Px(3.0));
+
+                let red_cooldowns = spawn_cooldowns.get_army_cooldowns(Army::Red);
+                // Highlight border when hovered
+                if red_cooldowns.is_ready(unit_class) {
+                    *border_color = BorderColor::all(Color::srgb(0.6, 0.6, 0.6));
+                } else {
+                    *border_color = BorderColor::all(Color::srgb(0.2, 0.2, 0.2));
+                }
+            }
+            Interaction::None => {
+                // Reset border to uniform
+                node.border = UiRect::all(Val::Px(3.0));
+
+                // Reset border color
+                *border_color = BorderColor::all(Color::srgb(0.2, 0.2, 0.2));
+            }
+        }
+    }
+}
+
+fn update_spawn_button_visuals(
+    spawn_cooldowns: Res<SpawnCooldowns>,
+    economy: Res<Economy>,
+    mut button_query: Query<(&UnitSpawnButton, &mut BackgroundColor)>,
+    mut fill_query: Query<(&SpawnButtonFill, &mut Node)>,
+) {
+    let red_cooldowns = spawn_cooldowns.get_army_cooldowns(Army::Red);
+
+    // Update button backgrounds
+    for (button, mut bg_color) in &mut button_query {
+        let unit_class = match button {
+            UnitSpawnButton::Infantry => UnitClass::Infantry,
+            UnitSpawnButton::Cavalry => UnitClass::Cavalry,
+            UnitSpawnButton::Artillery => UnitClass::Artillery,
+        };
+
+        let can_afford = economy.red_money >= unit_class.cost();
+        let is_ready = red_cooldowns.is_ready(unit_class);
+
+        if is_ready && !can_afford {
+            // Not affordable but ready - dark gray
+            *bg_color = BackgroundColor(Color::srgb(0.2, 0.2, 0.2));
+        } else {
+            // Always black background (fill bar shows progress)
+            *bg_color = BackgroundColor(Color::srgb(0.0, 0.0, 0.0));
+        }
+    }
+
+    // Update fill bar heights
+    for (fill, mut node) in &mut fill_query {
+        let unit_class = match fill.button_type {
+            UnitSpawnButton::Infantry => UnitClass::Infantry,
+            UnitSpawnButton::Cavalry => UnitClass::Cavalry,
+            UnitSpawnButton::Artillery => UnitClass::Artillery,
+        };
+
+        let progress = red_cooldowns.get_progress(unit_class);
+        let height_percent = progress * 100.0;
+        node.height = Val::Percent(height_percent);
     }
 }
 
@@ -490,6 +814,9 @@ impl Plugin for UIPlugin {
             Update,
             (
                 update_timer_ui,
+                update_money_ui,
+                handle_unit_spawn_buttons,
+                update_spawn_button_visuals,
                 show_game_over_screen,
                 handle_restart,
                 handle_camera_slider_input,

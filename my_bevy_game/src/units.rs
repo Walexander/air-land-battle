@@ -9,7 +9,7 @@ use rand::Rng;
 
 use crate::map::{axial_to_world_pos, HexMapConfig, Obstacles};
 use crate::selection::{SelectionRing, create_selection_ring_mesh};
-use crate::launch_pads::{GameState, GameTimer};
+use crate::launch_pads::{GameState, GameTimer, LaunchPads, LaunchPadOwnership, LaunchPadOwner};
 
 // Components
 #[derive(Component)]
@@ -115,6 +115,14 @@ impl UnitClass {
         }
     }
 
+    pub fn cost(&self) -> i32 {
+        match self {
+            UnitClass::Infantry => 40,
+            UnitClass::Cavalry => 50,
+            UnitClass::Artillery => 60,
+        }
+    }
+
     pub fn model_path(&self) -> &'static str {
         match self {
             UnitClass::Infantry => "walking-rifle.glb",
@@ -193,6 +201,165 @@ pub struct Occupancy {
 #[derive(Resource, Default)]
 pub struct OccupancyIntent {
     pub intentions: HashMap<Entity, (i32, i32)>,
+}
+
+#[derive(Resource)]
+pub struct Economy {
+    pub red_money: i32,
+    pub blue_money: i32,
+}
+
+impl Default for Economy {
+    fn default() -> Self {
+        Self {
+            red_money: 100,
+            blue_money: 100,
+        }
+    }
+}
+
+#[derive(Default, Resource)]
+pub struct UnitSpawnQueue {
+    pub requests: Vec<UnitSpawnRequest>,
+}
+
+pub struct UnitSpawnRequest {
+    pub unit_class: UnitClass,
+    pub army: Army,
+}
+
+pub struct ArmyCooldowns {
+    pub infantry_timer: f32,
+    pub infantry_cooldown: f32,
+    pub cavalry_timer: f32,
+    pub cavalry_cooldown: f32,
+    pub artillery_timer: f32,
+    pub artillery_cooldown: f32,
+}
+
+impl Default for ArmyCooldowns {
+    fn default() -> Self {
+        Self {
+            infantry_timer: 0.0,
+            infantry_cooldown: 0.0,
+            cavalry_timer: 0.0,
+            cavalry_cooldown: 0.0,
+            artillery_timer: 0.0,
+            artillery_cooldown: 0.0,
+        }
+    }
+}
+
+impl ArmyCooldowns {
+    pub fn is_ready(&self, unit_class: UnitClass) -> bool {
+        match unit_class {
+            UnitClass::Infantry => self.infantry_timer >= self.infantry_cooldown,
+            UnitClass::Cavalry => self.cavalry_timer >= self.cavalry_cooldown,
+            UnitClass::Artillery => self.artillery_timer >= self.artillery_cooldown,
+        }
+    }
+
+    pub fn get_progress(&self, unit_class: UnitClass) -> f32 {
+        match unit_class {
+            UnitClass::Infantry => {
+                if self.infantry_cooldown == 0.0 {
+                    1.0
+                } else {
+                    (self.infantry_timer / self.infantry_cooldown).min(1.0)
+                }
+            }
+            UnitClass::Cavalry => {
+                if self.cavalry_cooldown == 0.0 {
+                    1.0
+                } else {
+                    (self.cavalry_timer / self.cavalry_cooldown).min(1.0)
+                }
+            }
+            UnitClass::Artillery => {
+                if self.artillery_cooldown == 0.0 {
+                    1.0
+                } else {
+                    (self.artillery_timer / self.artillery_cooldown).min(1.0)
+                }
+            }
+        }
+    }
+
+    pub fn start_cooldown(&mut self, unit_class: UnitClass, total_units: usize) {
+        // Base cooldown is 2 seconds, increases by 0.5s per existing unit
+        let cooldown = 2.0 + (total_units as f32 * 0.5);
+
+        match unit_class {
+            UnitClass::Infantry => {
+                self.infantry_timer = 0.0;
+                self.infantry_cooldown = cooldown;
+            }
+            UnitClass::Cavalry => {
+                self.cavalry_timer = 0.0;
+                self.cavalry_cooldown = cooldown;
+            }
+            UnitClass::Artillery => {
+                self.artillery_timer = 0.0;
+                self.artillery_cooldown = cooldown;
+            }
+        }
+    }
+
+    pub fn update(&mut self, delta: f32) {
+        self.infantry_timer += delta;
+        self.cavalry_timer += delta;
+        self.artillery_timer += delta;
+    }
+}
+
+#[derive(Resource)]
+pub struct SpawnCooldowns {
+    pub red: ArmyCooldowns,
+    pub blue: ArmyCooldowns,
+}
+
+impl Default for SpawnCooldowns {
+    fn default() -> Self {
+        Self {
+            red: ArmyCooldowns::default(),
+            blue: ArmyCooldowns::default(),
+        }
+    }
+}
+
+impl SpawnCooldowns {
+    pub fn get_army_cooldowns(&self, army: Army) -> &ArmyCooldowns {
+        match army {
+            Army::Red => &self.red,
+            Army::Blue => &self.blue,
+        }
+    }
+
+    pub fn get_army_cooldowns_mut(&mut self, army: Army) -> &mut ArmyCooldowns {
+        match army {
+            Army::Red => &mut self.red,
+            Army::Blue => &mut self.blue,
+        }
+    }
+}
+
+#[derive(Resource)]
+pub struct AIController {
+    pub spawn_timer: f32,
+    pub spawn_interval: f32,
+    pub command_timer: f32,
+    pub command_interval: f32,
+}
+
+impl Default for AIController {
+    fn default() -> Self {
+        Self {
+            spawn_timer: 0.0,
+            spawn_interval: 3.0, // Check every 3 seconds if should spawn
+            command_timer: 0.0,
+            command_interval: 2.0, // Give commands every 2 seconds
+        }
+    }
 }
 
 // Pathfinding structures
@@ -600,6 +767,8 @@ fn reset_game(
     mut occupancy_intent: ResMut<OccupancyIntent>,
     mut game_state: ResMut<GameState>,
     mut game_timer: ResMut<GameTimer>,
+    mut economy: ResMut<Economy>,
+    mut spawn_cooldowns: ResMut<SpawnCooldowns>,
 ) {
     if keyboard.just_pressed(KeyCode::KeyR) {
         println!("Resetting game...");
@@ -635,6 +804,13 @@ fn reset_game(
         game_timer.time_remaining = 20.0;
         game_timer.is_active = false;
         game_timer.winning_army = None;
+
+        // Reset economy
+        economy.red_money = 100;
+        economy.blue_money = 100;
+
+        // Reset spawn cooldowns
+        *spawn_cooldowns = SpawnCooldowns::default();
 
         // Respawn units by calling setup_units logic
         setup_units(commands, meshes, materials, animation_graphs, asset_server);
@@ -1079,6 +1255,503 @@ fn animate_explosion_visuals(
     }
 }
 
+fn spawn_unit_from_request(
+    mut spawn_queue: ResMut<UnitSpawnQueue>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut animation_graphs: ResMut<Assets<AnimationGraph>>,
+    asset_server: Res<AssetServer>,
+    mut economy: ResMut<Economy>,
+    occupancy: Res<Occupancy>,
+    red_army_query: Query<Entity, With<RedArmy>>,
+    blue_army_query: Query<Entity, With<BlueArmy>>,
+    unit_query: Query<&Unit>,
+    mut spawn_cooldowns: ResMut<SpawnCooldowns>,
+) {
+    let requests: Vec<_> = spawn_queue.requests.drain(..).collect();
+    for spawn_request in requests.iter() {
+        let cost = spawn_request.unit_class.cost();
+
+        // Check if army can afford the unit
+        let can_afford = match spawn_request.army {
+            Army::Red => economy.red_money >= cost,
+            Army::Blue => economy.blue_money >= cost,
+        };
+
+        if !can_afford {
+            println!("{:?} army: Not enough money to spawn unit!", spawn_request.army);
+            continue;
+        }
+
+        // Find available spawn location based on army
+        let spawn_candidates = match spawn_request.army {
+            Army::Red => vec![
+                (-3, 1), (-4, 1), (-4, 2), (-5, 1), (-5, 2),
+                (-2, 1), (-3, 0), (-3, 2), (-2, 2), (-4, 0),
+            ],
+            Army::Blue => vec![
+                (3, 1), (4, 1), (4, 2), (5, 1), (5, 2),
+                (2, 1), (3, 0), (3, 2), (2, 2), (4, 0),
+            ],
+        };
+
+        let spawn_pos = spawn_candidates
+            .iter()
+            .find(|pos| !occupancy.positions.contains(pos));
+
+        let Some(&(q, r)) = spawn_pos else {
+            println!("{:?} army: No available spawn location!", spawn_request.army);
+            continue;
+        };
+
+        // Deduct money from appropriate army
+        match spawn_request.army {
+            Army::Red => economy.red_money -= cost,
+            Army::Blue => economy.blue_money -= cost,
+        }
+
+        let world_pos = axial_to_world_pos(q, r);
+        let unit_pos = world_pos + Vec3::new(0.0, 5.0, 0.0);
+
+        let model_path = spawn_request.unit_class.model_path();
+        let stats = spawn_request.unit_class.default_stats();
+
+        let ring_mesh = meshes.add(create_selection_ring_mesh(53.0, 63.0));
+        let ring_material = materials.add(StandardMaterial {
+            base_color: Color::srgb(1.0, 1.0, 1.0),
+            emissive: Color::srgb(1.0, 1.0, 1.0).into(),
+            unlit: true,
+            ..default()
+        });
+
+        // Prepare health bar meshes
+        let bar_width = 40.0;
+        let bar_height = 10.0;
+        let border_width_sides = 4.0;
+        let border_height_extra = 8.0;
+        let health_bar_mesh = meshes.add(create_health_bar_mesh(bar_width, bar_height));
+        let border_mesh = meshes.add(create_health_bar_mesh(
+            bar_width + border_width_sides,
+            bar_height + border_height_extra,
+        ));
+
+        // Find the appropriate army parent entity
+        let army_entity = match spawn_request.army {
+            Army::Red => {
+                let Ok(entity) = red_army_query.single() else {
+                    println!("Red army entity not found!");
+                    continue;
+                };
+                entity
+            }
+            Army::Blue => {
+                let Ok(entity) = blue_army_query.single() else {
+                    println!("Blue army entity not found!");
+                    continue;
+                };
+                entity
+            }
+        };
+
+        // Get health bar color for this army
+        let health_bar_color = match spawn_request.army {
+            Army::Red => Color::srgb(0.9, 0.2, 0.2),
+            Army::Blue => Color::srgb(0.2, 0.4, 0.9),
+        };
+
+        // Spawn unit as child of appropriate army
+        commands.entity(army_entity).with_children(|parent| {
+            let unit_entity = if spawn_request.unit_class == UnitClass::Infantry {
+                // Infantry with 3 models
+                let spacing = 20.0;
+                let offsets = [
+                    Vec3::new(0.0, 0.0, spacing),
+                    Vec3::new(-spacing, 0.0, -spacing),
+                    Vec3::new(spacing, 0.0, -spacing),
+                ];
+
+                let mut animation_graph = AnimationGraph::new();
+                let idle_index = animation_graph.add_clip(
+                    asset_server.load(GltfAssetLabel::Animation(spawn_request.unit_class.idle_animation_index()).from_asset(model_path)),
+                    1.0,
+                    animation_graph.root,
+                );
+                let moving_index = animation_graph.add_clip(
+                    asset_server.load(GltfAssetLabel::Animation(spawn_request.unit_class.moving_animation_index()).from_asset(model_path)),
+                    1.0,
+                    animation_graph.root,
+                );
+                let graph_handle = animation_graphs.add(animation_graph);
+
+                parent
+                    .spawn((
+                        Transform::from_translation(unit_pos),
+                        Unit {
+                            q,
+                            r,
+                            _sprite_index: 999,
+                            army: spawn_request.army,
+                        },
+                        spawn_request.army,
+                        spawn_request.unit_class,
+                        stats.clone(),
+                        AnimationGraphHandle(graph_handle.clone()),
+                        AnimationGraphs {
+                            idle_graph: graph_handle.clone(),
+                            idle_index,
+                            moving_graph: graph_handle.clone(),
+                            moving_index,
+                        },
+                        CurrentAnimationState { is_moving: false },
+                        Combat {
+                            last_attack_time: 0.0,
+                            attack_cooldown: spawn_request.unit_class.base_cooldown(),
+                            last_movement_time: 0.0,
+                            movement_cooldown: 0.5,
+                        },
+                        Health {
+                            current: stats.max_health,
+                            max: stats.max_health,
+                        },
+                        Name::new(format!("{:?} {:?} ({}, {})", spawn_request.army, spawn_request.unit_class, q, r)),
+                    ))
+                    .with_children(|unit_parent| {
+                        for offset in offsets.iter() {
+                            let scene: Handle<Scene> = asset_server.load(&format!("{}#Scene0", model_path));
+                            unit_parent.spawn((
+                                SceneRoot(scene),
+                                Transform::from_translation(*offset)
+                                    .with_scale(Vec3::splat(spawn_request.unit_class.scale())),
+                            ));
+                        }
+                    })
+                    .id()
+            } else {
+                // Single model for Cavalry and Artillery
+                let scene: Handle<Scene> = asset_server.load(&format!("{}#Scene0", model_path));
+
+                let mut animation_graph = AnimationGraph::new();
+                let idle_index = animation_graph.add_clip(
+                    asset_server.load(GltfAssetLabel::Animation(spawn_request.unit_class.idle_animation_index()).from_asset(model_path)),
+                    1.0,
+                    animation_graph.root,
+                );
+                let moving_index = animation_graph.add_clip(
+                    asset_server.load(GltfAssetLabel::Animation(spawn_request.unit_class.moving_animation_index()).from_asset(model_path)),
+                    1.0,
+                    animation_graph.root,
+                );
+                let graph_handle = animation_graphs.add(animation_graph);
+
+                parent
+                    .spawn((
+                        SceneRoot(scene),
+                        Transform::from_translation(unit_pos)
+                            .with_scale(Vec3::splat(spawn_request.unit_class.scale())),
+                        Unit {
+                            q,
+                            r,
+                            _sprite_index: 999,
+                            army: spawn_request.army,
+                        },
+                        spawn_request.army,
+                        spawn_request.unit_class,
+                        stats.clone(),
+                        AnimationGraphHandle(graph_handle.clone()),
+                        AnimationGraphs {
+                            idle_graph: graph_handle.clone(),
+                            idle_index,
+                            moving_graph: graph_handle.clone(),
+                            moving_index,
+                        },
+                        CurrentAnimationState { is_moving: false },
+                        Combat {
+                            last_attack_time: 0.0,
+                            attack_cooldown: spawn_request.unit_class.base_cooldown(),
+                            last_movement_time: 0.0,
+                            movement_cooldown: 0.5,
+                        },
+                        Health {
+                            current: stats.max_health,
+                            max: stats.max_health,
+                        },
+                        Name::new(format!("{:?} {:?} ({}, {})", spawn_request.army, spawn_request.unit_class, q, r)),
+                    ))
+                    .id()
+            };
+
+            // Spawn health bars (matching original setup)
+            let bar_pos_world = world_pos + Vec3::new(0.0, 70.0, 0.0);
+
+            // Border (black)
+            parent.spawn((
+                Mesh3d(border_mesh),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.0, 0.0, 0.0),
+                    emissive: Color::srgb(0.0, 0.0, 0.0).into(),
+                    unlit: true,
+                    double_sided: true,
+                    cull_mode: None,
+                    ..default()
+                })),
+                Transform::from_translation(bar_pos_world),
+                HealthBar { unit_entity },
+                HealthBarBorder,
+            ));
+
+            // Background (dark gray)
+            parent.spawn((
+                Mesh3d(health_bar_mesh.clone()),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.2, 0.2, 0.2),
+                    emissive: Color::srgb(0.2, 0.2, 0.2).into(),
+                    unlit: true,
+                    double_sided: true,
+                    cull_mode: None,
+                    ..default()
+                })),
+                Transform::from_translation(bar_pos_world + Vec3::new(0.0, 0.1, 0.0)),
+                HealthBar { unit_entity },
+            ));
+
+            // Fill (color based on army)
+            parent.spawn((
+                Mesh3d(health_bar_mesh.clone()),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: health_bar_color,
+                    emissive: health_bar_color.into(),
+                    unlit: true,
+                    double_sided: true,
+                    cull_mode: None,
+                    ..default()
+                })),
+                Transform::from_translation(bar_pos_world + Vec3::new(0.0, 0.2, 0.0)),
+                HealthBar { unit_entity },
+                HealthBarFill,
+            ));
+
+            // Spawn selection ring
+            let ring_pos = world_pos + Vec3::new(0.0, 6.0, 0.0);
+            let ring_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
+            parent.spawn((
+                Mesh3d(ring_mesh),
+                MeshMaterial3d(ring_material),
+                Transform::from_translation(ring_pos)
+                    .with_rotation(ring_rotation)
+                    .with_scale(Vec3::splat(0.5)),
+                Visibility::Hidden,
+                crate::selection::SelectionRing {
+                    unit_entity,
+                    animation_timer: 0.0,
+                    bounce_count: 0,
+                },
+            ));
+        });
+
+        // Start cooldown based on this army's unit count
+        let army_units = unit_query.iter().filter(|u| u.army == spawn_request.army).count();
+        let army_cooldowns = spawn_cooldowns.get_army_cooldowns_mut(spawn_request.army);
+        army_cooldowns.start_cooldown(spawn_request.unit_class, army_units);
+
+        println!("Spawned {:?} {:?} unit at ({}, {}) for ${} (cooldown: {:.1}s)",
+            spawn_request.army, spawn_request.unit_class, q, r, cost,
+            match spawn_request.unit_class {
+                UnitClass::Infantry => army_cooldowns.infantry_cooldown,
+                UnitClass::Cavalry => army_cooldowns.cavalry_cooldown,
+                UnitClass::Artillery => army_cooldowns.artillery_cooldown,
+            }
+        );
+    }
+}
+
+fn ai_spawn_units(
+    time: Res<Time>,
+    mut ai_controller: ResMut<AIController>,
+    economy: Res<Economy>,
+    spawn_cooldowns: Res<SpawnCooldowns>,
+    mut spawn_queue: ResMut<UnitSpawnQueue>,
+    unit_query: Query<(&Unit, &UnitClass)>,
+) {
+    ai_controller.spawn_timer += time.delta_secs();
+
+    if ai_controller.spawn_timer < ai_controller.spawn_interval {
+        return;
+    }
+
+    ai_controller.spawn_timer = 0.0;
+
+    // Count blue units by type
+    let mut infantry_count = 0;
+    let mut cavalry_count = 0;
+    let mut artillery_count = 0;
+
+    for (unit, unit_class) in unit_query.iter() {
+        if unit.army == Army::Blue {
+            match unit_class {
+                UnitClass::Infantry => infantry_count += 1,
+                UnitClass::Cavalry => cavalry_count += 1,
+                UnitClass::Artillery => artillery_count += 1,
+            }
+        }
+    }
+
+    // Try to maintain a balanced army: prioritize whichever type we have least of
+    // Infantry (cheap), Cavalry (mobile), Artillery (powerful)
+    let unit_types = [
+        (UnitClass::Infantry, infantry_count),
+        (UnitClass::Cavalry, cavalry_count),
+        (UnitClass::Artillery, artillery_count),
+    ];
+
+    // Sort by count (ascending) to prioritize least common type
+    let mut sorted_types = unit_types.to_vec();
+    sorted_types.sort_by_key(|(_, count)| *count);
+
+    // Try to spawn the unit type we have least of (if affordable and ready)
+    for (unit_class, _) in sorted_types {
+        let cost = unit_class.cost();
+        let blue_cooldowns = spawn_cooldowns.get_army_cooldowns(Army::Blue);
+        if economy.blue_money >= cost && blue_cooldowns.is_ready(unit_class) {
+            spawn_queue.requests.push(UnitSpawnRequest {
+                unit_class,
+                army: Army::Blue,
+            });
+            break; // Only spawn one unit per check
+        }
+    }
+}
+
+fn ai_command_units(
+    time: Res<Time>,
+    mut ai_controller: ResMut<AIController>,
+    mut commands: Commands,
+    launch_pads: Res<LaunchPads>,
+    pad_ownership: Res<LaunchPadOwnership>,
+    obstacles: Res<Obstacles>,
+    map_config: Res<HexMapConfig>,
+    occupancy: Res<Occupancy>,
+    occupancy_intent: Res<OccupancyIntent>,
+    mut unit_query: Query<(Entity, &Unit, &UnitStats, Option<&UnitMovement>)>,
+) {
+    ai_controller.command_timer += time.delta_secs();
+
+    if ai_controller.command_timer < ai_controller.command_interval {
+        return;
+    }
+
+    ai_controller.command_timer = 0.0;
+
+    // Find all idle blue units (units without movement or who have reached destination)
+    let mut idle_blue_units = Vec::new();
+    for (entity, unit, stats, movement) in unit_query.iter() {
+        if unit.army == Army::Blue {
+            // Unit is idle if it has no movement component or has reached end of path
+            let is_idle = movement.is_none()
+                || movement.map_or(false, |m| m.current_waypoint >= m.path.len());
+            if is_idle {
+                idle_blue_units.push((entity, unit, stats));
+            }
+        }
+    }
+
+    if idle_blue_units.is_empty() {
+        return;
+    }
+
+    // Find target launch pads (non-blue controlled pads)
+    let mut all_target_positions = Vec::new();
+    for (pad_index, pad_tiles) in launch_pads.pads.iter().enumerate() {
+        let owner = pad_ownership.owners.get(pad_index).copied().unwrap_or(LaunchPadOwner::Neutral);
+
+        // Target neutral, red, or contested pads
+        if owner != LaunchPadOwner::Blue {
+            // Add all tiles in this pad as potential targets
+            for &(q, r) in pad_tiles {
+                all_target_positions.push((q, r));
+            }
+        }
+    }
+
+    if all_target_positions.is_empty() {
+        // All pads are blue-controlled, just hold position
+        return;
+    }
+
+    // Command each idle unit to move toward nearest unoccupied target pad
+    for (entity, unit, stats) in idle_blue_units {
+        let unit_pos = (unit.q, unit.r);
+
+        // Build set of currently occupied/blocked cells for this unit
+        let mut blocking_cells = obstacles.positions.clone();
+        for &occupied_pos in &occupancy.positions {
+            if occupied_pos != unit_pos {
+                blocking_cells.insert(occupied_pos);
+            }
+        }
+
+        // Also block cells that OTHER units are already targeting
+        for (other_entity, &intent_pos) in &occupancy_intent.intentions {
+            if *other_entity != entity && intent_pos != unit_pos {
+                blocking_cells.insert(intent_pos);
+            }
+        }
+
+        // Filter to only unoccupied targets for this specific unit
+        let available_targets: Vec<(i32, i32)> = all_target_positions
+            .iter()
+            .filter(|pos| !blocking_cells.contains(pos))
+            .copied()
+            .collect();
+
+        if available_targets.is_empty() {
+            // No available targets for this unit
+            continue;
+        }
+
+        // Find nearest available target position
+        let mut nearest_target = available_targets[0];
+        let mut min_distance = hex_distance(unit_pos, nearest_target);
+
+        for &target_pos in &available_targets {
+            let dist = hex_distance(unit_pos, target_pos);
+            if dist < min_distance {
+                min_distance = dist;
+                nearest_target = target_pos;
+            }
+        }
+
+        // Try to find a path to the target
+        if let Some(path) = find_path(
+            unit_pos,
+            nearest_target,
+            map_config.map_radius,
+            &blocking_cells,
+        ) {
+            if path.len() > 1 {
+                // Create path for movement (excluding current position)
+                let path_to_follow: Vec<(i32, i32)> = path[1..].to_vec();
+
+                commands.entity(entity).insert(UnitMovement {
+                    path: path_to_follow,
+                    current_waypoint: 0,
+                    progress: 0.0,
+                    speed: stats.speed,
+                    segment_start: unit_pos,
+                });
+            }
+        }
+    }
+}
+
+fn update_spawn_cooldowns(
+    time: Res<Time>,
+    mut spawn_cooldowns: ResMut<SpawnCooldowns>,
+) {
+    spawn_cooldowns.red.update(time.delta_secs());
+    spawn_cooldowns.blue.update(time.delta_secs());
+}
+
 fn update_health_bars(
     unit_query: Query<(&Health, &Transform), With<Unit>>,
     mut health_bar_fill_query: Query<(&HealthBar, &mut Transform), (With<HealthBarFill>, Without<Unit>, Without<HealthBarBorder>)>,
@@ -1127,16 +1800,8 @@ fn setup_units(
     asset_server: Res<AssetServer>,
 ) {
     // (q, r, unit_index, army, class)
-    let units = vec![
-        // Red Army - One of each type
-        (-3, 1, 0, Army::Red, UnitClass::Infantry),
-        (-4, 1, 1, Army::Red, UnitClass::Cavalry),
-        (-4, 2, 2, Army::Red, UnitClass::Artillery),
-
-        // Blue Army - Mirrored positions
-        (3, 1, 3, Army::Blue, UnitClass::Infantry),
-        (4, 0, 4, Army::Blue, UnitClass::Cavalry),
-        (3, 2, 5, Army::Blue, UnitClass::Artillery),
+    let units: Vec<(i32, i32, usize, Army, UnitClass)> = vec![
+        // Start with no units - players must purchase them
     ];
 
     let ring_mesh = meshes.add(create_selection_ring_mesh(53.0, 63.0));
@@ -1163,6 +1828,12 @@ fn setup_units(
 
             // Get stats for this class
             let stats = unit_class.default_stats();
+
+            // Health bar color based on army
+            let health_bar_color = match army {
+                Army::Red => Color::srgb(0.9, 0.2, 0.2),
+                Army::Blue => Color::srgb(0.2, 0.4, 0.9),
+            };
 
             // Prepare health bar meshes
             let bar_width = 40.0;
@@ -1332,12 +2003,12 @@ fn setup_units(
                 HealthBar { unit_entity },
             ));
 
-            // Fill (red for red army)
+            // Fill (color based on army)
             parent.spawn((
                 Mesh3d(health_bar_mesh.clone()),
                 MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::srgb(0.9, 0.2, 0.2),
-                    emissive: Color::srgb(0.9, 0.2, 0.2).into(),
+                    base_color: health_bar_color,
+                    emissive: health_bar_color.into(),
                     unlit: true,
                     double_sided: true,
                     cull_mode: None,
@@ -1382,6 +2053,12 @@ fn setup_units(
 
             // Get stats for this class
             let stats = unit_class.default_stats();
+
+            // Health bar color based on army
+            let health_bar_color = match army {
+                Army::Red => Color::srgb(0.9, 0.2, 0.2),
+                Army::Blue => Color::srgb(0.2, 0.4, 0.9),
+            };
 
             // Prepare health bar meshes
             let bar_width = 40.0;
@@ -1592,11 +2269,19 @@ impl Plugin for UnitsPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(Occupancy::default())
             .insert_resource(OccupancyIntent::default())
+            .insert_resource(Economy::default())
+            .insert_resource(UnitSpawnQueue::default())
+            .insert_resource(SpawnCooldowns::default())
+            .insert_resource(AIController::default())
             .add_systems(Startup, setup_units)
             .add_systems(
                 Update,
                 (
                     reset_game,
+                    update_spawn_cooldowns,
+                    ai_spawn_units,
+                    ai_command_units,
+                    spawn_unit_from_request,
                     move_units,
                     rotate_units_toward_enemies,
                     combat_system,

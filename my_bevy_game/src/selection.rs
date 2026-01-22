@@ -502,7 +502,7 @@ fn handle_unit_selection(
             if let Ok(hovered_tile) = hex_query.get(hovered_entity) {
                 let mut clicked_unit = None;
                 for (entity, unit, _movement) in &unit_query {
-                    if unit.q == hovered_tile.q && unit.r == hovered_tile.r {
+                    if unit.q == hovered_tile.q && unit.r == hovered_tile.r && unit.army == Army::Red {
                         clicked_unit = Some(entity);
                         break;
                     }
@@ -523,18 +523,27 @@ fn handle_unit_selection(
                             return;
                         }
 
+                        // Check if goal is occupied by ANY unit
+                        if occupancy.positions.contains(&goal) {
+                            return; // Cannot move to occupied cell
+                        }
+
+                        // Check if another unit is already moving to this goal
+                        for (entity, &intent_pos) in &occupancy_intent.intentions {
+                            if *entity != selected_entity && intent_pos == goal {
+                                return; // Cannot move to cell already targeted by another unit
+                            }
+                        }
+
                         let mut blocking_cells = obstacles.positions.clone();
                         let unit_current_pos = (selected_unit.q, selected_unit.r);
                         for &occupied_pos in &occupancy.positions {
-                            if occupied_pos != unit_current_pos && occupied_pos != goal {
+                            if occupied_pos != unit_current_pos {
                                 blocking_cells.insert(occupied_pos);
                             }
                         }
                         for (entity, &intent_pos) in &occupancy_intent.intentions {
-                            if *entity != selected_entity
-                                && intent_pos != unit_current_pos
-                                && intent_pos != goal
-                            {
+                            if *entity != selected_entity && intent_pos != unit_current_pos {
                                 blocking_cells.insert(intent_pos);
                             }
                         }
