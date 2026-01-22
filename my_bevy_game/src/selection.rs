@@ -3,7 +3,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 
 use crate::map::{axial_to_world_pos, HexMapConfig, HexTile, HoveredHex, Obstacles};
-use crate::units::{find_path, Occupancy, OccupancyIntent, Unit, UnitMovement, Army, UnitStats};
+use crate::units::{find_path, Occupancy, OccupancyIntent, ClaimedCellsThisFrame, Unit, UnitMovement, Army, UnitStats};
 use crate::loading::LoadingState;
 
 // Components
@@ -489,6 +489,7 @@ fn handle_unit_selection(
     obstacles: Res<Obstacles>,
     occupancy: Res<Occupancy>,
     occupancy_intent: Res<OccupancyIntent>,
+    mut claimed_cells: ResMut<ClaimedCellsThisFrame>,
     unit_query: Query<(Entity, &Unit, Option<&UnitMovement>), Without<Selected>>,
     selected_query: Query<(Entity, &Unit, &UnitStats, Option<&UnitMovement>, &Transform), With<Selected>>,
     path_viz_query: Query<(Entity, &PathVisualization)>,
@@ -534,6 +535,11 @@ fn handle_unit_selection(
                             if *entity != selected_entity && intent_pos == goal {
                                 return; // Cannot move to cell already targeted by another unit
                             }
+                        }
+
+                        // CRITICAL: Check if goal has been claimed by any system THIS FRAME
+                        if claimed_cells.cells.contains(&goal) {
+                            return; // Cannot move to cell claimed this frame
                         }
 
                         let mut blocking_cells = obstacles.positions.clone();
@@ -583,12 +589,17 @@ fn handle_unit_selection(
                                             current_cell.0, current_cell.1, goal.0, goal.1
                                         );
                                         commands.entity(selected_entity).insert(UnitMovement {
-                                            path: path_to_follow,
+                                            path: path_to_follow.clone(),
                                             current_waypoint: 0,
                                             progress: 0.0,
                                             speed: stats.speed,
                                             segment_start: current_cell,
                                         });
+
+                                        // Mark all cells in path as claimed
+                                        for &cell in &path_to_follow {
+                                            claimed_cells.cells.insert(cell);
+                                        }
 
                                         spawn_destination_ring(
                                             &mut commands,
@@ -643,13 +654,18 @@ fn handle_unit_selection(
                                                 army: selected_unit.army,
                                             },
                                             UnitMovement {
-                                                path: new_path,
+                                                path: new_path.clone(),
                                                 current_waypoint: 0,
                                                 progress: 1.0 - movement.progress,
                                                 speed: stats.speed,
                                                 segment_start: next_cell,
                                             },
                                         ));
+
+                                        // Mark all cells in path as claimed
+                                        for &cell in &new_path {
+                                            claimed_cells.cells.insert(cell);
+                                        }
 
                                         spawn_destination_ring(
                                             &mut commands,
@@ -673,12 +689,17 @@ fn handle_unit_selection(
                                         if new_full_path.len() > 1 {
                                             // Keep current segment_start to maintain visual position
                                             commands.entity(selected_entity).insert(UnitMovement {
-                                                path: new_full_path,
+                                                path: new_full_path.clone(),
                                                 current_waypoint: 0,
                                                 progress: movement.progress,
                                                 speed: stats.speed,
                                                 segment_start: movement.segment_start,
                                             });
+
+                                            // Mark all cells in path as claimed
+                                            for &cell in &new_full_path {
+                                                claimed_cells.cells.insert(cell);
+                                            }
 
                                             spawn_destination_ring(
                                                 &mut commands,
@@ -710,12 +731,17 @@ fn handle_unit_selection(
                                         start.0, start.1, goal.0, goal.1
                                     );
                                     commands.entity(selected_entity).insert(UnitMovement {
-                                        path: path_to_follow,
+                                        path: path_to_follow.clone(),
                                         current_waypoint: 0,
                                         progress: 0.0,
                                         speed: 100.0,
                                         segment_start: start,
                                     });
+
+                                    // Mark all cells in path as claimed
+                                    for &cell in &path_to_follow {
+                                        claimed_cells.cells.insert(cell);
+                                    }
 
                                     spawn_destination_ring(
                                         &mut commands,

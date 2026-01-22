@@ -210,6 +210,13 @@ pub struct OccupancyIntent {
     pub intentions: HashMap<Entity, (i32, i32)>,
 }
 
+// Track cells claimed THIS FRAME by any system (player or AI)
+// This prevents race conditions when multiple systems assign movement in same frame
+#[derive(Resource, Default)]
+pub struct ClaimedCellsThisFrame {
+    pub cells: HashSet<(i32, i32)>,
+}
+
 #[derive(Resource)]
 pub struct Economy {
     pub red_money: i32,
@@ -879,30 +886,44 @@ fn reset_game(
     }
 }
 
+fn clear_claimed_cells(
+    mut claimed_cells: ResMut<ClaimedCellsThisFrame>,
+) {
+    claimed_cells.cells.clear();
+}
+
 fn update_occupancy_intent(
-    unit_query: Query<(Entity, &Unit, &UnitMovement)>,
+    unit_query: Query<(Entity, &Unit, Option<&UnitMovement>)>,
     mut occupancy_intent: ResMut<OccupancyIntent>,
 ) {
     occupancy_intent.intentions.clear();
-    for (entity, unit, movement) in &unit_query {
-        if movement.current_waypoint < movement.path.len() {
-            if movement.progress >= 0.5 {
-                // At >= 0.5, unit already occupies current target, so intent is for next cell if it exists
-                if movement.current_waypoint + 1 < movement.path.len() {
-                    let next_cell = movement.path[movement.current_waypoint + 1];
-                    occupancy_intent.intentions.insert(entity, next_cell);
+    for (entity, unit, movement_opt) in &unit_query {
+        if let Some(movement) = movement_opt {
+            // Unit is moving
+            if movement.current_waypoint < movement.path.len() {
+                if movement.progress >= 0.5 {
+                    // At >= 0.5, unit already occupies current target, so intent is for next cell if it exists
+                    if movement.current_waypoint + 1 < movement.path.len() {
+                        let next_cell = movement.path[movement.current_waypoint + 1];
+                        occupancy_intent.intentions.insert(entity, next_cell);
+                    } else {
+                        // No next cell, intent is current position
+                        occupancy_intent
+                            .intentions
+                            .insert(entity, (unit.q, unit.r));
+                    }
                 } else {
-                    // No next cell, intent is current position
-                    occupancy_intent
-                        .intentions
-                        .insert(entity, (unit.q, unit.r));
+                    // At < 0.5, intent is for the current target
+                    let next_cell = movement.path[movement.current_waypoint];
+                    occupancy_intent.intentions.insert(entity, next_cell);
                 }
             } else {
-                // At < 0.5, intent is for the current target
-                let next_cell = movement.path[movement.current_waypoint];
-                occupancy_intent.intentions.insert(entity, next_cell);
+                occupancy_intent
+                    .intentions
+                    .insert(entity, (unit.q, unit.r));
             }
         } else {
+            // Unit is stationary - it intends to stay at its current position
             occupancy_intent
                 .intentions
                 .insert(entity, (unit.q, unit.r));
@@ -1354,6 +1375,7 @@ fn spawn_unit_from_request(
     asset_server: Res<AssetServer>,
     mut economy: ResMut<Economy>,
     occupancy: Res<Occupancy>,
+    occupancy_intent: Res<OccupancyIntent>,
     red_army_query: Query<Entity, With<RedArmy>>,
     blue_army_query: Query<Entity, With<BlueArmy>>,
     unit_query: Query<&Unit>,
@@ -1386,9 +1408,16 @@ fn spawn_unit_from_request(
             ],
         };
 
+        // Check both current occupancy AND intent (units moving toward cells)
+        let intended_positions: HashSet<(i32, i32)> = occupancy_intent
+            .intentions
+            .values()
+            .copied()
+            .collect();
+
         let spawn_pos = spawn_candidates
             .iter()
-            .find(|pos| !occupancy.positions.contains(pos));
+            .find(|pos| !occupancy.positions.contains(pos) && !intended_positions.contains(pos));
 
         let Some(&(q, r)) = spawn_pos else {
             println!("{:?} army: No available spawn location!", spawn_request.army);
@@ -1722,6 +1751,7 @@ fn ai_command_units(
     map_config: Res<HexMapConfig>,
     occupancy: Res<Occupancy>,
     occupancy_intent: Res<OccupancyIntent>,
+    mut claimed_cells: ResMut<ClaimedCellsThisFrame>,
     mut unit_query: Query<(Entity, &Unit, &UnitStats, Option<&UnitMovement>)>,
 ) {
     ai_controller.command_timer += time.delta_secs();
@@ -1787,6 +1817,13 @@ fn ai_command_units(
             }
         }
 
+        // CRITICAL: Also block cells claimed by ANY system THIS FRAME (player or AI)
+        for &claimed_cell in &claimed_cells.cells {
+            if claimed_cell != unit_pos {
+                blocking_cells.insert(claimed_cell);
+            }
+        }
+
         // Filter to only unoccupied targets for this specific unit
         let available_targets: Vec<(i32, i32)> = all_target_positions
             .iter()
@@ -1823,12 +1860,18 @@ fn ai_command_units(
                 let path_to_follow: Vec<(i32, i32)> = path[1..].to_vec();
 
                 commands.entity(entity).insert(UnitMovement {
-                    path: path_to_follow,
+                    path: path_to_follow.clone(),
                     current_waypoint: 0,
                     progress: 0.0,
                     speed: stats.speed,
                     segment_start: unit_pos,
                 });
+
+                // CRITICAL: Mark ALL cells in the path as claimed (not just destination)
+                // This prevents other systems from assigning overlapping paths
+                for &cell in &path_to_follow {
+                    claimed_cells.cells.insert(cell);
+                }
             }
         }
     }
@@ -2359,6 +2402,7 @@ impl Plugin for UnitsPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(Occupancy::default())
             .insert_resource(OccupancyIntent::default())
+            .insert_resource(ClaimedCellsThisFrame::default())
             .insert_resource(Economy::default())
             .insert_resource(UnitSpawnQueue::default())
             .insert_resource(SpawnCooldowns::default())
@@ -2367,6 +2411,7 @@ impl Plugin for UnitsPlugin {
             .add_systems(
                 Update,
                 (
+                    clear_claimed_cells,
                     reset_game,
                     update_spawn_cooldowns,
                     ai_spawn_units,
@@ -2376,6 +2421,11 @@ impl Plugin for UnitsPlugin {
                     rotate_units_toward_enemies,
                     combat_system,
                     handle_flash_effects,
+                ).run_if(in_state(LoadingState::Playing)),
+            )
+            .add_systems(
+                Update,
+                (
                     cleanup_flash_visuals,
                     handle_explosion_effects,
                     animate_explosion_visuals,
