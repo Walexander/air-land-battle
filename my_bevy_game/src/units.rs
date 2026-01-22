@@ -74,6 +74,7 @@ pub enum UnitClass {
     Infantry,
     Cavalry,
     Artillery,
+    Harvester,
 }
 
 #[derive(Component, Clone)]
@@ -105,6 +106,12 @@ impl UnitClass {
                 armor: 70.0,
                 attack: 25.0,
             },
+            UnitClass::Harvester => UnitStats {
+                max_health: 90.0,
+                speed: 80.0,
+                armor: 40.0,
+                attack: 5.0, // Low attack - not a combat unit
+            },
         }
     }
 
@@ -113,6 +120,7 @@ impl UnitClass {
             UnitClass::Infantry => 2.0,
             UnitClass::Cavalry => 1.5,
             UnitClass::Artillery => 3.0,
+            UnitClass::Harvester => 2.5,
         }
     }
 
@@ -121,6 +129,7 @@ impl UnitClass {
             UnitClass::Infantry => 40,
             UnitClass::Cavalry => 50,
             UnitClass::Artillery => 60,
+            UnitClass::Harvester => 50,
         }
     }
 
@@ -129,6 +138,7 @@ impl UnitClass {
             UnitClass::Infantry => "walking-rifle.glb",
             UnitClass::Cavalry => "Fox.glb",
             UnitClass::Artillery => "CesiumMan.glb",
+            UnitClass::Harvester => "Tractor.glb",
         }
     }
 
@@ -137,6 +147,7 @@ impl UnitClass {
             UnitClass::Infantry => 12.0,
             UnitClass::Cavalry => 0.5,
             UnitClass::Artillery => 30.0,
+            UnitClass::Harvester => 8.0,
         }
     }
 
@@ -145,6 +156,7 @@ impl UnitClass {
             UnitClass::Infantry => 0,
             UnitClass::Cavalry => 0,
             UnitClass::Artillery => 0, // CesiumMan has walking animation at index 0
+            UnitClass::Harvester => 0,
         }
     }
 
@@ -153,6 +165,7 @@ impl UnitClass {
             UnitClass::Infantry => 0,  // walking-rifle only has Animation0
             UnitClass::Cavalry => 2,
             UnitClass::Artillery => 0, // CesiumMan only has one animation at index 0
+            UnitClass::Harvester => 0,
         }
     }
 }
@@ -249,6 +262,8 @@ pub struct ArmyCooldowns {
     pub cavalry_cooldown: f32,
     pub artillery_timer: f32,
     pub artillery_cooldown: f32,
+    pub harvester_timer: f32,
+    pub harvester_cooldown: f32,
 }
 
 impl Default for ArmyCooldowns {
@@ -260,6 +275,8 @@ impl Default for ArmyCooldowns {
             cavalry_cooldown: 0.0,
             artillery_timer: 0.0,
             artillery_cooldown: 0.0,
+            harvester_timer: 0.0,
+            harvester_cooldown: 0.0,
         }
     }
 }
@@ -270,6 +287,7 @@ impl ArmyCooldowns {
             UnitClass::Infantry => self.infantry_timer >= self.infantry_cooldown,
             UnitClass::Cavalry => self.cavalry_timer >= self.cavalry_cooldown,
             UnitClass::Artillery => self.artillery_timer >= self.artillery_cooldown,
+            UnitClass::Harvester => self.harvester_timer >= self.harvester_cooldown,
         }
     }
 
@@ -296,6 +314,13 @@ impl ArmyCooldowns {
                     (self.artillery_timer / self.artillery_cooldown).min(1.0)
                 }
             }
+            UnitClass::Harvester => {
+                if self.harvester_cooldown == 0.0 {
+                    1.0
+                } else {
+                    (self.harvester_timer / self.harvester_cooldown).min(1.0)
+                }
+            }
         }
     }
 
@@ -316,6 +341,10 @@ impl ArmyCooldowns {
                 self.artillery_timer = 0.0;
                 self.artillery_cooldown = cooldown;
             }
+            UnitClass::Harvester => {
+                self.harvester_timer = 0.0;
+                self.harvester_cooldown = cooldown;
+            }
         }
     }
 
@@ -323,6 +352,7 @@ impl ArmyCooldowns {
         self.infantry_timer += delta;
         self.cavalry_timer += delta;
         self.artillery_timer += delta;
+        self.harvester_timer += delta;
     }
 }
 
@@ -1721,6 +1751,7 @@ fn spawn_unit_from_request(
                 UnitClass::Infantry => army_cooldowns.infantry_cooldown,
                 UnitClass::Cavalry => army_cooldowns.cavalry_cooldown,
                 UnitClass::Artillery => army_cooldowns.artillery_cooldown,
+                UnitClass::Harvester => army_cooldowns.harvester_cooldown,
             }
         );
     }
@@ -1746,6 +1777,7 @@ fn ai_spawn_units(
     let mut infantry_count = 0;
     let mut cavalry_count = 0;
     let mut artillery_count = 0;
+    let mut harvester_count = 0;
 
     for (unit, unit_class) in unit_query.iter() {
         if unit.army == Army::Blue {
@@ -1753,16 +1785,18 @@ fn ai_spawn_units(
                 UnitClass::Infantry => infantry_count += 1,
                 UnitClass::Cavalry => cavalry_count += 1,
                 UnitClass::Artillery => artillery_count += 1,
+                UnitClass::Harvester => harvester_count += 1,
             }
         }
     }
 
     // Try to maintain a balanced army: prioritize whichever type we have least of
-    // Infantry (cheap), Cavalry (mobile), Artillery (powerful)
+    // Infantry (cheap), Cavalry (mobile), Artillery (powerful), Harvester (farming)
     let unit_types = [
         (UnitClass::Infantry, infantry_count),
         (UnitClass::Cavalry, cavalry_count),
         (UnitClass::Artillery, artillery_count),
+        (UnitClass::Harvester, harvester_count),
     ];
 
     // Sort by count (ascending) to prioritize least common type

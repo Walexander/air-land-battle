@@ -31,6 +31,7 @@ pub enum UnitSpawnButton {
     Infantry,
     Cavalry,
     Artillery,
+    Harvester,
 }
 
 #[derive(Component)]
@@ -206,6 +207,49 @@ fn setup_ui(mut commands: Commands) {
                         TextColor(Color::WHITE),
                     ));
                 });
+
+            // Harvester button
+            parent
+                .spawn((
+                    Button,
+                    Node {
+                        width: Val::Px(40.0),
+                        height: Val::Px(40.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        border: UiRect::all(Val::Px(3.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.0, 0.0, 0.0)),
+                    BorderColor::all(Color::srgb(0.2, 0.2, 0.2)),
+                    UnitSpawnButton::Harvester,
+                ))
+                .with_children(|button_parent| {
+                    // Progress fill bar (starts at bottom)
+                    button_parent.spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            height: Val::Percent(0.0),
+                            position_type: PositionType::Absolute,
+                            bottom: Val::Px(0.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.0, 0.6, 0.0)),
+                        SpawnButtonFill {
+                            button_type: UnitSpawnButton::Harvester,
+                        },
+                    ));
+
+                    // Text centered
+                    button_parent.spawn((
+                        Text::new("H"),
+                        TextFont {
+                            font_size: 20.0,
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                    ));
+                });
         });
 
     // Blue army money display (top-right)
@@ -327,6 +371,7 @@ fn handle_unit_spawn_buttons(
             UnitSpawnButton::Infantry => UnitClass::Infantry,
             UnitSpawnButton::Cavalry => UnitClass::Cavalry,
             UnitSpawnButton::Artillery => UnitClass::Artillery,
+            UnitSpawnButton::Harvester => UnitClass::Harvester,
         };
 
         match *interaction {
@@ -384,8 +429,8 @@ fn handle_unit_spawn_buttons(
 fn update_spawn_button_visuals(
     spawn_cooldowns: Res<SpawnCooldowns>,
     economy: Res<Economy>,
-    mut button_query: Query<(&UnitSpawnButton, &mut BackgroundColor)>,
-    mut fill_query: Query<(&SpawnButtonFill, &mut Node)>,
+    mut button_query: Query<(&UnitSpawnButton, &mut BackgroundColor), Without<SpawnButtonFill>>,
+    mut fill_query: Query<(&SpawnButtonFill, &mut Node, &mut BackgroundColor), Without<UnitSpawnButton>>,
 ) {
     let red_cooldowns = spawn_cooldowns.get_army_cooldowns(Army::Red);
 
@@ -395,27 +440,39 @@ fn update_spawn_button_visuals(
             UnitSpawnButton::Infantry => UnitClass::Infantry,
             UnitSpawnButton::Cavalry => UnitClass::Cavalry,
             UnitSpawnButton::Artillery => UnitClass::Artillery,
+            UnitSpawnButton::Harvester => UnitClass::Harvester,
         };
 
         let can_afford = economy.red_money >= unit_class.cost();
         let is_ready = red_cooldowns.is_ready(unit_class);
 
         if is_ready && !can_afford {
-            // Not affordable but ready - dark gray
-            *bg_color = BackgroundColor(Color::srgb(0.2, 0.2, 0.2));
+            // Not affordable but ready - red background
+            *bg_color = BackgroundColor(Color::srgb(0.6, 0.0, 0.0));
         } else {
             // Always black background (fill bar shows progress)
             *bg_color = BackgroundColor(Color::srgb(0.0, 0.0, 0.0));
         }
     }
 
-    // Update fill bar heights
-    for (fill, mut node) in &mut fill_query {
+    // Update fill bar heights and colors
+    for (fill, mut node, mut fill_color) in &mut fill_query {
         let unit_class = match fill.button_type {
             UnitSpawnButton::Infantry => UnitClass::Infantry,
             UnitSpawnButton::Cavalry => UnitClass::Cavalry,
             UnitSpawnButton::Artillery => UnitClass::Artillery,
+            UnitSpawnButton::Harvester => UnitClass::Harvester,
         };
+
+        let can_afford = economy.red_money >= unit_class.cost();
+        let is_ready = red_cooldowns.is_ready(unit_class);
+
+        // Set fill bar color based on affordability
+        if is_ready && !can_afford {
+            *fill_color = BackgroundColor(Color::srgb(0.8, 0.0, 0.0)); // Bright red when can't afford
+        } else {
+            *fill_color = BackgroundColor(Color::srgb(0.0, 0.6, 0.0)); // Green when affordable
+        }
 
         let progress = red_cooldowns.get_progress(unit_class);
         let height_percent = progress * 100.0;

@@ -87,6 +87,7 @@ fn preload_assets(mut commands: Commands, asset_server: Res<AssetServer>) {
         asset_server.load::<Scene>("Fox.glb#Scene0").untyped(),
         asset_server.load::<Scene>("walking-rifle.glb#Scene0").untyped(),
         asset_server.load::<Scene>("CesiumMan.glb#Scene0").untyped(),
+        asset_server.load::<Scene>("Tractor.glb#Scene0").untyped(),
         asset_server.load::<Scene>("Lighthing Crystal.glb#Scene0").untyped(),
         // Load animations (only the ones that actually exist in each file)
         asset_server.load::<AnimationClip>("Fox.glb#Animation0").untyped(),
@@ -94,6 +95,7 @@ fn preload_assets(mut commands: Commands, asset_server: Res<AssetServer>) {
         asset_server.load::<AnimationClip>("walking-rifle.glb#Animation0").untyped(),
         // Note: walking-rifle.glb only has Animation0, not Animation2
         asset_server.load::<AnimationClip>("CesiumMan.glb#Animation0").untyped(),
+        // Note: Tractor.glb has no animations
     ];
 
     commands.insert_resource(AssetsLoading { handles });
