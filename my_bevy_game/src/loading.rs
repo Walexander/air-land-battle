@@ -20,10 +20,7 @@ pub struct LoadingScreen;
 pub struct LoadingProgressBar;
 
 fn setup_loading_screen(mut commands: Commands) {
-    // Spawn camera for loading screen
-    commands.spawn((Camera2d, LoadingScreen));
-
-    // Spawn loading screen UI
+    // Spawn loading screen UI (Camera2d already exists from Startup)
     commands.spawn((
         Node {
             width: Val::Percent(100.0),
@@ -141,11 +138,25 @@ fn cleanup_loading_screen(
     }
 }
 
+fn setup_persistent_camera(mut commands: Commands) {
+    // Spawn Camera2d that exists from the very start for egui
+    // It will also render the loading screen UI
+    // Order 1 so it renders on top of Camera3d (which will have order 0)
+    commands.spawn((
+        Camera2d,
+        Camera {
+            order: 1,
+            ..default()
+        },
+    ));
+}
+
 pub struct LoadingPlugin;
 
 impl Plugin for LoadingPlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<LoadingState>()
+            .add_systems(Startup, setup_persistent_camera)
             .add_systems(OnEnter(LoadingState::Loading), (setup_loading_screen, preload_assets))
             .add_systems(Update, check_assets_ready.run_if(in_state(LoadingState::Loading)))
             .add_systems(OnEnter(LoadingState::Playing), cleanup_loading_screen);

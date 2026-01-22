@@ -502,6 +502,10 @@ fn setup_hex_map(
 
     commands.spawn((
         Camera3d::default(),
+        Camera {
+            order: 0,
+            ..default()
+        },
         Projection::Orthographic(orthographic),
         Transform::from_xyz(0.0, 300.0, 400.0).looking_at(Vec3::ZERO, Vec3::Y),
         GameCamera,
@@ -750,7 +754,7 @@ fn setup_hex_map(
 }
 
 fn hex_hover_system(
-    camera_query: Query<(&Camera, &GlobalTransform)>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<GameCamera>>,
     mut hovered_hex: ResMut<HoveredHex>,
     hex_query: Query<(Entity, &HexTile)>,
     windows: Query<&Window>,
