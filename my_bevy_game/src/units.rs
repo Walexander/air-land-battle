@@ -2438,104 +2438,6 @@ fn setup_units(
     });
 }
 
-// Test system to spawn two units and path them to the same cell for collision detection testing
-#[derive(Resource)]
-struct CollisionTestCompleted(bool);
-
-fn spawn_collision_test_units(
-    mut spawn_queue: ResMut<UnitSpawnQueue>,
-    mut test_completed: ResMut<CollisionTestCompleted>,
-) {
-    if test_completed.0 {
-        return;
-    }
-
-    // Queue spawn for Red Infantry at (-2, 0)
-    spawn_queue.requests.push(UnitSpawnRequest {
-        unit_class: UnitClass::Infantry,
-        army: Army::Red,
-    });
-
-    // Queue spawn for Blue Infantry at (2, 0)
-    spawn_queue.requests.push(UnitSpawnRequest {
-        unit_class: UnitClass::Infantry,
-        army: Army::Blue,
-    });
-
-    println!("🧪 Queued test units for collision detection test");
-    test_completed.0 = true;
-}
-
-fn path_test_units_to_center(
-    mut commands: Commands,
-    unit_query: Query<(Entity, &Unit, &Army), Without<UnitMovement>>,
-    obstacles: Res<Obstacles>,
-    map_config: Res<HexMapConfig>,
-    test_completed: Res<CollisionTestCompleted>,
-) {
-    if !test_completed.0 {
-        return; // Wait for spawn first
-    }
-
-    // Find recently spawned test units at their starting positions
-    let mut red_unit: Option<(Entity, i32, i32)> = None;
-    let mut blue_unit: Option<(Entity, i32, i32)> = None;
-
-    for (entity, unit, army) in unit_query.iter() {
-        if *army == Army::Red && (unit.q, unit.r) == (-3, 1) && red_unit.is_none() {
-            red_unit = Some((entity, unit.q, unit.r));
-        }
-        if *army == Army::Blue && (unit.q, unit.r) == (3, 1) && blue_unit.is_none() {
-            blue_unit = Some((entity, unit.q, unit.r));
-        }
-    }
-
-    // Path both units to center (0, 0) to test collision
-    let destination = (0, 0);
-
-    if let Some((red_entity, q, r)) = red_unit {
-        // Combine obstacles for pathfinding
-        let mut all_obstacles = obstacles.positions.clone();
-
-        if let Some(path) = find_path(
-            (q, r),
-            destination,
-            map_config.map_radius,
-            &all_obstacles,
-        ) {
-            println!("🧪 Pathing Red test unit from ({}, {}) to ({}, {})", q, r, destination.0, destination.1);
-            commands.entity(red_entity).insert(UnitMovement {
-                path,
-                current_waypoint: 0,
-                progress: 0.0,
-                speed: 100.0,
-                segment_start: (q, r),
-            });
-        }
-    }
-
-    if let Some((blue_entity, q, r)) = blue_unit {
-        // Combine obstacles for pathfinding
-        let mut all_obstacles = obstacles.positions.clone();
-
-        if let Some(path) = find_path(
-            (q, r),
-            destination,
-            map_config.map_radius,
-            &all_obstacles,
-        ) {
-            println!("🧪 Pathing Blue test unit from ({}, {}) to ({}, {})", q, r, destination.0, destination.1);
-            commands.entity(blue_entity).insert(UnitMovement {
-                path,
-                current_waypoint: 0,
-                progress: 0.0,
-                speed: 100.0,
-                segment_start: (q, r),
-            });
-        }
-    }
-}
-
 pub struct UnitsPlugin;
 
 impl Plugin for UnitsPlugin {
@@ -2547,7 +2449,6 @@ impl Plugin for UnitsPlugin {
             .insert_resource(UnitSpawnQueue::default())
             .insert_resource(SpawnCooldowns::default())
             .insert_resource(AIController::default())
-            .insert_resource(CollisionTestCompleted(false))
             .add_systems(OnEnter(LoadingState::Playing), setup_units)
             .add_systems(
                 Update,
@@ -2555,9 +2456,7 @@ impl Plugin for UnitsPlugin {
                     clear_claimed_cells,
                     reset_game,
                     update_spawn_cooldowns,
-                    spawn_collision_test_units,
                     ai_spawn_units,
-                    path_test_units_to_center,
                     ai_command_units,
                     spawn_unit_from_request,
                     move_units,
