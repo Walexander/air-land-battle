@@ -170,6 +170,19 @@ pub struct FlashVisual {
     pub timer: f32,
 }
 
+#[derive(Component)]
+pub struct ExplosionEffect {
+    pub timer: f32,
+    pub duration: f32,
+    pub damage: f32,
+}
+
+#[derive(Component)]
+pub struct ExplosionVisual {
+    pub timer: f32,
+    pub initial_scale: f32,
+}
+
 // Resources
 #[derive(Resource, Default)]
 pub struct Occupancy {
@@ -524,6 +537,13 @@ fn combat_system(
             commands.entity(attacker_entity).insert(FlashEffect {
                 timer: 0.0,
                 duration: 0.15, // Flash for 0.15 seconds
+            });
+
+            // Add explosion effect to defender
+            commands.entity(defender_entity).insert(ExplosionEffect {
+                timer: 0.0,
+                duration: 0.3, // Explosion lasts 0.3 seconds
+                damage,
             });
         }
     }
@@ -944,16 +964,18 @@ fn handle_flash_effects(
     for (entity, mut flash, transform) in &mut flash_query {
         if flash.timer == 0.0 {
             // First frame - spawn flash visual as an independent entity
-            let flash_mesh = meshes.add(Sphere::new(30.0).mesh().ico(2).unwrap());
+            let flash_mesh = meshes.add(Sphere::new(8.0).mesh().ico(2).unwrap());
             let flash_material = materials.add(StandardMaterial {
-                base_color: Color::srgb(3.0, 3.0, 0.0), // Very bright yellow
-                emissive: Color::srgb(3.0, 3.0, 0.0).into(),
+                base_color: Color::srgb(3.0, 0.3, 0.0), // Bright red
+                emissive: Color::srgb(3.0, 0.3, 0.0).into(),
                 unlit: true,
                 alpha_mode: AlphaMode::Blend,
                 ..default()
             });
 
-            let flash_pos = transform.translation + Vec3::new(0.0, 10.0, 0.0);
+            // Position flash in front of the unit based on its rotation
+            let forward = transform.rotation * Vec3::Z; // Get forward direction
+            let flash_pos = transform.translation + Vec3::new(0.0, 25.0, 0.0) + (forward * 15.0);
             commands.spawn((
                 Mesh3d(flash_mesh),
                 MeshMaterial3d(flash_material),
@@ -981,6 +1003,77 @@ fn cleanup_flash_visuals(
 
         // Despawn after 0.15 seconds
         if flash_visual.timer >= 0.15 {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
+fn handle_explosion_effects(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut explosion_query: Query<(Entity, &mut ExplosionEffect, &Transform)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for (entity, mut explosion, transform) in &mut explosion_query {
+        if explosion.timer == 0.0 {
+            // First frame - spawn explosion visual as an independent entity
+            // Scale based on damage: 5-20 damage maps to radius 10-30
+            let base_radius = 10.0 + (explosion.damage.min(50.0) / 50.0) * 20.0;
+
+            let explosion_mesh = meshes.add(Sphere::new(base_radius).mesh().ico(3).unwrap());
+            let explosion_material = materials.add(StandardMaterial {
+                base_color: Color::srgb(3.0, 1.5, 0.0), // Orange
+                emissive: Color::srgb(3.0, 1.5, 0.0).into(),
+                unlit: true,
+                alpha_mode: AlphaMode::Blend,
+                ..default()
+            });
+
+            let explosion_pos = transform.translation + Vec3::new(0.0, 25.0, 0.0);
+            commands.spawn((
+                Mesh3d(explosion_mesh),
+                MeshMaterial3d(explosion_material),
+                Transform::from_translation(explosion_pos).with_scale(Vec3::splat(0.1)),
+                ExplosionVisual {
+                    timer: 0.0,
+                    initial_scale: 1.0,
+                },
+            ));
+        }
+
+        explosion.timer += time.delta_secs();
+
+        if explosion.timer >= explosion.duration {
+            // Remove explosion effect component
+            commands.entity(entity).remove::<ExplosionEffect>();
+        }
+    }
+}
+
+fn animate_explosion_visuals(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut explosion_visuals: Query<(Entity, &mut ExplosionVisual, &mut Transform)>,
+) {
+    for (entity, mut explosion_visual, mut transform) in &mut explosion_visuals {
+        explosion_visual.timer += time.delta_secs();
+
+        let duration = 0.3;
+        let progress = (explosion_visual.timer / duration).min(1.0);
+
+        // Scale up quickly then fade
+        if progress < 0.4 {
+            // Expand phase (first 40% of animation)
+            let expand_progress = progress / 0.4;
+            transform.scale = Vec3::splat(0.1 + expand_progress * 0.9);
+        } else {
+            // Hold at max size then fade
+            transform.scale = Vec3::splat(1.0);
+        }
+
+        // Despawn after duration
+        if explosion_visual.timer >= duration {
             commands.entity(entity).despawn();
         }
     }
@@ -1509,6 +1602,8 @@ impl Plugin for UnitsPlugin {
                     combat_system,
                     handle_flash_effects,
                     cleanup_flash_visuals,
+                    handle_explosion_effects,
+                    animate_explosion_visuals,
                     remove_dead_units,
                     update_occupancy_intent,
                     update_occupancy,
