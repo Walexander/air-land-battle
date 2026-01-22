@@ -4,6 +4,7 @@ use bevy::mesh::{Indices, PrimitiveTopology};
 
 use crate::map::{axial_to_world_pos, HexMapConfig, HexTile, HoveredHex, Obstacles};
 use crate::units::{find_path, Occupancy, OccupancyIntent, Unit, UnitMovement, Army, UnitStats};
+use crate::loading::LoadingState;
 
 // Components
 #[derive(Component)]
@@ -1014,7 +1015,7 @@ impl Plugin for SelectionPlugin {
                 animate_selection_rings,
                 animate_destination_rings,
                 update_path_visualizations,
-            ),
+            ).run_if(in_state(LoadingState::Playing)),
         );
     }
 }

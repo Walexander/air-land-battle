@@ -7,12 +7,14 @@ mod units;
 mod selection;
 mod launch_pads;
 mod ui;
+mod loading;
 
 use map::MapPlugin;
 use units::UnitsPlugin;
 use selection::SelectionPlugin;
 use launch_pads::LaunchPadsPlugin;
 use ui::UIPlugin;
+use loading::LoadingPlugin;
 
 // #[derive(Component)]
 // struct Position {
@@ -67,6 +69,7 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_plugins(EguiPlugin::default())
         .add_plugins(WorldInspectorPlugin::new())
+        .add_plugins(LoadingPlugin)
         .add_plugins(LaunchPadsPlugin)
         .add_plugins(MapPlugin)
         .add_plugins(UnitsPlugin)

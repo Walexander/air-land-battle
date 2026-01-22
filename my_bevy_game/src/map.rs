@@ -6,6 +6,7 @@ use crate::ui::GameCamera;
 use crate::launch_pads::{LaunchPads, LaunchPadOwner, LaunchPadOwnership};
 use crate::selection::{create_hexagon_outline_mesh, Selected};
 use crate::units::Unit;
+use crate::loading::LoadingState;
 
 // Hex grid constants
 const HEX_WIDTH: f32 = 128.0;
@@ -72,8 +73,8 @@ impl Plugin for MapPlugin {
             .insert_resource(HoveredHex::default())
             .insert_resource(obstacles)
             .insert_resource(ClearColor(Color::srgb(0.53, 0.81, 0.92))) // Light sky blue
-            .add_systems(Startup, setup_hex_map)
-            .add_systems(Update, (hex_hover_system, update_outline_colors, update_launch_pad_colors, billboard_sprites));
+            .add_systems(OnEnter(LoadingState::Playing), setup_hex_map)
+            .add_systems(Update, (hex_hover_system, update_outline_colors, update_launch_pad_colors, billboard_sprites).run_if(in_state(LoadingState::Playing)));
     }
 }
 

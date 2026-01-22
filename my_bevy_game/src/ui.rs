@@ -2,6 +2,7 @@ use bevy::prelude::*;
 
 use crate::launch_pads::{GameState, GameTimer};
 use crate::units::{Army, Economy, UnitClass, UnitSpawnRequest, UnitSpawnQueue, SpawnCooldowns};
+use crate::loading::LoadingState;
 
 // Components
 #[derive(Component)]
@@ -85,7 +86,7 @@ fn setup_ui(mut commands: Commands) {
                         width: Val::Px(40.0),
                         height: Val::Px(40.0),
                         justify_content: JustifyContent::Center,
-                        align_items: AlignItems::End,
+                        align_items: AlignItems::Center,
                         border: UiRect::all(Val::Px(3.0)),
                         ..default()
                     },
@@ -109,7 +110,7 @@ fn setup_ui(mut commands: Commands) {
                         },
                     ));
 
-                    // Text on top
+                    // Text centered
                     button_parent.spawn((
                         Text::new("I"),
                         TextFont {
@@ -117,10 +118,6 @@ fn setup_ui(mut commands: Commands) {
                             ..default()
                         },
                         TextColor(Color::WHITE),
-                        Node {
-                            position_type: PositionType::Absolute,
-                            ..default()
-                        },
                     ));
                 });
 
@@ -132,7 +129,7 @@ fn setup_ui(mut commands: Commands) {
                         width: Val::Px(40.0),
                         height: Val::Px(40.0),
                         justify_content: JustifyContent::Center,
-                        align_items: AlignItems::End,
+                        align_items: AlignItems::Center,
                         border: UiRect::all(Val::Px(3.0)),
                         ..default()
                     },
@@ -156,7 +153,7 @@ fn setup_ui(mut commands: Commands) {
                         },
                     ));
 
-                    // Text on top
+                    // Text centered
                     button_parent.spawn((
                         Text::new("C"),
                         TextFont {
@@ -164,10 +161,6 @@ fn setup_ui(mut commands: Commands) {
                             ..default()
                         },
                         TextColor(Color::WHITE),
-                        Node {
-                            position_type: PositionType::Absolute,
-                            ..default()
-                        },
                     ));
                 });
 
@@ -179,7 +172,7 @@ fn setup_ui(mut commands: Commands) {
                         width: Val::Px(40.0),
                         height: Val::Px(40.0),
                         justify_content: JustifyContent::Center,
-                        align_items: AlignItems::End,
+                        align_items: AlignItems::Center,
                         border: UiRect::all(Val::Px(3.0)),
                         ..default()
                     },
@@ -203,7 +196,7 @@ fn setup_ui(mut commands: Commands) {
                         },
                     ));
 
-                    // Text on top
+                    // Text centered
                     button_parent.spawn((
                         Text::new("A"),
                         TextFont {
@@ -211,10 +204,6 @@ fn setup_ui(mut commands: Commands) {
                             ..default()
                         },
                         TextColor(Color::WHITE),
-                        Node {
-                            position_type: PositionType::Absolute,
-                            ..default()
-                        },
                     ));
                 });
         });
@@ -809,7 +798,7 @@ impl Plugin for UIPlugin {
             scale: 0.8,
         })
         .insert_resource(CameraControlsVisible(false))
-        .add_systems(Startup, (setup_ui, setup_camera_controls))
+        .add_systems(OnEnter(LoadingState::Playing), (setup_ui, setup_camera_controls))
         .add_systems(
             Update,
             (
@@ -823,7 +812,7 @@ impl Plugin for UIPlugin {
                 update_camera_from_settings,
                 toggle_camera_controls_visibility,
                 update_camera_controls_panel_visibility,
-            ),
+            ).run_if(in_state(LoadingState::Playing)),
         );
     }
 }

@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use crate::units::{Army, Unit};
+use crate::loading::LoadingState;
 
 // Enums
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -179,6 +180,6 @@ impl Plugin for LaunchPadsPlugin {
             .insert_resource(GameTimer::default())
             .insert_resource(GameState::default())
             .insert_resource(LaunchPadOwnership::default())
-            .add_systems(Update, check_launch_pad_ownership);
+            .add_systems(Update, check_launch_pad_ownership.run_if(in_state(LoadingState::Playing)));
     }
 }

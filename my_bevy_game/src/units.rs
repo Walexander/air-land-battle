@@ -10,6 +10,7 @@ use rand::Rng;
 use crate::map::{axial_to_world_pos, HexMapConfig, Obstacles};
 use crate::selection::{SelectionRing, create_selection_ring_mesh};
 use crate::launch_pads::{GameState, GameTimer, LaunchPads, LaunchPadOwnership, LaunchPadOwner};
+use crate::loading::LoadingState;
 
 // Components
 #[derive(Component)]
@@ -189,6 +190,12 @@ pub struct ExplosionEffect {
 pub struct ExplosionVisual {
     pub timer: f32,
     pub initial_scale: f32,
+}
+
+#[derive(Component)]
+pub struct SmokeCloud {
+    pub timer: f32,
+    pub rise_speed: f32,
 }
 
 // Resources
@@ -685,7 +692,7 @@ fn combat_system(
         }
 
         // Check if defender is still alive before applying damage
-        if let Ok((_, _, _, _, _, mut defender_health, _)) = unit_query.get_mut(defender_entity) {
+        let defender_survived = if let Ok((_, _, _, _, _, mut defender_health, _)) = unit_query.get_mut(defender_entity) {
             if defender_health.current <= 0.0 {
                 continue; // Already dead
             }
@@ -695,18 +702,26 @@ fn combat_system(
                 attacker_army, attacker_entity, defender_army, defender_entity, damage);
             println!("   └─ Defender health: {:.1}/{:.1}", defender_health.current, defender_health.max);
 
-            // Update attacker's last attack time
-            if let Ok((_, _, _, _, mut attacker_combat, _, _)) = unit_query.get_mut(attacker_entity) {
-                attacker_combat.last_attack_time = current_time;
-            }
+            // Store whether defender survived for later
+            defender_health.current > 0.0
+        } else {
+            false
+        };
 
-            // Add flash effect to attacker
-            commands.entity(attacker_entity).insert(FlashEffect {
-                timer: 0.0,
-                duration: 0.15, // Flash for 0.15 seconds
-            });
+        // Update attacker's last attack time
+        if let Ok((_, _, _, _, mut attacker_combat, _, _)) = unit_query.get_mut(attacker_entity) {
+            attacker_combat.last_attack_time = current_time;
+        }
 
-            // Add explosion effect to defender
+        // Add flash effect to attacker
+        commands.entity(attacker_entity).insert(FlashEffect {
+            timer: 0.0,
+            duration: 0.15, // Flash for 0.15 seconds
+        });
+
+        // Add explosion effect to defender only if they survive the hit
+        // (Death explosions are handled by remove_dead_units)
+        if defender_survived {
             commands.entity(defender_entity).insert(ExplosionEffect {
                 timer: 0.0,
                 duration: 0.3, // Explosion lasts 0.3 seconds
@@ -718,14 +733,59 @@ fn combat_system(
 
 fn remove_dead_units(
     mut commands: Commands,
-    unit_query: Query<(Entity, &Health, &Unit)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    unit_query: Query<(Entity, &Health, &Unit, &Transform)>,
     children_query: Query<&Children>,
     health_bar_query: Query<(Entity, &HealthBar)>,
     selection_ring_query: Query<(Entity, &crate::selection::SelectionRing)>,
 ) {
-    for (entity, health, _unit) in &unit_query {
+    for (entity, health, _unit, transform) in &unit_query {
         if health.current <= 0.0 {
             println!("Unit {:?} has been destroyed!", entity);
+
+            let death_pos = transform.translation;
+
+            // Spawn a large explosion effect at death location
+            let explosion_mesh = meshes.add(Sphere::new(30.0));
+            let explosion_material = materials.add(StandardMaterial {
+                base_color: Color::srgb(1.0, 0.5, 0.0), // Orange
+                emissive: Color::srgb(6.0, 3.0, 0.0).into(), // Bright orange-yellow
+                unlit: true,
+                alpha_mode: bevy::prelude::AlphaMode::Blend,
+                ..default()
+            });
+
+            commands.spawn((
+                Mesh3d(explosion_mesh.clone()),
+                MeshMaterial3d(explosion_material),
+                Transform::from_translation(death_pos).with_scale(Vec3::splat(0.1)),
+                ExplosionVisual {
+                    timer: 0.0,
+                    initial_scale: 0.1,
+                },
+            ));
+
+            // Spawn dark smoke cloud
+            let smoke_mesh = meshes.add(Sphere::new(40.0));
+            let smoke_material = materials.add(StandardMaterial {
+                base_color: Color::srgba(0.2, 0.2, 0.2, 0.8), // Dark gray smoke
+                emissive: Color::BLACK.into(),
+                unlit: true,
+                alpha_mode: bevy::prelude::AlphaMode::Blend,
+                ..default()
+            });
+
+            commands.spawn((
+                Mesh3d(smoke_mesh),
+                MeshMaterial3d(smoke_material),
+                Transform::from_translation(death_pos + Vec3::new(0.0, 10.0, 0.0))
+                    .with_scale(Vec3::splat(0.1)),
+                SmokeCloud {
+                    timer: 0.0,
+                    rise_speed: 20.0,
+                },
+            ));
 
             // Despawn all children (Infantry models, etc.)
             if let Ok(children) = children_query.get(entity) {
@@ -1221,8 +1281,10 @@ fn handle_explosion_effects(
         explosion.timer += time.delta_secs();
 
         if explosion.timer >= explosion.duration {
-            // Remove explosion effect component
-            commands.entity(entity).remove::<ExplosionEffect>();
+            // Try to remove explosion effect component if entity still exists
+            if let Ok(mut entity_commands) = commands.get_entity(entity) {
+                entity_commands.remove::<ExplosionEffect>();
+            }
         }
     }
 }
@@ -1235,21 +1297,49 @@ fn animate_explosion_visuals(
     for (entity, mut explosion_visual, mut transform) in &mut explosion_visuals {
         explosion_visual.timer += time.delta_secs();
 
-        let duration = 0.3;
+        let duration = 0.5; // Slightly longer for visibility
         let progress = (explosion_visual.timer / duration).min(1.0);
 
-        // Scale up quickly then fade
-        if progress < 0.4 {
-            // Expand phase (first 40% of animation)
-            let expand_progress = progress / 0.4;
-            transform.scale = Vec3::splat(0.1 + expand_progress * 0.9);
+        // Rapid expansion with bounce
+        if progress < 0.5 {
+            // Expand phase - quick blast
+            let expand_progress = progress / 0.5;
+            let scale = 0.1 + expand_progress * 2.5; // Larger explosion
+            transform.scale = Vec3::splat(scale);
         } else {
-            // Hold at max size then fade
-            transform.scale = Vec3::splat(1.0);
+            // Fade/shrink phase
+            let fade_progress = (progress - 0.5) / 0.5;
+            let scale = 2.6 - (fade_progress * 2.6);
+            transform.scale = Vec3::splat(scale.max(0.1));
         }
 
         // Despawn after duration
         if explosion_visual.timer >= duration {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
+fn animate_smoke_clouds(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut smoke_query: Query<(Entity, &mut SmokeCloud, &mut Transform)>,
+) {
+    for (entity, mut smoke, mut transform) in &mut smoke_query {
+        smoke.timer += time.delta_secs();
+
+        let duration = 2.0; // Smoke lasts longer
+        let progress = (smoke.timer / duration).min(1.0);
+
+        // Rise up slowly
+        transform.translation.y += smoke.rise_speed * time.delta_secs();
+
+        // Expand and fade
+        let scale = 0.1 + progress * 1.5; // Grows larger
+        transform.scale = Vec3::splat(scale);
+
+        // Despawn after duration
+        if smoke.timer >= duration {
             commands.entity(entity).despawn();
         }
     }
@@ -2273,7 +2363,7 @@ impl Plugin for UnitsPlugin {
             .insert_resource(UnitSpawnQueue::default())
             .insert_resource(SpawnCooldowns::default())
             .insert_resource(AIController::default())
-            .add_systems(Startup, setup_units)
+            .add_systems(OnEnter(LoadingState::Playing), setup_units)
             .add_systems(
                 Update,
                 (
@@ -2289,6 +2379,7 @@ impl Plugin for UnitsPlugin {
                     cleanup_flash_visuals,
                     handle_explosion_effects,
                     animate_explosion_visuals,
+                    animate_smoke_clouds,
                     remove_dead_units,
                     update_occupancy_intent,
                     update_occupancy,
@@ -2296,7 +2387,7 @@ impl Plugin for UnitsPlugin {
                     update_unit_animations,
                     play_animation_when_loaded,
                     update_health_bars,
-                ),
+                ).run_if(in_state(LoadingState::Playing)),
             );
     }
 }
