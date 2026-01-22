@@ -87,6 +87,7 @@ fn preload_assets(mut commands: Commands, asset_server: Res<AssetServer>) {
         asset_server.load::<Scene>("Fox.glb#Scene0").untyped(),
         asset_server.load::<Scene>("walking-rifle.glb#Scene0").untyped(),
         asset_server.load::<Scene>("CesiumMan.glb#Scene0").untyped(),
+        asset_server.load::<Scene>("Lighthing Crystal.glb#Scene0").untyped(),
         // Load animations (only the ones that actually exist in each file)
         asset_server.load::<AnimationClip>("Fox.glb#Animation0").untyped(),
         asset_server.load::<AnimationClip>("Fox.glb#Animation2").untyped(),

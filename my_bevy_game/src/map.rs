@@ -43,6 +43,23 @@ pub struct LaunchPadTile {
     pub pad_index: usize,
 }
 
+#[derive(Component)]
+pub struct CrystalField {
+    pub q: i32,
+    pub r: i32,
+    pub crystals_remaining: i32,
+    pub max_crystals: i32,
+}
+
+#[derive(Component)]
+struct CrystalMaterialApplied;
+
+#[derive(Component)]
+struct CrystalVisual {
+    rotation_speed: f32,
+    pulse_offset: f32,
+}
+
 // Resources
 #[derive(Resource)]
 pub struct HexMapConfig {
@@ -74,7 +91,7 @@ impl Plugin for MapPlugin {
             .insert_resource(obstacles)
             .insert_resource(ClearColor(Color::srgb(0.53, 0.81, 0.92))) // Light sky blue
             .add_systems(OnEnter(LoadingState::Playing), setup_hex_map)
-            .add_systems(Update, (hex_hover_system, update_outline_colors, update_launch_pad_colors, billboard_sprites).run_if(in_state(LoadingState::Playing)));
+            .add_systems(Update, (hex_hover_system, update_outline_colors, update_launch_pad_colors, billboard_sprites, apply_crystal_materials, animate_crystal_sparkle).run_if(in_state(LoadingState::Playing)));
     }
 }
 
@@ -521,6 +538,13 @@ fn setup_hex_map(
         Transform::from_xyz(4.0, 8.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 
+    // Add ambient light for better illumination
+    commands.spawn(AmbientLight {
+        color: Color::srgb(1.0, 1.0, 1.0),
+        brightness: 500.0,
+        affects_lightmapped_meshes: false,
+    });
+
     let prism_height = 20.0;
 
     // Reuse meshes
@@ -750,6 +774,65 @@ fn setup_hex_map(
                 }
             }
         }
+
+        // Spawn crystal fields at specific positions
+        let crystal_positions = vec![(-1, 0), (1, 0)];
+
+        for (q, r) in crystal_positions {
+            let world_pos = axial_to_world_pos(q, r);
+
+            // Load crystal model
+            let crystal_scene: Handle<Scene> = asset_server.load("Lighthing Crystal.glb#Scene0");
+
+            // Random crystal count between 200-400
+            let crystals = 200 + (((q + r) * 73) % 201).abs(); // Pseudo-random based on position
+
+            println!("Creating CRYSTAL FIELD at ({}, {}) with {} crystals", q, r, crystals);
+
+            // Spawn parent entity for the crystal field
+            parent.spawn((
+                Transform::from_translation(world_pos),
+                Visibility::default(),
+                CrystalField {
+                    q,
+                    r,
+                    crystals_remaining: crystals,
+                    max_crystals: crystals,
+                },
+                Name::new(format!("Crystal Field ({}, {})", q, r)),
+            )).with_children(|field_parent| {
+                // Spawn 2-3 crystal models randomly positioned within the cell
+                let num_crystals = 2 + (((q * 7 + r * 11) % 2).abs() as usize); // 2 or 3 crystals
+
+                for i in 0..num_crystals {
+                    let i_i32 = i as i32;
+                    // Pseudo-random position within the hex (radius ~40)
+                    let angle = (i as f32 * 2.5 + (q + r) as f32 * 0.7) * std::f32::consts::PI;
+                    let radius = 25.0 + ((i_i32 * 13 + q * 7) % 20) as f32;
+                    let offset_x = angle.cos() * radius;
+                    let offset_z = angle.sin() * radius;
+
+                    // Random rotation
+                    let rotation_y = (i as f32 * 1.3 + (q + r) as f32 * 0.5) * std::f32::consts::PI;
+
+                    // Random rotation speed and pulse offset for sparkle effect
+                    let rotation_speed = 0.3 + (i as f32 * 0.1);
+                    let pulse_offset = i as f32 * 2.0;
+
+                    field_parent.spawn((
+                        SceneRoot(crystal_scene.clone()),
+                        Transform::from_translation(Vec3::new(offset_x, 8.0, offset_z))
+                            .with_scale(Vec3::splat(4.0)) // Smaller crystals
+                            .with_rotation(Quat::from_rotation_y(rotation_y)),
+                        CrystalVisual {
+                            rotation_speed,
+                            pulse_offset,
+                        },
+                        Name::new(format!("Crystal {}", i)),
+                    ));
+                }
+            });
+        }
     });
 }
 
@@ -892,5 +975,96 @@ fn billboard_sprites(
     for mut sprite_transform in &mut sprite_query {
         // Make sprite face the camera
         sprite_transform.look_at(camera_transform.translation, Vec3::Y);
+    }
+}
+
+fn apply_crystal_materials(
+    mut commands: Commands,
+    crystal_query: Query<(Entity, &Children), With<CrystalField>>,
+    mesh_query: Query<(Entity, &MeshMaterial3d<StandardMaterial>), With<Mesh3d>>,
+    children_query: Query<&Children>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for (crystal_entity, children) in &crystal_query {
+        // Recursively find all mesh entities in descendants
+        let mut entities_to_check = Vec::new();
+        for &child in children {
+            entities_to_check.push(child);
+        }
+
+        while let Some(entity) = entities_to_check.pop() {
+            // Check if this entity has a mesh with material
+            if let Ok((mesh_entity, existing_material)) = mesh_query.get(entity) {
+                // Check if it already has gold material by checking base color
+                if let Some(mat) = materials.get(&existing_material.0) {
+                    let is_gold = (mat.base_color.to_srgba().red - 1.0).abs() < 0.1
+                        && (mat.base_color.to_srgba().green - 0.84).abs() < 0.1;
+
+                    if !is_gold {
+                        // Create gold material
+                        let gold_material = materials.add(StandardMaterial {
+                            base_color: Color::srgb(1.0, 0.84, 0.0), // Gold color
+                            emissive: Color::srgb(1.0, 0.84, 0.0).into(), // Strong gold glow
+                            metallic: 0.95,
+                            perceptual_roughness: 0.05,
+                            unlit: false,
+                            ..default()
+                        });
+
+                        commands.entity(mesh_entity).insert(MeshMaterial3d(gold_material));
+                    }
+                }
+            }
+
+            // Add children to check list
+            if let Ok(entity_children) = children_query.get(entity) {
+                for &child in entity_children {
+                    entities_to_check.push(child);
+                }
+            }
+        }
+    }
+}
+
+fn animate_crystal_sparkle(
+    time: Res<Time>,
+    mut crystal_query: Query<(&CrystalVisual, &mut Transform, &Children)>,
+    mesh_query: Query<(Entity, &MeshMaterial3d<StandardMaterial>), With<Mesh3d>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    children_query: Query<&Children>,
+) {
+    let elapsed = time.elapsed_secs();
+
+    for (crystal_visual, mut transform, children) in &mut crystal_query {
+        // Rotate the crystal
+        transform.rotate_y(crystal_visual.rotation_speed * time.delta_secs());
+
+        // Pulse the emissive intensity of all child meshes
+        let pulse = (elapsed * 2.0 + crystal_visual.pulse_offset).sin() * 0.5 + 0.5; // 0.0 to 1.0
+        let intensity = 0.5 + pulse * 1.5; // 0.5 to 2.0
+
+        // Find all mesh entities in descendants and update their emissive
+        let mut entities_to_check = Vec::new();
+        for &child in children {
+            entities_to_check.push(child);
+        }
+
+        while let Some(entity) = entities_to_check.pop() {
+            if let Ok((_, material_handle)) = mesh_query.get(entity) {
+                if let Some(mat) = materials.get_mut(&material_handle.0) {
+                    // Only update if it's gold (check base color)
+                    let is_gold = (mat.base_color.to_srgba().red - 1.0).abs() < 0.1;
+                    if is_gold {
+                        mat.emissive = Color::srgb(1.0 * intensity, 0.84 * intensity, 0.0).into();
+                    }
+                }
+            }
+
+            if let Ok(entity_children) = children_query.get(entity) {
+                for &child in entity_children {
+                    entities_to_check.push(child);
+                }
+            }
+        }
     }
 }
