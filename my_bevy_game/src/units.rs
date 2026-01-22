@@ -540,11 +540,22 @@ fn move_units(
             }
 
             if cell_occupied {
-                // Target cell is occupied - STOP and remove movement
-                println!("⚠️  Unit {:?} stopped: destination ({}, {}) occupied",
-                    entity, target_hex.0, target_hex.1);
-                commands.entity(entity).remove::<UnitMovement>();
-                continue; // Don't update position, stay at start_hex
+                // Target cell is occupied - reverse direction and return to start cell
+                println!("⚠️  Unit {:?} stopped: destination ({}, {}) occupied, reversing to ({}, {})",
+                    entity, target_hex.0, target_hex.1, start_hex.0, start_hex.1);
+
+                // Create a reverse path back to the start cell
+                movement.path = vec![start_hex];
+                movement.current_waypoint = 0;
+                movement.progress = 1.0 - movement.progress; // Reverse the progress
+                movement.segment_start = target_hex; // We're now moving "from" target back to start
+
+                // Update unit position to claim the start cell
+                unit.q = start_hex.0;
+                unit.r = start_hex.1;
+                cells_claimed_this_frame.insert(start_hex, entity);
+
+                continue; // Let the movement system handle the rest
             }
 
             // Claim the cell
