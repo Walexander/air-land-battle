@@ -2292,21 +2292,7 @@ fn setup_units(
 ) {
     // (q, r, unit_index, army, class)
     let units: Vec<(i32, i32, usize, Army, UnitClass)> = vec![
-        // Red Army - Mixed composition (2 Infantry, 2 Cavalry, 2 Artillery)
-        (-4, 2, 0, Army::Red, UnitClass::Infantry),
-        (-3, 1, 1, Army::Red, UnitClass::Infantry),
-        (-4, 1, 2, Army::Red, UnitClass::Cavalry),
-        (-5, 2, 3, Army::Red, UnitClass::Cavalry),
-        (-5, 1, 4, Army::Red, UnitClass::Artillery),
-        (-3, 0, 5, Army::Red, UnitClass::Artillery),
-
-        // Blue Army - Mirrored positions (2 Infantry, 2 Cavalry, 2 Artillery)
-        (4, 2, 6, Army::Blue, UnitClass::Infantry),
-        (3, 1, 7, Army::Blue, UnitClass::Infantry),
-        (4, 1, 8, Army::Blue, UnitClass::Cavalry),
-        (5, 2, 9, Army::Blue, UnitClass::Cavalry),
-        (5, 1, 10, Army::Blue, UnitClass::Artillery),
-        (3, 0, 11, Army::Blue, UnitClass::Artillery),
+        // Start with no units - players must purchase them
     ];
 
     let ring_mesh = meshes.add(create_selection_ring_mesh(53.0, 63.0));
