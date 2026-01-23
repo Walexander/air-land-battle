@@ -2548,6 +2548,8 @@ fn harvester_move_to_field(
     mut commands: Commands,
     mut harvester_query: Query<(Entity, &Unit, &UnitStats, &mut Harvester), Without<UnitMovement>>,
     occupancy: Res<Occupancy>,
+    obstacles: Res<Obstacles>,
+    config: Res<HexMapConfig>,
 ) {
     for (entity, unit, stats, mut harvester) in &mut harvester_query {
         if harvester.state != HarvesterState::MovingToField {
@@ -2563,17 +2565,31 @@ fn harvester_move_to_field(
                 continue;
             }
 
-            // Use simple pathfinding - move one hex closer
-            let path = find_simple_path((unit.q, unit.r), (target_q, target_r), &occupancy);
+            // Build blocking cells set (obstacles + occupied cells, excluding current position and goal)
+            let mut blocking_cells = obstacles.positions.clone();
+            for &occupied_pos in &occupancy.positions {
+                if occupied_pos != (unit.q, unit.r) && occupied_pos != (target_q, target_r) {
+                    blocking_cells.insert(occupied_pos);
+                }
+            }
 
-            if let Some(next_pos) = path.first() {
-                commands.entity(entity).insert(UnitMovement {
-                    path: vec![*next_pos],
-                    current_waypoint: 0,
-                    progress: 0.0,
-                    speed: stats.speed,
-                    segment_start: (unit.q, unit.r),
-                });
+            // Use proper A* pathfinding
+            if let Some(path) = find_path((unit.q, unit.r), (target_q, target_r), config.map_radius, &blocking_cells) {
+                let path_to_follow: Vec<(i32, i32)> = if path.len() > 1 {
+                    path[1..].to_vec()
+                } else {
+                    vec![]
+                };
+
+                if !path_to_follow.is_empty() {
+                    commands.entity(entity).insert(UnitMovement {
+                        path: path_to_follow,
+                        current_waypoint: 0,
+                        progress: 0.0,
+                        speed: stats.speed,
+                        segment_start: (unit.q, unit.r),
+                    });
+                }
             }
         }
     }
@@ -2623,6 +2639,8 @@ fn harvester_return_to_base(
     mut commands: Commands,
     mut harvester_query: Query<(Entity, &Unit, &UnitStats, &mut Harvester), Without<UnitMovement>>,
     occupancy: Res<Occupancy>,
+    obstacles: Res<Obstacles>,
+    config: Res<HexMapConfig>,
 ) {
     for (entity, unit, stats, harvester) in &mut harvester_query {
         if harvester.state != HarvesterState::MovingToBase {
@@ -2639,17 +2657,31 @@ fn harvester_return_to_base(
             continue;
         }
 
-        // Move towards base
-        let path = find_simple_path((unit.q, unit.r), (base_q, base_r), &occupancy);
+        // Build blocking cells set (obstacles + occupied cells, excluding current position and goal)
+        let mut blocking_cells = obstacles.positions.clone();
+        for &occupied_pos in &occupancy.positions {
+            if occupied_pos != (unit.q, unit.r) && occupied_pos != (base_q, base_r) {
+                blocking_cells.insert(occupied_pos);
+            }
+        }
 
-        if let Some(next_pos) = path.first() {
-            commands.entity(entity).insert(UnitMovement {
-                path: vec![*next_pos],
-                current_waypoint: 0,
-                progress: 0.0,
-                speed: stats.speed,
-                segment_start: (unit.q, unit.r),
-            });
+        // Use proper A* pathfinding
+        if let Some(path) = find_path((unit.q, unit.r), (base_q, base_r), config.map_radius, &blocking_cells) {
+            let path_to_follow: Vec<(i32, i32)> = if path.len() > 1 {
+                path[1..].to_vec()
+            } else {
+                vec![]
+            };
+
+            if !path_to_follow.is_empty() {
+                commands.entity(entity).insert(UnitMovement {
+                    path: path_to_follow,
+                    current_waypoint: 0,
+                    progress: 0.0,
+                    speed: stats.speed,
+                    segment_start: (unit.q, unit.r),
+                });
+            }
         }
     }
 }
@@ -2680,37 +2712,6 @@ fn harvester_deposit_crystals(
 
         // Remove depositing marker
         commands.entity(entity).remove::<HarvesterDepositing>();
-    }
-}
-
-// Simple pathfinding helper - finds next hex towards target
-fn find_simple_path(
-    start: (i32, i32),
-    goal: (i32, i32),
-    _occupancy: &Occupancy,
-) -> Vec<(i32, i32)> {
-    // Simple greedy approach - move one hex closer
-    let (sq, sr) = start;
-    let (gq, gr) = goal;
-
-    let dq = gq - sq;
-    let dr = gr - sr;
-
-    // Move in the direction with largest difference
-    if dq.abs() > dr.abs() {
-        if dq > 0 {
-            vec![(sq + 1, sr)]
-        } else {
-            vec![(sq - 1, sr)]
-        }
-    } else if dr != 0 {
-        if dr > 0 {
-            vec![(sq, sr + 1)]
-        } else {
-            vec![(sq, sr - 1)]
-        }
-    } else {
-        vec![]
     }
 }
 
