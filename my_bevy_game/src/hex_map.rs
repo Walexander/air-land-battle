@@ -1028,7 +1028,7 @@ fn handle_unit_selection(
     occupancy: Res<Occupancy>,
     occupancy_intent: Res<OccupancyIntent>,
     unit_query: Query<(Entity, &Unit, Option<&UnitMovement>), Without<Selected>>,
-    selected_query: Query<(Entity, &Unit, Option<&UnitMovement>, &Transform), With<Selected>>,
+    selected_query: Query<(Entity, &Unit, &UnitStats, Option<&UnitMovement>, &Transform), With<Selected>>,
     path_viz_query: Query<(Entity, &PathVisualization)>,
     dest_ring_query: Query<(Entity, &DestinationRing)>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -1050,14 +1050,14 @@ fn handle_unit_selection(
 
                 if let Some(unit_entity) = clicked_unit {
                     // Deselect all units
-                    for (entity, _, _, _) in &selected_query {
+                    for (entity, _, _, _, _) in &selected_query {
                         commands.entity(entity).remove::<Selected>();
                     }
                     // Select this unit
                     commands.entity(unit_entity).insert(Selected);
                 } else {
                     // No unit on this tile - try to move selected unit here
-                    if let Ok((selected_entity, selected_unit, existing_movement, _unit_transform)) = selected_query.single() {
+                    if let Ok((selected_entity, selected_unit, stats, existing_movement, _unit_transform)) = selected_query.single() {
                         let goal = (hovered_tile.q, hovered_tile.r);
 
                         // Don't allow setting destination on obstacle tiles
@@ -1136,7 +1136,7 @@ fn handle_unit_selection(
                                             path: new_path,
                                             current_waypoint: 0,
                                             progress: 1.0 - movement.progress, // Reverse the progress
-                                            speed: 100.0,
+                                            speed: stats.speed,
                                         },
                                     ));
 
@@ -1158,7 +1158,7 @@ fn handle_unit_selection(
                                             path: new_full_path,
                                             current_waypoint: 0,
                                             progress: movement.progress, // Continue with current progress toward next_cell
-                                            speed: 100.0,
+                                            speed: stats.speed,
                                         });
 
                                         // Spawn destination ring at goal
@@ -1182,7 +1182,7 @@ fn handle_unit_selection(
                                         path: path_to_follow,
                                         current_waypoint: 0,
                                         progress: 0.0,
-                                        speed: 100.0,
+                                        speed: stats.speed,
                                     });
 
                                     // Spawn destination ring at goal

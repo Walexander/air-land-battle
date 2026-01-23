@@ -734,7 +734,7 @@ fn handle_unit_selection(
                                         path: path_to_follow.clone(),
                                         current_waypoint: 0,
                                         progress: 0.0,
-                                        speed: 100.0,
+                                        speed: stats.speed,
                                         segment_start: start,
                                     });
 
