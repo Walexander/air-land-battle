@@ -776,7 +776,17 @@ fn setup_hex_map(
         }
 
         // Spawn crystal fields at specific positions
-        let crystal_positions = vec![(-1, 0), (1, 0)];
+        // 3 on each side of the battlefield, away from launch pads
+        let crystal_positions = vec![
+            // Left side (Red territory)
+            (-4, 0),   // Far left, middle
+            (-3, -2),  // Left, lower
+            (-2, -3),  // Left, bottom
+            // Right side (Blue territory)
+            (4, 0),    // Far right, middle
+            (3, -2),   // Right, lower
+            (2, -3),   // Right, bottom
+        ];
 
         for (q, r) in crystal_positions {
             let world_pos = axial_to_world_pos(q, r);
