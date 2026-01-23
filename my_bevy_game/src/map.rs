@@ -779,11 +779,11 @@ fn setup_hex_map(
         // 3 on each side of the battlefield, away from launch pads
         let crystal_positions = vec![
             // Left side (Red territory)
-            (-4, 0),   // Far left, middle
+            (-3, -3),  // Left, bottom cluster
             (-3, -2),  // Left, lower
             (-2, -3),  // Left, bottom
             // Right side (Blue territory)
-            (4, 0),    // Far right, middle
+            (3, -3),   // Right, bottom cluster
             (3, -2),   // Right, lower
             (2, -3),   // Right, bottom
         ];
