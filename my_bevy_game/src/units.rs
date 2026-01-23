@@ -147,7 +147,7 @@ impl UnitClass {
             UnitClass::Infantry => 12.0,
             UnitClass::Cavalry => 0.5,
             UnitClass::Artillery => 30.0,
-            UnitClass::Harvester => 8.0,
+            UnitClass::Harvester => 16.0,
         }
     }
 

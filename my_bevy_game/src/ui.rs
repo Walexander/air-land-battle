@@ -27,6 +27,9 @@ pub struct RedMoneyText;
 pub struct BlueMoneyText;
 
 #[derive(Component)]
+pub struct HexCoordinateDisplay;
+
+#[derive(Component)]
 pub enum UnitSpawnButton {
     Infantry,
     Cavalry,
@@ -317,6 +320,24 @@ fn setup_ui(mut commands: Commands) {
                 TimerText,
             ));
         });
+
+    // Hex coordinate display (bottom left of screen)
+    commands.spawn((
+        Text::new(""),
+        TextFont {
+            font_size: 18.0,
+            ..default()
+        },
+        TextColor(Color::srgb(0.0, 0.0, 0.0)),
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(10.0),
+            left: Val::Px(10.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.7)),
+        HexCoordinateDisplay,
+    ));
 }
 
 fn update_timer_ui(
@@ -354,6 +375,19 @@ fn update_money_ui(
 
     if let Ok(mut text) = blue_query.single_mut() {
         **text = format!("Blue: ${}", economy.blue_money);
+    }
+}
+
+fn update_hex_coordinate_display(
+    hovered_hex: Res<crate::map::HoveredHex>,
+    mut coord_query: Query<&mut Text, With<HexCoordinateDisplay>>,
+) {
+    if let Ok(mut text) = coord_query.single_mut() {
+        if hovered_hex.entity.is_some() {
+            **text = format!("({}, {})", hovered_hex.q, hovered_hex.r);
+        } else {
+            **text = String::new();
+        }
     }
 }
 
@@ -861,6 +895,7 @@ impl Plugin for UIPlugin {
             (
                 update_timer_ui,
                 update_money_ui,
+                update_hex_coordinate_display,
                 handle_unit_spawn_buttons,
                 update_spawn_button_visuals,
                 show_game_over_screen,

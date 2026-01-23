@@ -779,13 +779,13 @@ fn setup_hex_map(
         // 3 on each side of the battlefield, away from launch pads
         let crystal_positions = vec![
             // Left side (Red territory)
-            (-3, -3),  // Left, bottom cluster
-            (-3, -2),  // Left, lower
-            (-2, -3),  // Left, bottom
+            (-2, -2),
+            (-2, -3),
+            (-1, -2),
             // Right side (Blue territory)
-            (3, -3),   // Right, bottom cluster
-            (3, -2),   // Right, lower
-            (2, -3),   // Right, bottom
+            (5, -3),
+            (4, -2),
+            (3, -2),
         ];
 
         for (q, r) in crystal_positions {
@@ -892,14 +892,14 @@ fn hex_hover_system(
             }
 
             if let Some((entity, q, r, _)) = closest_hex {
-                // if hovered_hex.entity != Some(entity) {
-                //     let obstacle_marker = if obstacles.positions.contains(&(q, r)) {
-                //         " [OBSTACLE]"
-                //     } else {
-                //         ""
-                //     };
-                //     println!("Hovering: ({}, {}){}", q, r, obstacle_marker);
-                // }
+                if hovered_hex.entity != Some(entity) {
+                    let obstacle_marker = if obstacles.positions.contains(&(q, r)) {
+                        " [OBSTACLE]"
+                    } else {
+                        ""
+                    };
+                    println!("Hovering: ({}, {}){}", q, r, obstacle_marker);
+                }
                 hovered_hex.entity = Some(entity);
                 hovered_hex.q = q;
                 hovered_hex.r = r;
@@ -1078,3 +1078,6 @@ fn animate_crystal_sparkle(
         }
     }
 }
+
+#[derive(Component)]
+struct CoordinateLabel;
