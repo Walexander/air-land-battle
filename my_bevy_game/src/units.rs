@@ -406,20 +406,33 @@ impl SpawnCooldowns {
 }
 
 #[derive(Resource)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AIStrategy {
+    Economic,      // Focus on building harvesters and income
+    Aggressive,    // Attack enemy units and disrupt economy
+    Expansionist,  // Capture neutral pads
+    Defensive,     // Protect our pads
+}
+
+#[derive(Resource)]
 pub struct AIController {
     pub spawn_timer: f32,
     pub spawn_interval: f32,
     pub command_timer: f32,
     pub command_interval: f32,
+    pub strategy: AIStrategy,
+    pub strategy_timer: f32, // Time to reconsider strategy
 }
 
 impl Default for AIController {
     fn default() -> Self {
         Self {
             spawn_timer: 0.0,
-            spawn_interval: 3.0, // Check every 3 seconds if should spawn
+            spawn_interval: 2.0, // Check every 2 seconds if should spawn
             command_timer: 0.0,
-            command_interval: 2.0, // Give commands every 2 seconds
+            command_interval: 1.5, // Give commands every 1.5 seconds
+            strategy: AIStrategy::Economic, // Start with economy
+            strategy_timer: 0.0,
         }
     }
 }
@@ -1794,8 +1807,11 @@ fn ai_spawn_units(
     spawn_cooldowns: Res<SpawnCooldowns>,
     mut spawn_queue: ResMut<UnitSpawnQueue>,
     unit_query: Query<(&Unit, &UnitClass)>,
+    pad_ownership: Res<LaunchPadOwnership>,
+    launch_pads: Res<LaunchPads>,
 ) {
     ai_controller.spawn_timer += time.delta_secs();
+    ai_controller.strategy_timer += time.delta_secs();
 
     if ai_controller.spawn_timer < ai_controller.spawn_interval {
         return;
@@ -1803,48 +1819,173 @@ fn ai_spawn_units(
 
     ai_controller.spawn_timer = 0.0;
 
-    // Count blue units by type
-    let mut infantry_count = 0;
-    let mut cavalry_count = 0;
-    let mut artillery_count = 0;
-    let mut harvester_count = 0;
+    // Reconsider strategy every 15 seconds
+    if ai_controller.strategy_timer >= 15.0 {
+        ai_controller.strategy_timer = 0.0;
+        ai_controller.strategy = evaluate_strategy(
+            &unit_query,
+            &economy,
+            &pad_ownership,
+            &launch_pads,
+        );
+    }
+
+    // Count blue units by type and army
+    let mut blue_infantry = 0;
+    let mut blue_cavalry = 0;
+    let mut blue_artillery = 0;
+    let mut blue_harvesters = 0;
+    let mut red_combat_units = 0;
 
     for (unit, unit_class) in unit_query.iter() {
         if unit.army == Army::Blue {
             match unit_class {
-                UnitClass::Infantry => infantry_count += 1,
-                UnitClass::Cavalry => cavalry_count += 1,
-                UnitClass::Artillery => artillery_count += 1,
-                UnitClass::Harvester => harvester_count += 1,
+                UnitClass::Infantry => blue_infantry += 1,
+                UnitClass::Cavalry => blue_cavalry += 1,
+                UnitClass::Artillery => blue_artillery += 1,
+                UnitClass::Harvester => blue_harvesters += 1,
+            }
+        } else if unit.army == Army::Red {
+            if *unit_class != UnitClass::Harvester {
+                red_combat_units += 1;
             }
         }
     }
 
-    // Try to maintain a balanced army: prioritize whichever type we have least of
-    // Infantry (cheap), Cavalry (mobile), Artillery (powerful), Harvester (farming)
-    let unit_types = [
-        (UnitClass::Infantry, infantry_count),
-        (UnitClass::Cavalry, cavalry_count),
-        (UnitClass::Artillery, artillery_count),
-        (UnitClass::Harvester, harvester_count),
-    ];
+    let blue_combat_units = blue_infantry + blue_cavalry + blue_artillery;
+    let blue_money = economy.blue_money;
 
-    // Sort by count (ascending) to prioritize least common type
-    let mut sorted_types = unit_types.to_vec();
-    sorted_types.sort_by_key(|(_, count)| *count);
+    // Decide what to spawn based on strategy
+    let unit_to_spawn = match ai_controller.strategy {
+        AIStrategy::Economic => {
+            // Build harvesters if we have less than 2
+            if blue_harvesters < 2 && blue_money >= UnitClass::Harvester.cost() {
+                Some(UnitClass::Harvester)
+            }
+            // Then build cheap infantry for defense
+            else if blue_money >= UnitClass::Infantry.cost() {
+                Some(UnitClass::Infantry)
+            } else {
+                None
+            }
+        }
+        AIStrategy::Aggressive => {
+            // Build a mix of combat units, prioritizing artillery if we can afford it
+            if blue_money >= UnitClass::Artillery.cost() && blue_artillery < blue_combat_units / 3 {
+                Some(UnitClass::Artillery)
+            } else if blue_money >= UnitClass::Cavalry.cost() && blue_cavalry < blue_combat_units / 3 {
+                Some(UnitClass::Cavalry)
+            } else if blue_money >= UnitClass::Infantry.cost() {
+                Some(UnitClass::Infantry)
+            } else {
+                None
+            }
+        }
+        AIStrategy::Expansionist => {
+            // Build fast cavalry for capturing pads
+            if blue_money >= UnitClass::Cavalry.cost() && blue_cavalry < blue_combat_units / 2 {
+                Some(UnitClass::Cavalry)
+            } else if blue_money >= UnitClass::Infantry.cost() {
+                Some(UnitClass::Infantry)
+            } else {
+                None
+            }
+        }
+        AIStrategy::Defensive => {
+            // Build artillery for defense, then infantry
+            if blue_money >= UnitClass::Artillery.cost() && blue_artillery < 2 {
+                Some(UnitClass::Artillery)
+            } else if blue_money >= UnitClass::Infantry.cost() {
+                Some(UnitClass::Infantry)
+            } else {
+                None
+            }
+        }
+    };
 
-    // Try to spawn the unit type we have least of (if affordable and ready)
-    for (unit_class, _) in sorted_types {
-        let cost = unit_class.cost();
+    // Spawn the chosen unit if cooldown is ready
+    if let Some(unit_class) = unit_to_spawn {
         let blue_cooldowns = spawn_cooldowns.get_army_cooldowns(Army::Blue);
-        if economy.blue_money >= cost && blue_cooldowns.is_ready(unit_class) {
+        if blue_cooldowns.is_ready(unit_class) {
             spawn_queue.requests.push(UnitSpawnRequest {
                 unit_class,
                 army: Army::Blue,
             });
-            break; // Only spawn one unit per check
+            println!("AI ({:?} strategy): Spawning {:?}", ai_controller.strategy, unit_class);
         }
     }
+}
+
+// Evaluate which strategy the AI should use based on game state
+fn evaluate_strategy(
+    unit_query: &Query<(&Unit, &UnitClass)>,
+    economy: &Economy,
+    pad_ownership: &LaunchPadOwnership,
+    launch_pads: &LaunchPads,
+) -> AIStrategy {
+    let mut blue_units = 0;
+    let mut red_units = 0;
+    let mut blue_harvesters = 0;
+
+    for (unit, unit_class) in unit_query.iter() {
+        match unit.army {
+            Army::Blue => {
+                blue_units += 1;
+                if *unit_class == UnitClass::Harvester {
+                    blue_harvesters += 1;
+                }
+            }
+            Army::Red => red_units += 1,
+        }
+    }
+
+    // Count controlled pads
+    let mut blue_pads = 0;
+    let mut neutral_pads = 0;
+    let mut red_pads = 0;
+
+    for owner in &pad_ownership.owners {
+        match owner {
+            LaunchPadOwner::Blue => blue_pads += 1,
+            LaunchPadOwner::Neutral => neutral_pads += 1,
+            LaunchPadOwner::Red => red_pads += 1,
+            LaunchPadOwner::Contested => {}
+        }
+    }
+
+    // Strategic decision tree:
+    // 1. If we have no harvesters and low income, focus on economy
+    if blue_harvesters == 0 || (blue_harvesters < 2 && economy.blue_money < 50) {
+        return AIStrategy::Economic;
+    }
+
+    // 2. If enemy has more pads, expand aggressively
+    if red_pads > blue_pads && neutral_pads > 0 {
+        return AIStrategy::Expansionist;
+    }
+
+    // 3. If we're outnumbered significantly, play defensive
+    if red_units > blue_units * 2 {
+        return AIStrategy::Defensive;
+    }
+
+    // 4. If we have military advantage, be aggressive
+    if blue_units > red_units && economy.blue_money > 100 {
+        return AIStrategy::Aggressive;
+    }
+
+    // 5. If there are neutral pads, try to expand
+    if neutral_pads > 0 {
+        return AIStrategy::Expansionist;
+    }
+
+    // 6. Default to aggressive if we have good economy
+    if economy.blue_money > 150 {
+        return AIStrategy::Aggressive;
+    }
+
+    // Otherwise, stay defensive
+    AIStrategy::Defensive
 }
 
 fn ai_command_units(
@@ -1858,7 +1999,7 @@ fn ai_command_units(
     occupancy: Res<Occupancy>,
     occupancy_intent: Res<OccupancyIntent>,
     mut claimed_cells: ResMut<ClaimedCellsThisFrame>,
-    mut unit_query: Query<(Entity, &Unit, &UnitStats, Option<&UnitMovement>)>,
+    mut unit_query: Query<(Entity, &Unit, &UnitStats, &UnitClass, Option<&UnitMovement>)>,
 ) {
     ai_controller.command_timer += time.delta_secs();
 
@@ -1870,14 +2011,18 @@ fn ai_command_units(
 
     // Find all idle blue units (units without movement or who have reached destination)
     let mut idle_blue_units = Vec::new();
-    for (entity, unit, stats, movement) in unit_query.iter() {
+    let mut all_red_units = Vec::new();
+
+    for (entity, unit, stats, unit_class, movement) in unit_query.iter() {
         if unit.army == Army::Blue {
             // Unit is idle if it has no movement component or has reached end of path
             let is_idle = movement.is_none()
                 || movement.map_or(false, |m| m.current_waypoint >= m.path.len());
             if is_idle {
-                idle_blue_units.push((entity, unit, stats));
+                idle_blue_units.push((entity, unit, stats, unit_class));
             }
+        } else if unit.army == Army::Red {
+            all_red_units.push((unit.q, unit.r, unit_class));
         }
     }
 
@@ -1885,102 +2030,209 @@ fn ai_command_units(
         return;
     }
 
-    // Find target launch pads (non-blue controlled pads)
-    let mut all_target_positions = Vec::new();
-    for (pad_index, pad_tiles) in launch_pads.pads.iter().enumerate() {
-        let owner = pad_ownership.owners.get(pad_index).copied().unwrap_or(LaunchPadOwner::Neutral);
+    // Find targets based on current strategy
+    let strategy = ai_controller.strategy;
 
-        // Target neutral, red, or contested pads
-        if owner != LaunchPadOwner::Blue {
-            // Add all tiles in this pad as potential targets
-            for &(q, r) in pad_tiles {
-                all_target_positions.push((q, r));
-            }
-        }
-    }
-
-    if all_target_positions.is_empty() {
-        // All pads are blue-controlled, just hold position
-        return;
-    }
-
-    // Command each idle unit to move toward nearest unoccupied target pad
-    for (entity, unit, stats) in idle_blue_units {
+    for (entity, unit, stats, unit_class) in idle_blue_units {
         let unit_pos = (unit.q, unit.r);
 
-        // Build set of currently occupied/blocked cells for this unit
+        // Build blocking cells set
         let mut blocking_cells = obstacles.positions.clone();
         for &occupied_pos in &occupancy.positions {
             if occupied_pos != unit_pos {
                 blocking_cells.insert(occupied_pos);
             }
         }
-
-        // Also block cells that OTHER units are already targeting
         for (other_entity, &intent_pos) in &occupancy_intent.intentions {
             if *other_entity != entity && intent_pos != unit_pos {
                 blocking_cells.insert(intent_pos);
             }
         }
-
-        // CRITICAL: Also block cells claimed by ANY system THIS FRAME (player or AI)
         for &claimed_cell in &claimed_cells.cells {
             if claimed_cell != unit_pos {
                 blocking_cells.insert(claimed_cell);
             }
         }
 
-        // Filter to only unoccupied targets for this specific unit
-        let available_targets: Vec<(i32, i32)> = all_target_positions
-            .iter()
-            .filter(|pos| !blocking_cells.contains(pos))
-            .copied()
-            .collect();
-
-        if available_targets.is_empty() {
-            // No available targets for this unit
-            continue;
-        }
-
-        // Find nearest available target position
-        let mut nearest_target = available_targets[0];
-        let mut min_distance = hex_distance(unit_pos, nearest_target);
-
-        for &target_pos in &available_targets {
-            let dist = hex_distance(unit_pos, target_pos);
-            if dist < min_distance {
-                min_distance = dist;
-                nearest_target = target_pos;
+        // Choose target based on strategy
+        let target = match strategy {
+            AIStrategy::Economic => {
+                // Harvesters do their own thing, combat units defend blue pads
+                if *unit_class == UnitClass::Harvester {
+                    None // Harvesters have their own AI
+                } else {
+                    find_defensive_target(unit_pos, &launch_pads, &pad_ownership, &blocking_cells)
+                }
             }
-        }
+            AIStrategy::Aggressive => {
+                // Priority: Enemy harvesters > Enemy units on pads > Enemy pads
+                find_enemy_harvester_target(unit_pos, &all_red_units, &blocking_cells)
+                    .or_else(|| find_enemy_unit_target(unit_pos, &all_red_units, &launch_pads, &pad_ownership, &blocking_cells))
+                    .or_else(|| find_enemy_pad_target(unit_pos, &launch_pads, &pad_ownership, &blocking_cells))
+            }
+            AIStrategy::Expansionist => {
+                // Priority: Neutral pads > Enemy pads
+                find_neutral_pad_target(unit_pos, &launch_pads, &pad_ownership, &blocking_cells)
+                    .or_else(|| find_enemy_pad_target(unit_pos, &launch_pads, &pad_ownership, &blocking_cells))
+            }
+            AIStrategy::Defensive => {
+                // Protect our pads, stay near them
+                find_defensive_target(unit_pos, &launch_pads, &pad_ownership, &blocking_cells)
+            }
+        };
 
-        // Try to find a path to the target
-        if let Some(path) = find_path(
-            unit_pos,
-            nearest_target,
-            map_config.map_radius,
-            &blocking_cells,
-        ) {
-            if path.len() > 1 {
-                // Create path for movement (excluding current position)
-                let path_to_follow: Vec<(i32, i32)> = path[1..].to_vec();
+        // Command unit to move to target
+        if let Some(target_pos) = target {
+            if let Some(path) = find_path(unit_pos, target_pos, map_config.map_radius, &blocking_cells) {
+                if path.len() > 1 {
+                    let path_to_follow: Vec<(i32, i32)> = path[1..].to_vec();
 
-                commands.entity(entity).insert(UnitMovement {
-                    path: path_to_follow.clone(),
-                    current_waypoint: 0,
-                    progress: 0.0,
-                    speed: stats.speed,
-                    segment_start: unit_pos,
-                });
+                    commands.entity(entity).insert(UnitMovement {
+                        path: path_to_follow.clone(),
+                        current_waypoint: 0,
+                        progress: 0.0,
+                        speed: stats.speed,
+                        segment_start: unit_pos,
+                    });
 
-                // CRITICAL: Mark ALL cells in the path as claimed (not just destination)
-                // This prevents other systems from assigning overlapping paths
-                for &cell in &path_to_follow {
-                    claimed_cells.cells.insert(cell);
+                    for &cell in &path_to_follow {
+                        claimed_cells.cells.insert(cell);
+                    }
                 }
             }
         }
     }
+}
+
+// Helper functions for target selection
+fn find_enemy_harvester_target(
+    unit_pos: (i32, i32),
+    red_units: &[(i32, i32, &UnitClass)],
+    blocking_cells: &HashSet<(i32, i32)>,
+) -> Option<(i32, i32)> {
+    let harvesters: Vec<(i32, i32)> = red_units
+        .iter()
+        .filter(|(_, _, class)| **class == UnitClass::Harvester)
+        .map(|(q, r, _)| (*q, *r))
+        .filter(|pos| !blocking_cells.contains(pos))
+        .collect();
+
+    find_nearest(unit_pos, &harvesters)
+}
+
+fn find_enemy_unit_target(
+    unit_pos: (i32, i32),
+    red_units: &[(i32, i32, &UnitClass)],
+    launch_pads: &LaunchPads,
+    pad_ownership: &LaunchPadOwnership,
+    blocking_cells: &HashSet<(i32, i32)>,
+) -> Option<(i32, i32)> {
+    // Find enemy units that are on pads (threatening capture)
+    let mut enemy_positions_on_pads = Vec::new();
+
+    for (pad_index, pad_tiles) in launch_pads.pads.iter().enumerate() {
+        let owner = pad_ownership.owners.get(pad_index).copied().unwrap_or(LaunchPadOwner::Neutral);
+
+        // Look for enemy units on neutral or our pads
+        if owner != LaunchPadOwner::Red {
+            for &(eq, er, _) in red_units {
+                if pad_tiles.contains(&(eq, er)) && !blocking_cells.contains(&(eq, er)) {
+                    enemy_positions_on_pads.push((eq, er));
+                }
+            }
+        }
+    }
+
+    find_nearest(unit_pos, &enemy_positions_on_pads)
+}
+
+fn find_enemy_pad_target(
+    unit_pos: (i32, i32),
+    launch_pads: &LaunchPads,
+    pad_ownership: &LaunchPadOwnership,
+    blocking_cells: &HashSet<(i32, i32)>,
+) -> Option<(i32, i32)> {
+    let mut targets = Vec::new();
+
+    for (pad_index, pad_tiles) in launch_pads.pads.iter().enumerate() {
+        let owner = pad_ownership.owners.get(pad_index).copied().unwrap_or(LaunchPadOwner::Neutral);
+
+        if owner == LaunchPadOwner::Red || owner == LaunchPadOwner::Contested {
+            for &(q, r) in pad_tiles {
+                if !blocking_cells.contains(&(q, r)) {
+                    targets.push((q, r));
+                }
+            }
+        }
+    }
+
+    find_nearest(unit_pos, &targets)
+}
+
+fn find_neutral_pad_target(
+    unit_pos: (i32, i32),
+    launch_pads: &LaunchPads,
+    pad_ownership: &LaunchPadOwnership,
+    blocking_cells: &HashSet<(i32, i32)>,
+) -> Option<(i32, i32)> {
+    let mut targets = Vec::new();
+
+    for (pad_index, pad_tiles) in launch_pads.pads.iter().enumerate() {
+        let owner = pad_ownership.owners.get(pad_index).copied().unwrap_or(LaunchPadOwner::Neutral);
+
+        if owner == LaunchPadOwner::Neutral {
+            for &(q, r) in pad_tiles {
+                if !blocking_cells.contains(&(q, r)) {
+                    targets.push((q, r));
+                }
+            }
+        }
+    }
+
+    find_nearest(unit_pos, &targets)
+}
+
+fn find_defensive_target(
+    unit_pos: (i32, i32),
+    launch_pads: &LaunchPads,
+    pad_ownership: &LaunchPadOwnership,
+    blocking_cells: &HashSet<(i32, i32)>,
+) -> Option<(i32, i32)> {
+    let mut targets = Vec::new();
+
+    for (pad_index, pad_tiles) in launch_pads.pads.iter().enumerate() {
+        let owner = pad_ownership.owners.get(pad_index).copied().unwrap_or(LaunchPadOwner::Neutral);
+
+        // Stay near blue or contested pads
+        if owner == LaunchPadOwner::Blue || owner == LaunchPadOwner::Contested {
+            for &(q, r) in pad_tiles {
+                if !blocking_cells.contains(&(q, r)) {
+                    targets.push((q, r));
+                }
+            }
+        }
+    }
+
+    find_nearest(unit_pos, &targets)
+}
+
+fn find_nearest(from: (i32, i32), targets: &[(i32, i32)]) -> Option<(i32, i32)> {
+    if targets.is_empty() {
+        return None;
+    }
+
+    let mut nearest = targets[0];
+    let mut min_dist = hex_distance(from, nearest);
+
+    for &target in &targets[1..] {
+        let dist = hex_distance(from, target);
+        if dist < min_dist {
+            min_dist = dist;
+            nearest = target;
+        }
+    }
+
+    Some(nearest)
 }
 
 fn update_spawn_cooldowns(
