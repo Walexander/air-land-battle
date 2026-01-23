@@ -7,7 +7,7 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::cmp::Ordering;
 use rand::Rng;
 
-use crate::map::{axial_to_world_pos, HexMapConfig, Obstacles};
+use crate::map::{axial_to_world_pos, HexMapConfig, Obstacles, CrystalField};
 use crate::selection::{SelectionRing, create_selection_ring_mesh};
 use crate::launch_pads::{GameState, GameTimer, LaunchPads, LaunchPadOwnership, LaunchPadOwner};
 use crate::loading::LoadingState;
@@ -168,6 +168,24 @@ impl UnitClass {
             UnitClass::Harvester => 0,
         }
     }
+}
+
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+pub enum HarvesterState {
+    Idle,
+    MovingToField,
+    Harvesting,
+    MovingToBase,
+}
+
+#[derive(Component)]
+pub struct Harvester {
+    pub state: HarvesterState,
+    pub harvest_timer: f32,
+    pub harvest_duration: f32, // Time to fill up (10 seconds)
+    pub crystals_carried: i32,
+    pub spawn_point: (i32, i32), // Base location
+    pub target_field: Option<(i32, i32)>,
 }
 
 #[derive(Component)]
@@ -1635,41 +1653,53 @@ fn spawn_unit_from_request(
                 );
                 let graph_handle = animation_graphs.add(animation_graph);
 
-                parent
-                    .spawn((
-                        SceneRoot(scene),
-                        Transform::from_translation(unit_pos)
-                            .with_scale(Vec3::splat(spawn_request.unit_class.scale())),
-                        Unit {
-                            q,
-                            r,
-                            _sprite_index: 999,
-                            army: spawn_request.army,
-                        },
-                        spawn_request.army,
-                        spawn_request.unit_class,
-                        stats.clone(),
-                        AnimationGraphHandle(graph_handle.clone()),
-                        AnimationGraphs {
-                            idle_graph: graph_handle.clone(),
-                            idle_index,
-                            moving_graph: graph_handle.clone(),
-                            moving_index,
-                        },
-                        CurrentAnimationState { is_moving: false },
-                        Combat {
-                            last_attack_time: 0.0,
-                            attack_cooldown: spawn_request.unit_class.base_cooldown(),
-                            last_movement_time: 0.0,
-                            movement_cooldown: 0.5,
-                        },
-                        Health {
-                            current: stats.max_health,
-                            max: stats.max_health,
-                        },
-                        Name::new(format!("{:?} {:?} ({}, {})", spawn_request.army, spawn_request.unit_class, q, r)),
-                    ))
-                    .id()
+                let mut entity_commands = parent.spawn((
+                    SceneRoot(scene),
+                    Transform::from_translation(unit_pos)
+                        .with_scale(Vec3::splat(spawn_request.unit_class.scale())),
+                    Unit {
+                        q,
+                        r,
+                        _sprite_index: 999,
+                        army: spawn_request.army,
+                    },
+                    spawn_request.army,
+                    spawn_request.unit_class,
+                    stats.clone(),
+                    AnimationGraphHandle(graph_handle.clone()),
+                    AnimationGraphs {
+                        idle_graph: graph_handle.clone(),
+                        idle_index,
+                        moving_graph: graph_handle.clone(),
+                        moving_index,
+                    },
+                    CurrentAnimationState { is_moving: false },
+                    Combat {
+                        last_attack_time: 0.0,
+                        attack_cooldown: spawn_request.unit_class.base_cooldown(),
+                        last_movement_time: 0.0,
+                        movement_cooldown: 0.5,
+                    },
+                    Health {
+                        current: stats.max_health,
+                        max: stats.max_health,
+                    },
+                    Name::new(format!("{:?} {:?} ({}, {})", spawn_request.army, spawn_request.unit_class, q, r)),
+                ));
+
+                // Add Harvester component for harvester units
+                if spawn_request.unit_class == UnitClass::Harvester {
+                    entity_commands.insert(Harvester {
+                        state: HarvesterState::Idle,
+                        harvest_timer: 0.0,
+                        harvest_duration: 10.0,
+                        crystals_carried: 0,
+                        spawn_point: (q, r),
+                        target_field: None,
+                    });
+                }
+
+                entity_commands.id()
             };
 
             // Spawn health bars (matching original setup)
@@ -2472,6 +2502,218 @@ fn setup_units(
     });
 }
 
+// Autonomous harvester AI - finds closest crystal field and moves to it
+fn harvester_ai_find_target(
+    mut harvester_query: Query<(Entity, &Unit, &mut Harvester), Without<UnitMovement>>,
+    crystal_query: Query<&CrystalField>,
+) {
+    for (_entity, unit, mut harvester) in &mut harvester_query {
+        // Only process idle harvesters
+        if harvester.state != HarvesterState::Idle {
+            continue;
+        }
+
+        // Find closest crystal field with crystals remaining
+        let mut closest_field: Option<(i32, i32, f32)> = None;
+
+        for crystal_field in &crystal_query {
+            if crystal_field.crystals_remaining <= 0 {
+                continue;
+            }
+
+            let dx = (crystal_field.q - unit.q) as f32;
+            let dy = (crystal_field.r - unit.r) as f32;
+            let distance = (dx * dx + dy * dy).sqrt();
+
+            if let Some((_, _, min_dist)) = closest_field {
+                if distance < min_dist {
+                    closest_field = Some((crystal_field.q, crystal_field.r, distance));
+                }
+            } else {
+                closest_field = Some((crystal_field.q, crystal_field.r, distance));
+            }
+        }
+
+        if let Some((target_q, target_r, _)) = closest_field {
+            harvester.target_field = Some((target_q, target_r));
+            harvester.state = HarvesterState::MovingToField;
+            println!("Harvester at ({}, {}) targeting crystal field at ({}, {})",
+                unit.q, unit.r, target_q, target_r);
+        }
+    }
+}
+
+// Command harvesters to move to their target fields
+fn harvester_move_to_field(
+    mut commands: Commands,
+    mut harvester_query: Query<(Entity, &Unit, &UnitStats, &mut Harvester), Without<UnitMovement>>,
+    occupancy: Res<Occupancy>,
+) {
+    for (entity, unit, stats, mut harvester) in &mut harvester_query {
+        if harvester.state != HarvesterState::MovingToField {
+            continue;
+        }
+
+        if let Some((target_q, target_r)) = harvester.target_field {
+            // Check if we've arrived
+            if unit.q == target_q && unit.r == target_r {
+                harvester.state = HarvesterState::Harvesting;
+                harvester.harvest_timer = 0.0;
+                println!("Harvester arrived at crystal field ({}, {}), starting to harvest", target_q, target_r);
+                continue;
+            }
+
+            // Use simple pathfinding - move one hex closer
+            let path = find_simple_path((unit.q, unit.r), (target_q, target_r), &occupancy);
+
+            if let Some(next_pos) = path.first() {
+                commands.entity(entity).insert(UnitMovement {
+                    path: vec![*next_pos],
+                    current_waypoint: 0,
+                    progress: 0.0,
+                    speed: stats.speed,
+                    segment_start: (unit.q, unit.r),
+                });
+            }
+        }
+    }
+}
+
+// Harvest crystals over time
+fn harvester_collect_crystals(
+    time: Res<Time>,
+    mut economy: ResMut<Economy>,
+    mut harvester_query: Query<(&Unit, &Army, &mut Harvester)>,
+    mut crystal_query: Query<&mut CrystalField>,
+) {
+    for (unit, army, mut harvester) in &mut harvester_query {
+        if harvester.state != HarvesterState::Harvesting {
+            continue;
+        }
+
+        harvester.harvest_timer += time.delta_secs();
+
+        // Collect crystals over time (5 crystals per second = 50 total in 10 seconds)
+        let crystals_per_second = 5.0;
+        let delta_crystals = (crystals_per_second * time.delta_secs()).ceil() as i32;
+
+        // Find the crystal field at this position
+        for mut crystal_field in &mut crystal_query {
+            if crystal_field.q == unit.q && crystal_field.r == unit.r {
+                if crystal_field.crystals_remaining > 0 {
+                    let amount = delta_crystals.min(crystal_field.crystals_remaining);
+                    crystal_field.crystals_remaining -= amount;
+                    harvester.crystals_carried += amount;
+                }
+                break;
+            }
+        }
+
+        // Check if full (10 seconds passed or carried 50 crystals)
+        if harvester.harvest_timer >= harvester.harvest_duration || harvester.crystals_carried >= 50 {
+            harvester.state = HarvesterState::MovingToBase;
+            println!("Harvester full with {} crystals, returning to base at ({}, {})",
+                harvester.crystals_carried, harvester.spawn_point.0, harvester.spawn_point.1);
+        }
+    }
+}
+
+// Command harvesters to return to base
+fn harvester_return_to_base(
+    mut commands: Commands,
+    mut harvester_query: Query<(Entity, &Unit, &UnitStats, &mut Harvester), Without<UnitMovement>>,
+    occupancy: Res<Occupancy>,
+) {
+    for (entity, unit, stats, harvester) in &mut harvester_query {
+        if harvester.state != HarvesterState::MovingToBase {
+            continue;
+        }
+
+        let (base_q, base_r) = harvester.spawn_point;
+
+        // Check if we've arrived at base
+        if unit.q == base_q && unit.r == base_r {
+            // Deposit crystals and reset
+            commands.entity(entity).insert(HarvesterDepositing);
+            println!("Harvester arrived at base, depositing {} crystals", harvester.crystals_carried);
+            continue;
+        }
+
+        // Move towards base
+        let path = find_simple_path((unit.q, unit.r), (base_q, base_r), &occupancy);
+
+        if let Some(next_pos) = path.first() {
+            commands.entity(entity).insert(UnitMovement {
+                path: vec![*next_pos],
+                current_waypoint: 0,
+                progress: 0.0,
+                speed: stats.speed,
+                segment_start: (unit.q, unit.r),
+            });
+        }
+    }
+}
+
+// Deposit crystals and reset harvester state
+#[derive(Component)]
+struct HarvesterDepositing;
+
+fn harvester_deposit_crystals(
+    mut commands: Commands,
+    mut economy: ResMut<Economy>,
+    mut harvester_query: Query<(Entity, &Army, &mut Harvester), With<HarvesterDepositing>>,
+) {
+    for (entity, army, mut harvester) in &mut harvester_query {
+        // Award money (1 crystal = 1 money)
+        match army {
+            Army::Red => economy.red_money += harvester.crystals_carried,
+            Army::Blue => economy.blue_money += harvester.crystals_carried,
+        }
+
+        println!("{:?} harvester deposited {} crystals (+${}) at base",
+            army, harvester.crystals_carried, harvester.crystals_carried);
+
+        // Reset harvester state
+        harvester.state = HarvesterState::Idle;
+        harvester.crystals_carried = 0;
+        harvester.target_field = None;
+
+        // Remove depositing marker
+        commands.entity(entity).remove::<HarvesterDepositing>();
+    }
+}
+
+// Simple pathfinding helper - finds next hex towards target
+fn find_simple_path(
+    start: (i32, i32),
+    goal: (i32, i32),
+    _occupancy: &Occupancy,
+) -> Vec<(i32, i32)> {
+    // Simple greedy approach - move one hex closer
+    let (sq, sr) = start;
+    let (gq, gr) = goal;
+
+    let dq = gq - sq;
+    let dr = gr - sr;
+
+    // Move in the direction with largest difference
+    if dq.abs() > dr.abs() {
+        if dq > 0 {
+            vec![(sq + 1, sr)]
+        } else {
+            vec![(sq - 1, sr)]
+        }
+    } else if dr != 0 {
+        if dr > 0 {
+            vec![(sq, sr + 1)]
+        } else {
+            vec![(sq, sr - 1)]
+        }
+    } else {
+        vec![]
+    }
+}
+
 pub struct UnitsPlugin;
 
 impl Plugin for UnitsPlugin {
@@ -2513,6 +2755,11 @@ impl Plugin for UnitsPlugin {
                     update_unit_animations,
                     play_animation_when_loaded,
                     update_health_bars,
+                    harvester_ai_find_target,
+                    harvester_move_to_field,
+                    harvester_collect_crystals,
+                    harvester_return_to_base,
+                    harvester_deposit_crystals,
                 ).run_if(in_state(LoadingState::Playing)),
             );
     }
