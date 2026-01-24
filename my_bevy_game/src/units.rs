@@ -828,66 +828,124 @@ fn update_targeting_system(
     obstacles: Res<Obstacles>,
     occupancy: Res<Occupancy>,
     occupancy_intent: Res<OccupancyIntent>,
-    claimed_cells: Res<ClaimedCellsThisFrame>,
     target_query: Query<&Unit>,
-    mut targeting_query: Query<(Entity, &Unit, &UnitStats, &mut Targeting, Option<&UnitMovement>)>,
+    mut targeting_query: Query<(Entity, &mut Unit, &UnitStats, &mut Targeting, Option<&UnitMovement>)>,
 ) {
     let current_time = time.elapsed_secs();
 
-    for (attacker_entity, attacker_unit, stats, mut targeting, movement) in &mut targeting_query {
+    for (attacker_entity, mut attacker_unit, stats, mut targeting, movement_opt) in &mut targeting_query {
         // Check if target still exists
         if let Ok(target_unit) = target_query.get(targeting.target_entity) {
             let target_pos = (target_unit.q, target_unit.r);
             let attacker_pos = (attacker_unit.q, attacker_unit.r);
 
-            // Check if already adjacent (within attack range)
-            if is_adjacent(attacker_pos, target_pos) {
-                // Stop movement - combat_system will handle attacking
-                commands.entity(attacker_entity).remove::<UnitMovement>();
-            } else {
-                // Check if target moved or need to initiate movement
-                let should_repath = target_pos != targeting.target_last_position
-                    && current_time - targeting.last_repath_time > targeting.repathing_cooldown;
+            // Check if target moved
+            let target_moved = target_pos != targeting.target_last_position;
+            let should_repath = target_moved && current_time - targeting.last_repath_time > targeting.repathing_cooldown;
 
-                if should_repath || movement.is_none() {
-                    // Update target position
-                    targeting.target_last_position = target_pos;
-                    targeting.last_repath_time = current_time;
+            // Only repath if target moved and cooldown elapsed
+            if should_repath {
+                targeting.target_last_position = target_pos;
+                targeting.last_repath_time = current_time;
 
-                    // Build blocking cells for pathfinding
-                    let mut blocking_cells = obstacles.positions.clone();
-                    for &occupied_pos in &occupancy.positions {
-                        if occupied_pos != attacker_pos {
-                            blocking_cells.insert(occupied_pos);
-                        }
+                // Find closest adjacent cell to target
+                let mut blocking_cells = obstacles.positions.clone();
+                for &occupied_pos in &occupancy.positions {
+                    if occupied_pos != attacker_pos {
+                        blocking_cells.insert(occupied_pos);
                     }
-                    for (entity, &intent_pos) in &occupancy_intent.intentions {
-                        if *entity != attacker_entity && intent_pos != attacker_pos {
-                            blocking_cells.insert(intent_pos);
-                        }
+                }
+                for (entity, &intent_pos) in &occupancy_intent.intentions {
+                    if *entity != attacker_entity && intent_pos != attacker_pos {
+                        blocking_cells.insert(intent_pos);
                     }
+                }
 
-                    // Find closest adjacent cell to target
-                    if let Some(adjacent_goal) = find_closest_adjacent_cell(target_pos, attacker_pos, &blocking_cells) {
-                        // Don't pathfind to cells claimed this frame
-                        if !claimed_cells.cells.contains(&adjacent_goal) {
-                            // Find path to adjacent cell
-                            if let Some(path) = find_path(attacker_pos, adjacent_goal, config.map_radius, &blocking_cells) {
-                                let path_to_follow: Vec<(i32, i32)> = if path.len() > 1 {
-                                    path[1..].to_vec()
-                                } else {
-                                    vec![]
-                                };
+                if let Some(goal) = find_closest_adjacent_cell(target_pos, attacker_pos, &blocking_cells) {
+                    if let Some(movement) = movement_opt {
+                        // Unit is currently moving - handle mid-movement repathing
+                        if movement.current_waypoint < movement.path.len() {
+                            let current_cell = (attacker_unit.q, attacker_unit.r);
+                            let next_cell = movement.path[movement.current_waypoint];
 
-                                if !path_to_follow.is_empty() {
+                            // Compare paths from current cell vs next cell
+                            let path_from_current = find_path(current_cell, goal, config.map_radius, &blocking_cells);
+                            let path_from_next = find_path(next_cell, goal, config.map_radius, &blocking_cells);
+
+                            let should_reverse = match (path_from_current, path_from_next) {
+                                (Some(p1), Some(p2)) => p1.len() < p2.len(),
+                                (Some(_), None) => true,
+                                (None, Some(_)) => false,
+                                (None, None) => false,
+                            };
+
+                            if should_reverse {
+                                // Reverse direction - go back to current cell and repath
+                                if let Some(path) = find_path(current_cell, goal, config.map_radius, &blocking_cells) {
+                                    let mut new_path = vec![current_cell];
+                                    if path.len() > 1 {
+                                        new_path.extend_from_slice(&path[1..]);
+                                    }
+
+                                    // Update unit position based on progress
+                                    let unit_position = if movement.progress >= 0.5 {
+                                        next_cell
+                                    } else {
+                                        current_cell
+                                    };
+
+                                    *attacker_unit = Unit {
+                                        q: unit_position.0,
+                                        r: unit_position.1,
+                                        _sprite_index: attacker_unit._sprite_index,
+                                        army: attacker_unit.army,
+                                    };
+
                                     commands.entity(attacker_entity).insert(UnitMovement {
-                                        path: path_to_follow,
+                                        path: new_path,
                                         current_waypoint: 0,
-                                        progress: 0.0,
+                                        progress: 1.0 - movement.progress,
                                         speed: stats.speed,
-                                        segment_start: attacker_pos,
+                                        segment_start: next_cell,
                                     });
                                 }
+                            } else {
+                                // Continue forward but with new goal
+                                if let Some(path) = find_path(next_cell, goal, config.map_radius, &blocking_cells) {
+                                    let mut new_full_path = vec![next_cell];
+                                    if path.len() > 1 {
+                                        new_full_path.extend_from_slice(&path[1..]);
+                                    }
+
+                                    if new_full_path.len() > 1 {
+                                        commands.entity(attacker_entity).insert(UnitMovement {
+                                            path: new_full_path,
+                                            current_waypoint: 0,
+                                            progress: movement.progress,
+                                            speed: stats.speed,
+                                            segment_start: movement.segment_start,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // Unit not moving - start new movement
+                        if let Some(path) = find_path(attacker_pos, goal, config.map_radius, &blocking_cells) {
+                            let path_to_follow: Vec<(i32, i32)> = if path.len() > 1 {
+                                path[1..].to_vec()
+                            } else {
+                                vec![]
+                            };
+
+                            if !path_to_follow.is_empty() {
+                                commands.entity(attacker_entity).insert(UnitMovement {
+                                    path: path_to_follow,
+                                    current_waypoint: 0,
+                                    progress: 0.0,
+                                    speed: stats.speed,
+                                    segment_start: attacker_pos,
+                                });
                             }
                         }
                     }
