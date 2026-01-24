@@ -311,9 +311,11 @@ impl ArmyCooldowns {
         }
     }
 
-    pub fn start_cooldown(&mut self, _unit_class: UnitClass, total_units: usize) {
-        // Base cooldown is 2 seconds, increases by 0.5s per existing unit
-        self.cooldown = 2.0 + (total_units as f32 * 0.5);
+    pub fn start_cooldown(&mut self, _unit_class: UnitClass, combat_units: usize) {
+        // Exponential cooldown: 4 units = 30s, 5 units = 60s
+        // Formula: 1.875 * 2^combat_units
+        // 0 units: ~2s, 1: ~4s, 2: ~8s, 3: ~15s, 4: 30s, 5: 60s
+        self.cooldown = 1.875 * 2.0_f32.powf(combat_units as f32);
         self.timer = 0.0;
     }
 
@@ -1429,7 +1431,7 @@ fn spawn_unit_from_request(
     occupancy_intent: Res<OccupancyIntent>,
     red_army_query: Query<Entity, With<RedArmy>>,
     blue_army_query: Query<Entity, With<BlueArmy>>,
-    unit_query: Query<&Unit>,
+    unit_query: Query<(&Unit, &UnitClass)>,
     mut spawn_cooldowns: ResMut<SpawnCooldowns>,
 ) {
     let requests: Vec<_> = spawn_queue.requests.drain(..).collect();
@@ -1750,10 +1752,12 @@ fn spawn_unit_from_request(
             ));
         });
 
-        // Start cooldown based on this army's unit count
-        let army_units = unit_query.iter().filter(|u| u.army == spawn_request.army).count();
+        // Start cooldown based on this army's combat unit count (excluding harvesters)
+        let combat_units = unit_query.iter()
+            .filter(|(u, uc)| u.army == spawn_request.army && **uc != UnitClass::Harvester)
+            .count();
         let army_cooldowns = spawn_cooldowns.get_army_cooldowns_mut(spawn_request.army);
-        army_cooldowns.start_cooldown(spawn_request.unit_class, army_units);
+        army_cooldowns.start_cooldown(spawn_request.unit_class, combat_units);
 
         println!("Spawned {:?} {:?} unit at ({}, {}) for ${} (global cooldown: {:.1}s)",
             spawn_request.army, spawn_request.unit_class, q, r, cost, army_cooldowns.cooldown
