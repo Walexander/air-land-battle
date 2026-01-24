@@ -69,6 +69,14 @@ pub struct Combat {
     pub movement_cooldown: f32, // Cooldown after moving before can attack
 }
 
+#[derive(Component)]
+pub struct Targeting {
+    pub target_entity: Entity,
+    pub target_last_position: (i32, i32),
+    pub repathing_cooldown: f32,
+    pub last_repath_time: f32,
+}
+
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum UnitClass {
     Infantry,
@@ -483,6 +491,28 @@ pub fn find_path(
     None
 }
 
+pub fn is_adjacent(pos1: (i32, i32), pos2: (i32, i32)) -> bool {
+    hex_distance(pos1, pos2) == 1
+}
+
+pub fn get_adjacent_hexes(pos: (i32, i32)) -> Vec<(i32, i32)> {
+    hex_neighbors(pos).to_vec()
+}
+
+pub fn find_closest_adjacent_cell(
+    target: (i32, i32),
+    from: (i32, i32),
+    obstacles: &HashSet<(i32, i32)>,
+) -> Option<(i32, i32)> {
+    let adjacent_cells = get_adjacent_hexes(target);
+
+    adjacent_cells
+        .iter()
+        .filter(|&&cell| !obstacles.contains(&cell))
+        .min_by_key(|&&cell| hex_distance(from, cell))
+        .copied()
+}
+
 // Systems
 fn move_units(
     time: Res<Time>,
@@ -791,6 +821,85 @@ fn combat_system(
     }
 }
 
+fn update_targeting_system(
+    time: Res<Time>,
+    mut commands: Commands,
+    config: Res<HexMapConfig>,
+    obstacles: Res<Obstacles>,
+    occupancy: Res<Occupancy>,
+    occupancy_intent: Res<OccupancyIntent>,
+    claimed_cells: Res<ClaimedCellsThisFrame>,
+    target_query: Query<&Unit>,
+    mut targeting_query: Query<(Entity, &Unit, &UnitStats, &mut Targeting, Option<&UnitMovement>)>,
+) {
+    let current_time = time.elapsed_secs();
+
+    for (attacker_entity, attacker_unit, stats, mut targeting, movement) in &mut targeting_query {
+        // Check if target still exists
+        if let Ok(target_unit) = target_query.get(targeting.target_entity) {
+            let target_pos = (target_unit.q, target_unit.r);
+            let attacker_pos = (attacker_unit.q, attacker_unit.r);
+
+            // Check if already adjacent (within attack range)
+            if is_adjacent(attacker_pos, target_pos) {
+                // Stop movement - combat_system will handle attacking
+                commands.entity(attacker_entity).remove::<UnitMovement>();
+            } else {
+                // Check if target moved or need to initiate movement
+                let should_repath = target_pos != targeting.target_last_position
+                    && current_time - targeting.last_repath_time > targeting.repathing_cooldown;
+
+                if should_repath || movement.is_none() {
+                    // Update target position
+                    targeting.target_last_position = target_pos;
+                    targeting.last_repath_time = current_time;
+
+                    // Build blocking cells for pathfinding
+                    let mut blocking_cells = obstacles.positions.clone();
+                    for &occupied_pos in &occupancy.positions {
+                        if occupied_pos != attacker_pos {
+                            blocking_cells.insert(occupied_pos);
+                        }
+                    }
+                    for (entity, &intent_pos) in &occupancy_intent.intentions {
+                        if *entity != attacker_entity && intent_pos != attacker_pos {
+                            blocking_cells.insert(intent_pos);
+                        }
+                    }
+
+                    // Find closest adjacent cell to target
+                    if let Some(adjacent_goal) = find_closest_adjacent_cell(target_pos, attacker_pos, &blocking_cells) {
+                        // Don't pathfind to cells claimed this frame
+                        if !claimed_cells.cells.contains(&adjacent_goal) {
+                            // Find path to adjacent cell
+                            if let Some(path) = find_path(attacker_pos, adjacent_goal, config.map_radius, &blocking_cells) {
+                                let path_to_follow: Vec<(i32, i32)> = if path.len() > 1 {
+                                    path[1..].to_vec()
+                                } else {
+                                    vec![]
+                                };
+
+                                if !path_to_follow.is_empty() {
+                                    commands.entity(attacker_entity).insert(UnitMovement {
+                                        path: path_to_follow,
+                                        current_waypoint: 0,
+                                        progress: 0.0,
+                                        speed: stats.speed,
+                                        segment_start: attacker_pos,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // Target no longer exists, clear targeting
+            commands.entity(attacker_entity).remove::<Targeting>();
+        }
+    }
+}
+
 fn remove_dead_units(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -799,6 +908,7 @@ fn remove_dead_units(
     children_query: Query<&Children>,
     health_bar_query: Query<(Entity, &HealthBar)>,
     selection_ring_query: Query<(Entity, &crate::selection::SelectionRing)>,
+    targeting_query: Query<(Entity, &Targeting)>,
 ) {
     for (entity, health, _unit, transform) in &unit_query {
         if health.current <= 0.0 {
@@ -865,6 +975,13 @@ fn remove_dead_units(
             for (ring_entity, selection_ring) in &selection_ring_query {
                 if selection_ring.unit_entity == entity {
                     commands.entity(ring_entity).despawn();
+                }
+            }
+
+            // Remove targeting from any units targeting this dead unit
+            for (attacker_entity, targeting) in &targeting_query {
+                if targeting.target_entity == entity {
+                    commands.entity(attacker_entity).remove::<Targeting>();
                 }
             }
 
@@ -2974,6 +3091,7 @@ impl Plugin for UnitsPlugin {
                     ai_spawn_units,
                     ai_command_units,
                     spawn_unit_from_request,
+                    update_targeting_system,
                     move_units,
                     rotate_units_toward_enemies,
                     combat_system,

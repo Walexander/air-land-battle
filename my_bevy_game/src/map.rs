@@ -929,35 +929,58 @@ fn hex_hover_system(
 fn update_outline_colors(
     hovered_hex: Res<HoveredHex>,
     mut outline_query: Query<
-        (&HexOutline, &mut Visibility),
+        (&HexOutline, &mut Visibility, &MeshMaterial3d<StandardMaterial>),
         Without<LaunchPadOutline>,
     >,
     unit_query: Query<(&Unit, Has<Selected>)>,
+    selected_query: Query<&Unit, With<Selected>>,
     hex_query: Query<&HexTile>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    // Find if there's an unselected unit at the hovered position
-    let has_unselected_unit = if let Some(hovered_entity) = hovered_hex.entity {
+    // Get selected unit's army if any
+    let selected_army = selected_query.iter().next().map(|u| u.army);
+
+    // Find if there's an unselected unit at the hovered position and what army it is
+    let hovered_unit_info = if let Some(hovered_entity) = hovered_hex.entity {
         if let Ok(hex_tile) = hex_query.get(hovered_entity) {
             let (hovered_q, hovered_r) = (hex_tile.q, hex_tile.r);
-            unit_query.iter().any(|(unit, is_selected)| {
-                unit.q == hovered_q && unit.r == hovered_r && !is_selected
-            })
+            unit_query.iter()
+                .find(|(unit, is_selected)| {
+                    unit.q == hovered_q && unit.r == hovered_r && !is_selected
+                })
+                .map(|(unit, _)| unit.army)
         } else {
-            false
+            None
         }
     } else {
-        false
+        None
     };
 
-    for (outline, mut visibility) in &mut outline_query {
+    for (outline, mut visibility, material_handle) in &mut outline_query {
         let is_hovered = hovered_hex.entity == Some(outline.hex_entity);
 
-        // Only show outline when hovered AND there's an unselected unit on the hex
-        *visibility = if is_hovered && has_unselected_unit {
-            Visibility::Visible
+        // Determine if should show outline and what color
+        let should_show = is_hovered && hovered_unit_info.is_some();
+
+        if should_show {
+            *visibility = Visibility::Visible;
+
+            // Determine color based on army relationship
+            let outline_color = match (selected_army, hovered_unit_info) {
+                (Some(selected), Some(hovered)) if selected != hovered => {
+                    Color::srgb(0.9, 0.2, 0.2) // RED for enemies
+                }
+                _ => Color::srgb(0.7, 0.7, 0.7) // White for friendlies
+            };
+
+            // Update material color
+            if let Some(material) = materials.get_mut(&material_handle.0) {
+                material.base_color = outline_color;
+                material.emissive = outline_color.into();
+            }
         } else {
-            Visibility::Hidden
-        };
+            *visibility = Visibility::Hidden;
+        }
     }
 }
 
