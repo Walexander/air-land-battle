@@ -263,6 +263,17 @@ impl Default for Economy {
     }
 }
 
+#[derive(Resource)]
+pub struct PassiveIncomeTimer {
+    pub timer: f32,
+}
+
+impl Default for PassiveIncomeTimer {
+    fn default() -> Self {
+        Self { timer: 0.0 }
+    }
+}
+
 #[derive(Default, Resource)]
 pub struct UnitSpawnQueue {
     pub requests: Vec<UnitSpawnRequest>,
@@ -274,103 +285,40 @@ pub struct UnitSpawnRequest {
 }
 
 pub struct ArmyCooldowns {
-    pub infantry_timer: f32,
-    pub infantry_cooldown: f32,
-    pub cavalry_timer: f32,
-    pub cavalry_cooldown: f32,
-    pub artillery_timer: f32,
-    pub artillery_cooldown: f32,
-    pub harvester_timer: f32,
-    pub harvester_cooldown: f32,
+    pub timer: f32,
+    pub cooldown: f32,
 }
 
 impl Default for ArmyCooldowns {
     fn default() -> Self {
         Self {
-            infantry_timer: 0.0,
-            infantry_cooldown: 0.0,
-            cavalry_timer: 0.0,
-            cavalry_cooldown: 0.0,
-            artillery_timer: 0.0,
-            artillery_cooldown: 0.0,
-            harvester_timer: 0.0,
-            harvester_cooldown: 0.0,
+            timer: 0.0,
+            cooldown: 0.0,
         }
     }
 }
 
 impl ArmyCooldowns {
-    pub fn is_ready(&self, unit_class: UnitClass) -> bool {
-        match unit_class {
-            UnitClass::Infantry => self.infantry_timer >= self.infantry_cooldown,
-            UnitClass::Cavalry => self.cavalry_timer >= self.cavalry_cooldown,
-            UnitClass::Artillery => self.artillery_timer >= self.artillery_cooldown,
-            UnitClass::Harvester => self.harvester_timer >= self.harvester_cooldown,
+    pub fn is_ready(&self, _unit_class: UnitClass) -> bool {
+        self.timer >= self.cooldown
+    }
+
+    pub fn get_progress(&self, _unit_class: UnitClass) -> f32 {
+        if self.cooldown == 0.0 {
+            1.0
+        } else {
+            (self.timer / self.cooldown).min(1.0)
         }
     }
 
-    pub fn get_progress(&self, unit_class: UnitClass) -> f32 {
-        match unit_class {
-            UnitClass::Infantry => {
-                if self.infantry_cooldown == 0.0 {
-                    1.0
-                } else {
-                    (self.infantry_timer / self.infantry_cooldown).min(1.0)
-                }
-            }
-            UnitClass::Cavalry => {
-                if self.cavalry_cooldown == 0.0 {
-                    1.0
-                } else {
-                    (self.cavalry_timer / self.cavalry_cooldown).min(1.0)
-                }
-            }
-            UnitClass::Artillery => {
-                if self.artillery_cooldown == 0.0 {
-                    1.0
-                } else {
-                    (self.artillery_timer / self.artillery_cooldown).min(1.0)
-                }
-            }
-            UnitClass::Harvester => {
-                if self.harvester_cooldown == 0.0 {
-                    1.0
-                } else {
-                    (self.harvester_timer / self.harvester_cooldown).min(1.0)
-                }
-            }
-        }
-    }
-
-    pub fn start_cooldown(&mut self, unit_class: UnitClass, total_units: usize) {
+    pub fn start_cooldown(&mut self, _unit_class: UnitClass, total_units: usize) {
         // Base cooldown is 2 seconds, increases by 0.5s per existing unit
-        let cooldown = 2.0 + (total_units as f32 * 0.5);
-
-        match unit_class {
-            UnitClass::Infantry => {
-                self.infantry_timer = 0.0;
-                self.infantry_cooldown = cooldown;
-            }
-            UnitClass::Cavalry => {
-                self.cavalry_timer = 0.0;
-                self.cavalry_cooldown = cooldown;
-            }
-            UnitClass::Artillery => {
-                self.artillery_timer = 0.0;
-                self.artillery_cooldown = cooldown;
-            }
-            UnitClass::Harvester => {
-                self.harvester_timer = 0.0;
-                self.harvester_cooldown = cooldown;
-            }
-        }
+        self.cooldown = 2.0 + (total_units as f32 * 0.5);
+        self.timer = 0.0;
     }
 
     pub fn update(&mut self, delta: f32) {
-        self.infantry_timer += delta;
-        self.cavalry_timer += delta;
-        self.artillery_timer += delta;
-        self.harvester_timer += delta;
+        self.timer += delta;
     }
 }
 
@@ -1500,15 +1448,34 @@ fn spawn_unit_from_request(
         }
 
         // Find available spawn location based on army
+        // Harvesters prefer (-4, 0) and (4, 0) positions
         let spawn_candidates = match spawn_request.army {
-            Army::Red => vec![
-                (-3, 1), (-4, 1), (-4, 2), (-5, 1), (-5, 2),
-                (-2, 1), (-3, 0), (-3, 2), (-2, 2), (-4, 0),
-            ],
-            Army::Blue => vec![
-                (3, 1), (4, 1), (4, 2), (5, 1), (5, 2),
-                (2, 1), (3, 0), (3, 2), (2, 2), (4, 0),
-            ],
+            Army::Red => {
+                if spawn_request.unit_class == UnitClass::Harvester {
+                    vec![
+                        (-4, 0), (-3, 1), (-4, 1), (-4, 2), (-5, 1), (-5, 2),
+                        (-2, 1), (-3, 0), (-3, 2), (-2, 2),
+                    ]
+                } else {
+                    vec![
+                        (-3, 1), (-4, 1), (-4, 2), (-5, 1), (-5, 2),
+                        (-2, 1), (-3, 0), (-3, 2), (-2, 2), (-4, 0),
+                    ]
+                }
+            },
+            Army::Blue => {
+                if spawn_request.unit_class == UnitClass::Harvester {
+                    vec![
+                        (4, 0), (3, 1), (4, 1), (4, 2), (5, 1), (5, 2),
+                        (2, 1), (3, 0), (3, 2), (2, 2),
+                    ]
+                } else {
+                    vec![
+                        (3, 1), (4, 1), (4, 2), (5, 1), (5, 2),
+                        (2, 1), (3, 0), (3, 2), (2, 2), (4, 0),
+                    ]
+                }
+            },
         };
 
         // Check both current occupancy AND intent (units moving toward cells)
@@ -1788,14 +1755,8 @@ fn spawn_unit_from_request(
         let army_cooldowns = spawn_cooldowns.get_army_cooldowns_mut(spawn_request.army);
         army_cooldowns.start_cooldown(spawn_request.unit_class, army_units);
 
-        println!("Spawned {:?} {:?} unit at ({}, {}) for ${} (cooldown: {:.1}s)",
-            spawn_request.army, spawn_request.unit_class, q, r, cost,
-            match spawn_request.unit_class {
-                UnitClass::Infantry => army_cooldowns.infantry_cooldown,
-                UnitClass::Cavalry => army_cooldowns.cavalry_cooldown,
-                UnitClass::Artillery => army_cooldowns.artillery_cooldown,
-                UnitClass::Harvester => army_cooldowns.harvester_cooldown,
-            }
+        println!("Spawned {:?} {:?} unit at ({}, {}) for ${} (global cooldown: {:.1}s)",
+            spawn_request.army, spawn_request.unit_class, q, r, cost, army_cooldowns.cooldown
         );
     }
 }
@@ -2292,9 +2253,7 @@ fn setup_units(
 ) {
     // (q, r, unit_index, army, class)
     let units: Vec<(i32, i32, usize, Army, UnitClass)> = vec![
-        // Start with harvesters
-        (-4, 0, 0, Army::Red, UnitClass::Harvester),
-        (4, 0, 1, Army::Blue, UnitClass::Harvester),
+        // Start with no units - players must purchase them
     ];
 
     let ring_mesh = meshes.add(create_selection_ring_mesh(53.0, 63.0));
@@ -2849,6 +2808,25 @@ fn harvester_move_to_field(
     }
 }
 
+// Passive income system - players earn money even without harvesters
+// at 25% of a harvester's rate (1.25 crystals/sec vs 5 crystals/sec)
+fn passive_income_system(
+    time: Res<Time>,
+    mut timer: ResMut<PassiveIncomeTimer>,
+    mut economy: ResMut<Economy>,
+) {
+    timer.timer += time.delta_secs();
+
+    // Award 1.25 crystals per second = 1 crystal every 0.8 seconds
+    const INCOME_INTERVAL: f32 = 0.8;
+
+    while timer.timer >= INCOME_INTERVAL {
+        timer.timer -= INCOME_INTERVAL;
+        economy.red_money += 1;
+        economy.blue_money += 1;
+    }
+}
+
 // Harvest crystals over time
 fn harvester_collect_crystals(
     time: Res<Time>,
@@ -2977,6 +2955,7 @@ impl Plugin for UnitsPlugin {
             .insert_resource(OccupancyIntent::default())
             .insert_resource(ClaimedCellsThisFrame::default())
             .insert_resource(Economy::default())
+            .insert_resource(PassiveIncomeTimer::default())
             .insert_resource(UnitSpawnQueue::default())
             .insert_resource(SpawnCooldowns::default())
             .insert_resource(AIController::default())
@@ -2986,6 +2965,7 @@ impl Plugin for UnitsPlugin {
                 (
                     clear_claimed_cells,
                     reset_game,
+                    passive_income_system,
                     update_spawn_cooldowns,
                     ai_spawn_units,
                     ai_command_units,
