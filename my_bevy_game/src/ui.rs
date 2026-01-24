@@ -59,39 +59,32 @@ pub struct CameraControlsVisible(pub bool);
 
 // Systems
 fn setup_ui(mut commands: Commands) {
-    // Red army money display and unit buttons (top-left)
+    // Bottom bar with buttons and money counter
     commands
         .spawn(Node {
+            width: Val::Percent(100.0),
+            height: Val::Px(60.0),
             position_type: PositionType::Absolute,
-            top: Val::Px(10.0),
-            left: Val::Px(10.0),
-            flex_direction: FlexDirection::Column,
-            align_items: AlignItems::Start,
-            row_gap: Val::Px(10.0),
+            bottom: Val::Px(0.0),
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Center,
+            column_gap: Val::Px(8.0),
+            justify_content: JustifyContent::Center,
+            padding: UiRect::all(Val::Px(5.0)),
             ..default()
         })
+        .insert(BackgroundColor(Color::srgb(1.0, 1.0, 1.0)))
         .with_children(|parent| {
-            // Money display
-            parent.spawn((
-                Text::new("Red: $100"),
-                TextFont {
-                    font_size: 24.0,
-                    ..default()
-                },
-                TextColor(Color::srgb(0.9, 0.2, 0.2)),
-                RedMoneyText,
-            ));
-
             // Infantry button
             parent
                 .spawn((
                     Button,
                     Node {
-                        width: Val::Px(40.0),
-                        height: Val::Px(40.0),
+                        width: Val::Px(50.0),
+                        height: Val::Px(50.0),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
-                        border: UiRect::all(Val::Px(3.0)),
+                        border: UiRect::all(Val::Px(2.0)),
                         ..default()
                     },
                     BackgroundColor(Color::srgb(0.0, 0.0, 0.0)),
@@ -118,7 +111,7 @@ fn setup_ui(mut commands: Commands) {
                     button_parent.spawn((
                         Text::new("I"),
                         TextFont {
-                            font_size: 20.0,
+                            font_size: 24.0,
                             ..default()
                         },
                         TextColor(Color::WHITE),
@@ -130,11 +123,11 @@ fn setup_ui(mut commands: Commands) {
                 .spawn((
                     Button,
                     Node {
-                        width: Val::Px(40.0),
-                        height: Val::Px(40.0),
+                        width: Val::Px(50.0),
+                        height: Val::Px(50.0),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
-                        border: UiRect::all(Val::Px(3.0)),
+                        border: UiRect::all(Val::Px(2.0)),
                         ..default()
                     },
                     BackgroundColor(Color::srgb(0.0, 0.0, 0.0)),
@@ -161,7 +154,7 @@ fn setup_ui(mut commands: Commands) {
                     button_parent.spawn((
                         Text::new("C"),
                         TextFont {
-                            font_size: 20.0,
+                            font_size: 24.0,
                             ..default()
                         },
                         TextColor(Color::WHITE),
@@ -173,11 +166,11 @@ fn setup_ui(mut commands: Commands) {
                 .spawn((
                     Button,
                     Node {
-                        width: Val::Px(40.0),
-                        height: Val::Px(40.0),
+                        width: Val::Px(50.0),
+                        height: Val::Px(50.0),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
-                        border: UiRect::all(Val::Px(3.0)),
+                        border: UiRect::all(Val::Px(2.0)),
                         ..default()
                     },
                     BackgroundColor(Color::srgb(0.0, 0.0, 0.0)),
@@ -204,7 +197,7 @@ fn setup_ui(mut commands: Commands) {
                     button_parent.spawn((
                         Text::new("A"),
                         TextFont {
-                            font_size: 20.0,
+                            font_size: 24.0,
                             ..default()
                         },
                         TextColor(Color::WHITE),
@@ -216,11 +209,11 @@ fn setup_ui(mut commands: Commands) {
                 .spawn((
                     Button,
                     Node {
-                        width: Val::Px(40.0),
-                        height: Val::Px(40.0),
+                        width: Val::Px(50.0),
+                        height: Val::Px(50.0),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
-                        border: UiRect::all(Val::Px(3.0)),
+                        border: UiRect::all(Val::Px(2.0)),
                         ..default()
                     },
                     BackgroundColor(Color::srgb(0.0, 0.0, 0.0)),
@@ -247,12 +240,27 @@ fn setup_ui(mut commands: Commands) {
                     button_parent.spawn((
                         Text::new("H"),
                         TextFont {
-                            font_size: 20.0,
+                            font_size: 24.0,
                             ..default()
                         },
                         TextColor(Color::WHITE),
                     ));
                 });
+
+            // Money display (to the right of buttons)
+            parent.spawn((
+                Text::new("Red: $100"),
+                TextFont {
+                    font_size: 24.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.9, 0.2, 0.2)),
+                Node {
+                    width: Val::Px(150.0),
+                    ..default()
+                },
+                RedMoneyText,
+            ));
         });
 
     // Blue army money display (top-right)
@@ -277,7 +285,7 @@ fn setup_ui(mut commands: Commands) {
             width: Val::Percent(100.0),
             height: Val::Px(60.0),
             position_type: PositionType::Absolute,
-            bottom: Val::Px(0.0),
+            top: Val::Px(0.0),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
             ..default()
@@ -321,7 +329,7 @@ fn setup_ui(mut commands: Commands) {
             ));
         });
 
-    // Hex coordinate display (bottom left of screen)
+    // Hex coordinate display (bottom left of screen, above white bar)
     commands.spawn((
         Text::new(""),
         TextFont {
@@ -331,7 +339,7 @@ fn setup_ui(mut commands: Commands) {
         TextColor(Color::srgb(0.0, 0.0, 0.0)),
         Node {
             position_type: PositionType::Absolute,
-            bottom: Val::Px(10.0),
+            bottom: Val::Px(70.0),
             left: Val::Px(10.0),
             ..default()
         },
