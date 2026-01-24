@@ -641,7 +641,7 @@ fn handle_restart(
     }
 }
 
-fn setup_camera_controls(mut commands: Commands) {
+fn setup_camera_controls(mut commands: Commands, settings: Res<CameraSettings>) {
     commands
         .spawn((
             Node {
@@ -711,13 +711,13 @@ fn setup_camera_controls(mut commands: Commands) {
                 });
             };
 
-            spawn_slider("Cam X: ", -1000.0, 1000.0, 0.0, "cam_x");
-            spawn_slider("Cam Y: ", 0.0, 1000.0, 300.0, "cam_y");
-            spawn_slider("Cam Z: ", -1000.0, 1000.0, 400.0, "cam_z");
-            spawn_slider("Look X: ", -500.0, 500.0, 0.0, "look_x");
-            spawn_slider("Look Y: ", -500.0, 500.0, 0.0, "look_y");
-            spawn_slider("Look Z: ", -500.0, 500.0, 0.0, "look_z");
-            spawn_slider("Scale: ", 0.1, 2.0, 0.8, "scale");
+            spawn_slider("Cam X: ", -1000.0, 1000.0, settings.x, "cam_x");
+            spawn_slider("Cam Y: ", 0.0, 1000.0, settings.y, "cam_y");
+            spawn_slider("Cam Z: ", -1000.0, 1000.0, settings.z, "cam_z");
+            spawn_slider("Look X: ", -500.0, 500.0, settings.look_at_x, "look_x");
+            spawn_slider("Look Y: ", -500.0, 500.0, settings.look_at_y, "look_y");
+            spawn_slider("Look Z: ", -500.0, 500.0, settings.look_at_z, "look_z");
+            spawn_slider("Scale: ", 0.1, 2.0, settings.scale, "scale");
         });
 }
 
@@ -882,7 +882,7 @@ impl Plugin for UIPlugin {
         app.insert_resource(CameraSettings {
             x: 0.0,
             y: 300.0,
-            z: 400.0,
+            z: 500.0,
             look_at_x: 0.0,
             look_at_y: 0.0,
             look_at_z: 0.0,

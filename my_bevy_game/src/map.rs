@@ -84,7 +84,16 @@ impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
         // Set up obstacles
         let mut obstacles = Obstacles::default();
-        obstacles.positions.insert((-1, 2));
+
+        // Make all top row cells (r=-4) into obstacles
+        let map_radius: i32 = 5;
+        for q in -map_radius..=map_radius {
+            let r: i32 = -4;
+            // Check if this cell is within the hexagonal bounds
+            if q.abs().max((q + r).abs()).max(r.abs()) <= map_radius {
+                obstacles.positions.insert((q, r));
+            }
+        }
 
         app.insert_resource(HexMapConfig { map_radius: 5 })
             .insert_resource(HoveredHex::default())
@@ -524,7 +533,7 @@ fn setup_hex_map(
             ..default()
         },
         Projection::Orthographic(orthographic),
-        Transform::from_xyz(0.0, 300.0, 400.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_xyz(0.0, 300.0, 500.0).looking_at(Vec3::ZERO, Vec3::Y),
         GameCamera,
     ));
 
@@ -569,6 +578,10 @@ fn setup_hex_map(
             let r2 = config.map_radius.min(-q + config.map_radius);
 
             for r in r1..=r2 {
+                // Skip top and bottom rows to make room for UI
+                if r == -config.map_radius || r == config.map_radius {
+                    continue;
+                }
                 let height = prism_height;
                 let world_pos = axial_to_world_pos(q, r);
 

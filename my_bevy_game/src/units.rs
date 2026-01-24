@@ -2292,7 +2292,9 @@ fn setup_units(
 ) {
     // (q, r, unit_index, army, class)
     let units: Vec<(i32, i32, usize, Army, UnitClass)> = vec![
-        // Start with no units - players must purchase them
+        // Start with harvesters
+        (-4, 0, 0, Army::Red, UnitClass::Harvester),
+        (4, 0, 1, Army::Blue, UnitClass::Harvester),
     ];
 
     let ring_mesh = meshes.add(create_selection_ring_mesh(53.0, 63.0));
