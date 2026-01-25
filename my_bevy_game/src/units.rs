@@ -116,7 +116,7 @@ impl UnitClass {
             },
             UnitClass::Harvester => UnitStats {
                 max_health: 90.0,
-                speed: 80.0,
+                speed: 40.0,
                 armor: 40.0,
                 attack: 5.0, // Low attack - not a combat unit
             },
@@ -161,7 +161,7 @@ impl UnitClass {
 
     pub fn idle_animation_index(&self) -> usize {
         match self {
-            UnitClass::Infantry => 0,
+            UnitClass::Infantry => 2,  // Idle animation at index 2
             UnitClass::Cavalry => 0,
             UnitClass::Artillery => 0, // CesiumMan has walking animation at index 0
             UnitClass::Harvester => 0,
@@ -170,7 +170,7 @@ impl UnitClass {
 
     pub fn moving_animation_index(&self) -> usize {
         match self {
-            UnitClass::Infantry => 0,  // walking-rifle only has Animation0
+            UnitClass::Infantry => 1,  // Walking animation at index 1
             UnitClass::Cavalry => 2,
             UnitClass::Artillery => 0, // CesiumMan only has one animation at index 0
             UnitClass::Harvester => 0,
@@ -828,7 +828,7 @@ fn update_targeting_system(
     obstacles: Res<Obstacles>,
     occupancy: Res<Occupancy>,
     occupancy_intent: Res<OccupancyIntent>,
-    target_query: Query<&Unit>,
+    target_query: Query<&Unit, Without<Targeting>>,
     mut targeting_query: Query<(Entity, &mut Unit, &UnitStats, &mut Targeting, Option<&UnitMovement>)>,
 ) {
     let current_time = time.elapsed_secs();
@@ -1382,14 +1382,18 @@ fn play_animation_when_loaded(
             if is_descendant {
                 println!("AnimationPlayer belongs to unit {:?}", unit_entity);
 
+                let mut transitions = AnimationTransitions::new();
+                transitions
+                    .play(&mut player, anim_graphs.idle_index, Duration::from_secs_f32(0.0))
+                    .repeat();
+
                 commands
                     .entity(player_entity)
                     .insert((
                         graph_handle.clone(),
-                        AnimationTransitions::new(),
+                        transitions,
                     ));
 
-                player.play(anim_graphs.idle_index).repeat();
                 println!(
                     "Started idle animation {:?} on entity {:?}",
                     anim_graphs.idle_index, player_entity

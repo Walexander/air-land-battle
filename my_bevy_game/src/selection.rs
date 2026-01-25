@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
+use std::collections::HashSet;
 
 use crate::map::{axial_to_world_pos, HexMapConfig, HexTile, HoveredHex, Obstacles};
 use crate::units::{find_path, Occupancy, OccupancyIntent, ClaimedCellsThisFrame, Unit, UnitMovement, Army, UnitStats};
@@ -29,6 +30,12 @@ pub struct DestinationRing {
     pub unit_entity: Entity,
     pub animation_timer: f32,
     pub bounce_count: u32,
+}
+
+#[derive(Component)]
+pub struct TargetRing {
+    pub unit_entity: Entity,
+    pub target_entity: Entity,
 }
 
 // Mesh creation functions
@@ -1113,7 +1120,81 @@ fn update_path_visualizations(
     }
 }
 
+fn visualize_targeting(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    selected_query: Query<(Entity, &crate::units::Targeting), With<Selected>>,
+    target_query: Query<&Unit>,
+    existing_target_rings: Query<(Entity, &TargetRing)>,
+) {
+    // Track which units should have target rings
+    let mut active_targeting: std::collections::HashSet<(Entity, Entity)> = std::collections::HashSet::new();
+
+    for (unit_entity, targeting) in &selected_query {
+        active_targeting.insert((unit_entity, targeting.target_entity));
+    }
+
+    // Remove rings that are no longer needed
+    for (ring_entity, target_ring) in &existing_target_rings {
+        let should_keep = active_targeting.contains(&(target_ring.unit_entity, target_ring.target_entity));
+        if !should_keep {
+            commands.entity(ring_entity).despawn();
+        } else {
+            // Remove from set so we don't spawn a duplicate
+            active_targeting.remove(&(target_ring.unit_entity, target_ring.target_entity));
+        }
+    }
+
+    // Spawn new target rings for active targeting relationships that don't have rings yet
+    for (unit_entity, target_entity) in active_targeting {
+        if let Ok(target_unit) = target_query.get(target_entity) {
+            let target_pos = axial_to_world_pos(target_unit.q, target_unit.r);
+
+            // Spawn red selection ring on target
+            let ring_mesh = meshes.add(create_selection_ring_mesh(50.0, 70.0));
+            let ring_material = materials.add(StandardMaterial {
+                base_color: Color::srgb(0.9, 0.2, 0.2), // Red
+                emissive: Color::srgb(0.9, 0.2, 0.2).into(),
+                unlit: true,
+                alpha_mode: AlphaMode::Blend,
+                ..default()
+            });
+
+            commands.spawn((
+                Mesh3d(ring_mesh),
+                MeshMaterial3d(ring_material),
+                Transform::from_translation(Vec3::new(target_pos.x, 1.0, target_pos.y))
+                    .with_scale(Vec3::splat(1.0)),
+                TargetRing {
+                    unit_entity,
+                    target_entity,
+                },
+            ));
+        }
+    }
+}
+
 pub struct SelectionPlugin;
+
+fn cleanup_target_rings(
+    mut commands: Commands,
+    target_ring_query: Query<(Entity, &TargetRing)>,
+    targeting_query: Query<&crate::units::Targeting>,
+    unit_query: Query<&Unit>,
+) {
+    for (ring_entity, target_ring) in &target_ring_query {
+        let should_remove =
+            // Remove if unit no longer has targeting
+            targeting_query.get(target_ring.unit_entity).is_err() ||
+            // Remove if target no longer exists
+            unit_query.get(target_ring.target_entity).is_err();
+
+        if should_remove {
+            commands.entity(ring_entity).despawn();
+        }
+    }
+}
 
 impl Plugin for SelectionPlugin {
     fn build(&self, app: &mut App) {
@@ -1125,6 +1206,8 @@ impl Plugin for SelectionPlugin {
                 animate_selection_rings,
                 animate_destination_rings,
                 update_path_visualizations,
+                visualize_targeting,
+                cleanup_target_rings,
             ).run_if(in_state(LoadingState::Playing)),
         );
     }
