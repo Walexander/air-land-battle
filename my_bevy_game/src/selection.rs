@@ -40,12 +40,14 @@ pub struct TargetRing {
 
 // Mesh creation functions
 pub fn create_selection_ring_mesh(inner_radius: f32, outer_radius: f32) -> Mesh {
+    create_ring_mesh_with_segments(inner_radius, outer_radius, 32)
+}
+
+pub fn create_ring_mesh_with_segments(inner_radius: f32, outer_radius: f32, segments: u32) -> Mesh {
     let mut positions = Vec::new();
     let mut normals = Vec::new();
     let mut uvs = Vec::new();
     let mut indices = Vec::new();
-
-    let segments = 32;
 
     for i in 0..segments {
         let angle = (i as f32 / segments as f32) * std::f32::consts::PI * 2.0;
@@ -64,8 +66,8 @@ pub fn create_selection_ring_mesh(inner_radius: f32, outer_radius: f32) -> Mesh 
     for i in 0..segments {
         let outer_current = (i * 2) as u32;
         let inner_current = (i * 2 + 1) as u32;
-        let outer_next = ((i * 2 + 2) % (segments * 2)) as u32;
-        let inner_next = ((i * 2 + 3) % (segments * 2)) as u32;
+        let outer_next = ((i * 2 + 2) % (segments as u32 * 2)) as u32;
+        let inner_next = ((i * 2 + 3) % (segments as u32 * 2)) as u32;
 
         indices.push(outer_current);
         indices.push(inner_current);
@@ -225,6 +227,76 @@ pub fn create_hexagon_outline_mesh(radius: f32, line_width: f32) -> Mesh {
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
         .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
         .with_inserted_indices(Indices::U32(indices))
+}
+
+pub fn create_square_outline_mesh(inner_radius: f32, outer_radius: f32) -> Mesh {
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut uvs = Vec::new();
+    let mut indices = Vec::new();
+
+    let y = 0.1;
+
+    // Create square outline using 8 vertices (4 outer corners, 4 inner corners)
+    // Outer vertices (counter-clockwise from top-left when viewed from above)
+    positions.push([-outer_radius, y, outer_radius]);   // 0: outer top-left
+    positions.push([outer_radius, y, outer_radius]);    // 1: outer top-right
+    positions.push([outer_radius, y, -outer_radius]);   // 2: outer bottom-right
+    positions.push([-outer_radius, y, -outer_radius]);  // 3: outer bottom-left
+
+    // Inner vertices (counter-clockwise from top-left when viewed from above)
+    positions.push([-inner_radius, y, inner_radius]);   // 4: inner top-left
+    positions.push([inner_radius, y, inner_radius]);    // 5: inner top-right
+    positions.push([inner_radius, y, -inner_radius]);   // 6: inner bottom-right
+    positions.push([-inner_radius, y, -inner_radius]);  // 7: inner bottom-left
+
+    for _ in 0..8 {
+        normals.push([0.0, 1.0, 0.0]);
+        uvs.push([0.5, 0.5]);
+    }
+
+    // Create 4 rectangular strips (one for each side), matching circle mesh pattern
+    // Top edge
+    indices.push(0);
+    indices.push(4);
+    indices.push(1);
+    indices.push(4);
+    indices.push(5);
+    indices.push(1);
+
+    // Right edge
+    indices.push(1);
+    indices.push(5);
+    indices.push(2);
+    indices.push(5);
+    indices.push(6);
+    indices.push(2);
+
+    // Bottom edge
+    indices.push(2);
+    indices.push(6);
+    indices.push(3);
+    indices.push(6);
+    indices.push(7);
+    indices.push(3);
+
+    // Left edge
+    indices.push(3);
+    indices.push(7);
+    indices.push(0);
+    indices.push(7);
+    indices.push(4);
+    indices.push(0);
+
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_indices(Indices::U32(indices));
+    mesh
 }
 
 pub fn spawn_destination_ring(
@@ -1125,7 +1197,7 @@ fn visualize_targeting(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     selected_query: Query<(Entity, &crate::units::Targeting), With<Selected>>,
-    target_query: Query<&Unit>,
+    target_query: Query<&Transform, With<Unit>>,
     existing_target_rings: Query<(Entity, &TargetRing)>,
 ) {
     // Track which units should have target rings
@@ -1148,11 +1220,9 @@ fn visualize_targeting(
 
     // Spawn new target rings for active targeting relationships that don't have rings yet
     for (unit_entity, target_entity) in active_targeting {
-        if let Ok(target_unit) = target_query.get(target_entity) {
-            let target_pos = axial_to_world_pos(target_unit.q, target_unit.r);
-
-            // Spawn red selection ring on target
-            let ring_mesh = meshes.add(create_selection_ring_mesh(50.0, 70.0));
+        if let Ok(target_transform) = target_query.get(target_entity) {
+            // Spawn red square outline on target (4-segment circle with thinner lines)
+            let ring_mesh = meshes.add(create_ring_mesh_with_segments(50.0, 58.0, 4));
             let ring_material = materials.add(StandardMaterial {
                 base_color: Color::srgb(0.9, 0.2, 0.2), // Red
                 emissive: Color::srgb(0.9, 0.2, 0.2).into(),
@@ -1164,7 +1234,7 @@ fn visualize_targeting(
             commands.spawn((
                 Mesh3d(ring_mesh),
                 MeshMaterial3d(ring_material),
-                Transform::from_translation(Vec3::new(target_pos.x, 1.0, target_pos.y))
+                Transform::from_translation(target_transform.translation + Vec3::new(0.0, 1.0, 0.0))
                     .with_scale(Vec3::splat(1.0)),
                 TargetRing {
                     unit_entity,
@@ -1176,6 +1246,18 @@ fn visualize_targeting(
 }
 
 pub struct SelectionPlugin;
+
+fn update_target_ring_positions(
+    mut target_ring_query: Query<(&TargetRing, &mut Transform)>,
+    unit_transform_query: Query<&Transform, (With<crate::units::Unit>, Without<TargetRing>)>,
+) {
+    for (target_ring, mut ring_transform) in &mut target_ring_query {
+        // Update ring position to follow the target entity's actual transform
+        if let Ok(target_transform) = unit_transform_query.get(target_ring.target_entity) {
+            ring_transform.translation = target_transform.translation + Vec3::new(0.0, 1.0, 0.0);
+        }
+    }
+}
 
 fn cleanup_target_rings(
     mut commands: Commands,
@@ -1207,6 +1289,7 @@ impl Plugin for SelectionPlugin {
                 animate_destination_rings,
                 update_path_visualizations,
                 visualize_targeting,
+                update_target_ring_positions,
                 cleanup_target_rings,
             ).run_if(in_state(LoadingState::Playing)),
         );
