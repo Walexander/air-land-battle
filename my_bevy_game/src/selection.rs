@@ -38,6 +38,11 @@ pub struct TargetRing {
     pub target_entity: Entity,
 }
 
+#[derive(Component)]
+pub struct HoverRing {
+    pub hovered_entity: Entity,
+}
+
 // Mesh creation functions
 pub fn create_selection_ring_mesh(inner_radius: f32, outer_radius: f32) -> Mesh {
     create_ring_mesh_with_segments(inner_radius, outer_radius, 32)
@@ -365,6 +370,7 @@ fn create_path_line_mesh(
     current_pos: Vec3,
     animation_progress: f32,
     army: Army,
+    target_pos: Option<Vec3>,
 ) -> Mesh {
     let mut positions = Vec::new();
     let mut colors = Vec::new();
@@ -536,6 +542,103 @@ fn create_path_line_mesh(
         prev_pos = curr_pos;
     }
 
+    // Draw line to target if targeting
+    if let Some(target_position) = target_pos {
+        let target_vec = Vec3::new(target_position.x, line_height, target_position.z);
+        let segment_length = prev_pos.distance(target_vec);
+        let direction = (target_vec - prev_pos).normalize();
+        let perpendicular = Vec3::new(-direction.z, 0.0, direction.x) * line_width * 0.5;
+
+        let num_subdivisions = (segment_length / subdivision_length).ceil() as i32;
+        let num_subdivisions = num_subdivisions.max(1);
+
+        for i in 0..num_subdivisions {
+            let t_start = i as f32 / num_subdivisions as f32;
+            let t_end = (i + 1) as f32 / num_subdivisions as f32;
+
+            let sub_start = prev_pos.lerp(target_vec, t_start);
+            let sub_end = prev_pos.lerp(target_vec, t_end);
+
+            let sub_start_dist = accumulated_distance + (segment_length * t_start);
+            let sub_end_dist = accumulated_distance + (segment_length * t_end);
+
+            let base_idx = positions.len() as u32;
+
+            positions.push([
+                sub_start.x - perpendicular.x,
+                sub_start.y,
+                sub_start.z - perpendicular.z,
+            ]);
+            positions.push([
+                sub_start.x + perpendicular.x,
+                sub_start.y,
+                sub_start.z + perpendicular.z,
+            ]);
+            positions.push([
+                sub_end.x + perpendicular.x,
+                sub_end.y,
+                sub_end.z + perpendicular.z,
+            ]);
+            positions.push([
+                sub_end.x - perpendicular.x,
+                sub_end.y,
+                sub_end.z - perpendicular.z,
+            ]);
+
+            let dark_start = animation_progress;
+            let dark_end = animation_progress + dark_segment_length;
+
+            let segment_color = if dark_start <= sub_end_dist && dark_end >= sub_start_dist {
+                dark_color
+            } else {
+                white_color
+            };
+
+            colors.push(segment_color);
+            colors.push(segment_color);
+            colors.push(segment_color);
+            colors.push(segment_color);
+
+            indices.push(base_idx);
+            indices.push(base_idx + 1);
+            indices.push(base_idx + 2);
+
+            indices.push(base_idx);
+            indices.push(base_idx + 2);
+            indices.push(base_idx + 3);
+        }
+
+        // Add ending circle at target
+        let circle_segments = 8;
+        let circle_radius = line_width * 0.5;
+        let center_idx = positions.len() as u32;
+
+        positions.push([target_vec.x, target_vec.y, target_vec.z]);
+        colors.push(white_color);
+
+        for i in 0..circle_segments {
+            let angle = (i as f32 / circle_segments as f32) * std::f32::consts::PI * 2.0;
+            let x_offset = circle_radius * angle.cos();
+            let z_offset = circle_radius * angle.sin();
+
+            positions.push([
+                target_vec.x + x_offset,
+                target_vec.y,
+                target_vec.z + z_offset,
+            ]);
+            colors.push(white_color);
+        }
+
+        for i in 0..circle_segments {
+            let current_vertex = center_idx + 1 + i as u32;
+            let next_vertex = center_idx + 1 + ((i + 1) % circle_segments) as u32;
+
+            indices.push(center_idx);
+            indices.push(current_vertex);
+            indices.push(next_vertex);
+        }
+    }
+
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::default(),
@@ -546,22 +649,10 @@ fn create_path_line_mesh(
     mesh
 }
 
-// Helper function to reset selection ring animation
-fn reset_selection_ring_animation(
-    unit_entity: Entity,
-    selection_ring_query: &mut Query<&mut SelectionRing>,
-) {
-    for mut ring in selection_ring_query.iter_mut() {
-        if ring.unit_entity == unit_entity {
-            ring.bounce_count = 2; // Set to max bounces to stop animation
-            break;
-        }
-    }
-}
-
 // Systems
 fn handle_unit_selection(
     mouse_button: Res<ButtonInput<MouseButton>>,
+    clicked_unit: Res<crate::units::ClickedUnit>,
     hovered_hex: Res<HoveredHex>,
     hex_query: Query<&HexTile>,
     config: Res<HexMapConfig>,
@@ -573,12 +664,99 @@ fn handle_unit_selection(
     selected_query: Query<(Entity, &Unit, &UnitStats, Option<&UnitMovement>, &Transform), With<Selected>>,
     path_viz_query: Query<(Entity, &PathVisualization)>,
     dest_ring_query: Query<(Entity, &DestinationRing)>,
-    mut selection_ring_query: Query<&mut SelectionRing>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut commands: Commands,
 ) {
     if mouse_button.just_pressed(MouseButton::Left) {
+        // Check if a unit was clicked directly (prioritize direct clicks)
+        if let Some(clicked_entity) = clicked_unit.entity {
+            // Check if the clicked unit is from the Red army (player controlled)
+            if let Ok((entity, unit, _)) = unit_query.get(clicked_entity) {
+                if unit.army == Army::Red {
+                    // Select this unit
+                    for (entity, _, _, _, _) in &selected_query {
+                        commands.entity(entity).remove::<Selected>();
+                    }
+                    commands.entity(clicked_entity).insert(Selected);
+                    return;
+                }
+            }
+
+            // If clicked unit is an enemy and we have a unit selected, target it
+            if let Ok((_, enemy_unit, _)) = unit_query.get(clicked_entity) {
+                if enemy_unit.army != Army::Red {
+                    if let Ok((selected_entity, selected_unit, stats, _, _)) = selected_query.single() {
+                        let attacker_pos = (selected_unit.q, selected_unit.r);
+                        let enemy_pos = (enemy_unit.q, enemy_unit.r);
+
+                        // Build blocking cells for pathfinding
+                        let mut blocking_cells = obstacles.positions.clone();
+                        for &occupied_pos in &occupancy.positions {
+                            if occupied_pos != attacker_pos {
+                                blocking_cells.insert(occupied_pos);
+                            }
+                        }
+                        for (entity, &intent_pos) in &occupancy_intent.intentions {
+                            if *entity != selected_entity && intent_pos != attacker_pos {
+                                blocking_cells.insert(intent_pos);
+                            }
+                        }
+
+                        // Find closest adjacent cell to target
+                        if let Some(adjacent_goal) = crate::units::find_closest_adjacent_cell(enemy_pos, attacker_pos, &blocking_cells) {
+                            // Don't pathfind to cells claimed this frame
+                            if !claimed_cells.cells.contains(&adjacent_goal) {
+                                // Find path to adjacent cell
+                                if let Some(path) = crate::units::find_path(attacker_pos, adjacent_goal, config.map_radius, &blocking_cells) {
+                                    let path_to_follow: Vec<(i32, i32)> = if path.len() > 1 {
+                                        path[1..].to_vec()
+                                    } else {
+                                        vec![]
+                                    };
+
+                                    if !path_to_follow.is_empty() {
+                                        // Remove old path visualizations
+                                        for (viz_entity, path_viz) in &path_viz_query {
+                                            if path_viz.unit_entity == selected_entity {
+                                                commands.entity(viz_entity).despawn();
+                                                break;
+                                            }
+                                        }
+                                        for (ring_entity, dest_ring) in &dest_ring_query {
+                                            if dest_ring.unit_entity == selected_entity {
+                                                commands.entity(ring_entity).despawn();
+                                                break;
+                                            }
+                                        }
+
+                                        // Add Targeting component
+                                        commands.entity(selected_entity).insert(crate::units::Targeting {
+                                            target_entity: clicked_entity,
+                                            target_last_position: enemy_pos,
+                                            repathing_cooldown: 0.5,
+                                            last_repath_time: 0.0,
+                                        });
+
+                                        // Add movement to adjacent cell
+                                        commands.entity(selected_entity).insert(UnitMovement {
+                                            path: path_to_follow,
+                                            current_waypoint: 0,
+                                            progress: 0.0,
+                                            speed: stats.speed,
+                                            segment_start: attacker_pos,
+                                        });
+
+                                        // Don't spawn destination ring for targeting - red square on enemy is sufficient
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    return;
+                }
+            }
+        }
         if let Some(hovered_entity) = hovered_hex.entity {
             if let Ok(hovered_tile) = hex_query.get(hovered_entity) {
                 let mut clicked_unit = None;
@@ -666,8 +844,7 @@ fn handle_unit_selection(
                                                 segment_start: attacker_pos,
                                             });
 
-                                            // Spawn destination ring at adjacent cell (visualization handled by other systems)
-                                            spawn_destination_ring(&mut commands, &mut meshes, &mut materials, selected_entity, adjacent_goal, Army::Red);
+                                            // Don't spawn destination ring for targeting - red square on enemy is sufficient
                                         }
                                     }
                                 }
@@ -772,7 +949,6 @@ fn handle_unit_selection(
                                             goal,
                                             selected_unit.army,
                                         );
-                                        reset_selection_ring_animation(selected_entity, &mut selection_ring_query);
                                     }
                                 }
                             } else {
@@ -838,7 +1014,6 @@ fn handle_unit_selection(
                                             goal,
                                             selected_unit.army,
                                         );
-                                        reset_selection_ring_animation(selected_entity, &mut selection_ring_query);
                                     }
                                 } else {
                                     if let Some(path) =
@@ -872,7 +1047,6 @@ fn handle_unit_selection(
                                                 goal,
                                                 selected_unit.army,
                                             );
-                                            reset_selection_ring_animation(selected_entity, &mut selection_ring_query);
                                         }
                                     }
                                 }
@@ -914,7 +1088,6 @@ fn handle_unit_selection(
                                         goal,
                                         selected_unit.army,
                                     );
-                                    reset_selection_ring_animation(selected_entity, &mut selection_ring_query);
                                 }
                             }
                         }
@@ -1103,11 +1276,12 @@ fn update_path_visualizations(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    unit_query: Query<(Entity, &Unit, &Transform, Option<&UnitMovement>, Has<Selected>)>,
+    unit_query: Query<(Entity, &Unit, &Transform, Option<&UnitMovement>, Option<&crate::units::Targeting>, Has<Selected>)>,
+    target_transform_query: Query<&Transform, (With<Unit>, Without<PathVisualization>)>,
     mut path_viz_query: Query<(Entity, &mut PathVisualization, &mut Mesh3d)>,
 ) {
     let mut selected_units_with_movement = std::collections::HashSet::new();
-    for (unit_entity, _, _, movement, is_selected) in &unit_query {
+    for (unit_entity, _, _, movement, _, is_selected) in &unit_query {
         if movement.is_some() && is_selected {
             selected_units_with_movement.insert(unit_entity);
         }
@@ -1119,12 +1293,23 @@ fn update_path_visualizations(
         }
     }
 
-    for (unit_entity, unit, transform, movement, is_selected) in &unit_query {
+    for (unit_entity, unit, transform, movement, targeting, is_selected) in &unit_query {
         if let Some(movement) = movement {
             if !is_selected {
                 continue;
             }
             let remaining_path = &movement.path[movement.current_waypoint..];
+
+            // Get target position if unit is targeting
+            let target_pos = if let Some(targeting) = targeting {
+                if let Ok(target_transform) = target_transform_query.get(targeting.target_entity) {
+                    Some(target_transform.translation)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
 
             let mut total_length = 0.0;
             let mut prev_pos = transform.translation;
@@ -1161,6 +1346,7 @@ fn update_path_visualizations(
                         transform.translation,
                         animation_progress,
                         unit.army,
+                        target_pos,
                     );
                     mesh_handle.0 = meshes.add(new_mesh);
                     break;
@@ -1169,7 +1355,7 @@ fn update_path_visualizations(
 
             if !found {
                 let path_mesh =
-                    create_path_line_mesh(remaining_path, transform.translation, 0.0, unit.army);
+                    create_path_line_mesh(remaining_path, transform.translation, 0.0, unit.army, target_pos);
 
                 commands.spawn((
                     Mesh3d(meshes.add(path_mesh)),
@@ -1278,20 +1464,90 @@ fn cleanup_target_rings(
     }
 }
 
+fn visualize_hover_ring(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    hovered_unit: Res<crate::units::HoveredUnit>,
+    selected_query: Query<&Unit, With<Selected>>,
+    unit_query: Query<(&Unit, &Transform)>,
+    targeting_query: Query<&crate::units::Targeting>,
+    existing_hover_rings: Query<Entity, With<HoverRing>>,
+) {
+    // Always remove all existing hover rings first
+    for ring_entity in &existing_hover_rings {
+        commands.entity(ring_entity).despawn();
+    }
+
+    // Check if we have a friendly unit selected
+    let has_friendly_selected = selected_query.iter().any(|u| u.army == Army::Red);
+
+    if !has_friendly_selected {
+        return;
+    }
+
+    // Only spawn a new hover ring if:
+    // 1. We have a friendly unit selected
+    // 2. We're hovering over an enemy unit
+    // 3. The hovered enemy is NOT already being targeted (to avoid duplicate rings)
+    if let Some(hovered_entity) = hovered_unit.entity {
+        if let Ok((unit, transform)) = unit_query.get(hovered_entity) {
+            if unit.army != Army::Red {
+                // Check if this enemy is already being targeted by the selected unit
+                let is_already_targeted = targeting_query.iter().any(|t| t.target_entity == hovered_entity);
+
+                if !is_already_targeted {
+                    // Spawn red square ring around the hovered enemy (slightly larger than target ring)
+                    let ring_mesh = meshes.add(create_ring_mesh_with_segments(55.0, 65.0, 4));
+                    let ring_material = materials.add(StandardMaterial {
+                        base_color: Color::srgb(1.0, 0.5, 0.0), // Orange to distinguish from target ring
+                        emissive: Color::srgb(1.0, 0.5, 0.0).into(),
+                        unlit: true,
+                        alpha_mode: AlphaMode::Blend,
+                        ..default()
+                    });
+
+                    commands.spawn((
+                        Mesh3d(ring_mesh),
+                        MeshMaterial3d(ring_material),
+                        Transform::from_translation(transform.translation + Vec3::new(0.0, 2.0, 0.0))
+                            .with_scale(Vec3::splat(1.0)),
+                        HoverRing {
+                            hovered_entity,
+                        },
+                    ));
+                }
+            }
+        }
+    }
+}
+
 impl Plugin for SelectionPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
             (
-                handle_unit_selection,
                 update_selected_visual,
                 animate_selection_rings,
                 animate_destination_rings,
                 update_path_visualizations,
+            ).run_if(in_state(LoadingState::Playing))
+        );
+        app.add_systems(
+            Update,
+            (
                 visualize_targeting,
                 update_target_ring_positions,
                 cleanup_target_rings,
-            ).run_if(in_state(LoadingState::Playing)),
+            ).run_if(in_state(LoadingState::Playing))
+        );
+        app.add_systems(
+            Update,
+            visualize_hover_ring.run_if(in_state(LoadingState::Playing))
+        );
+        app.add_systems(
+            Update,
+            handle_unit_selection
         );
     }
 }
