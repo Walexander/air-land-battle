@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy::diagnostic::{FrameTimeDiagnosticsPlugin, DiagnosticsStore};
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use bevy_inspector_egui::bevy_egui::EguiPlugin;
 
@@ -67,6 +68,7 @@ use loading::LoadingPlugin;
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
+        .add_plugins(FrameTimeDiagnosticsPlugin::default())
         .add_plugins(EguiPlugin::default())
         .add_plugins(WorldInspectorPlugin::new())
         .add_plugins(LoadingPlugin)
@@ -75,7 +77,44 @@ fn main() {
         .add_plugins(UnitsPlugin)
         .add_plugins(SelectionPlugin)
         .add_plugins(UIPlugin)
+        .add_systems(Startup, setup_fps_counter)
+        .add_systems(Update, update_fps_text)
         .run();
+}
+
+#[derive(Component)]
+struct FpsText;
+
+fn setup_fps_counter(mut commands: Commands) {
+    // Spawn FPS text in top-left corner
+    commands.spawn((
+        Text::new("FPS: --"),
+        TextFont {
+            font_size: 24.0,
+            ..default()
+        },
+        TextColor(Color::srgb(0.0, 1.0, 0.0)), // Green text
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(10.0),
+            left: Val::Px(10.0),
+            ..default()
+        },
+        FpsText,
+    ));
+}
+
+fn update_fps_text(
+    diagnostics: Res<DiagnosticsStore>,
+    mut query: Query<&mut Text, With<FpsText>>,
+) {
+    for mut text in &mut query {
+        if let Some(fps) = diagnostics.get(&FrameTimeDiagnosticsPlugin::FPS) {
+            if let Some(value) = fps.smoothed() {
+                text.0 = format!("FPS: {:.0}", value);
+            }
+        }
+    }
 }
 
 // pub struct HelloPlugin;
