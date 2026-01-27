@@ -905,14 +905,6 @@ fn hex_hover_system(
             }
 
             if let Some((entity, q, r, _)) = closest_hex {
-                if hovered_hex.entity != Some(entity) {
-                    let obstacle_marker = if obstacles.positions.contains(&(q, r)) {
-                        " [OBSTACLE]"
-                    } else {
-                        ""
-                    };
-                    println!("Hovering: ({}, {}){}", q, r, obstacle_marker);
-                }
                 hovered_hex.entity = Some(entity);
                 hovered_hex.q = q;
                 hovered_hex.r = r;
@@ -933,14 +925,10 @@ fn update_outline_colors(
         Without<LaunchPadOutline>,
     >,
     unit_query: Query<(&Unit, Has<Selected>)>,
-    selected_query: Query<&Unit, With<Selected>>,
     hex_query: Query<&HexTile>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    // Get selected unit's army if any
-    let selected_army = selected_query.iter().next().map(|u| u.army);
-
-    // Find if there's an unselected unit at the hovered position and what army it is
+    // Find if there's an unselected unit at the hovered position
     let hovered_unit_info = if let Some(hovered_entity) = hovered_hex.entity {
         if let Ok(hex_tile) = hex_query.get(hovered_entity) {
             let (hovered_q, hovered_r) = (hex_tile.q, hex_tile.r);
@@ -965,13 +953,8 @@ fn update_outline_colors(
         if should_show {
             *visibility = Visibility::Visible;
 
-            // Determine color based on army relationship
-            let outline_color = match (selected_army, hovered_unit_info) {
-                (Some(selected), Some(hovered)) if selected != hovered => {
-                    Color::srgb(0.9, 0.2, 0.2) // RED for enemies
-                }
-                _ => Color::srgb(0.7, 0.7, 0.7) // White for friendlies
-            };
+            // Always use grey outline - hover ring on units provides enemy feedback
+            let outline_color = Color::srgb(0.7, 0.7, 0.7);
 
             // Update material color
             if let Some(material) = materials.get_mut(&material_handle.0) {

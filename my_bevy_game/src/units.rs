@@ -77,6 +77,11 @@ pub struct Targeting {
     pub last_repath_time: f32,
 }
 
+#[derive(Component)]
+pub struct UnitClickCollider {
+    pub unit_entity: Entity,
+}
+
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum UnitClass {
     Infantry,
@@ -238,6 +243,22 @@ pub struct SmokeCloud {
 }
 
 // Resources
+#[derive(Resource, Default)]
+pub struct ClickedUnit {
+    pub entity: Option<Entity>,
+}
+
+impl ClickedUnit {
+    pub fn clear(&mut self) {
+        self.entity = None;
+    }
+}
+
+#[derive(Resource, Default)]
+pub struct HoveredUnit {
+    pub entity: Option<Entity>,
+}
+
 #[derive(Resource, Default)]
 pub struct Occupancy {
     pub positions: HashSet<(i32, i32)>,
@@ -1265,8 +1286,6 @@ fn detect_collisions_and_repath(
                         movement.progress = 1.0 - old_movement.progress;
                         movement.segment_start = next_cell;
                     }
-
-                    println!("Unit repathing to avoid collision!");
                 }
             }
         }
@@ -1294,13 +1313,6 @@ fn update_unit_animations(
         let is_moving = movement.is_some();
 
         if is_moving != anim_state.is_moving {
-            println!(
-                "Unit {:?}: movement state changing from {} to {}",
-                unit_entity, anim_state.is_moving, is_moving
-            );
-        }
-
-        if is_moving != anim_state.is_moving {
             anim_state.is_moving = is_moving;
 
             let new_index = if is_moving {
@@ -1312,47 +1324,22 @@ fn update_unit_animations(
             // Check if idle and moving animations are the same (e.g., Infantry with only one animation)
             let same_animation = anim_graphs.idle_index == anim_graphs.moving_index;
 
-            let mut found_players = 0;
             for descendant in children_query.iter_descendants(unit_entity) {
                 if let Ok((mut player, mut transitions)) = players_query.get_mut(descendant) {
                     if same_animation {
                         // Same animation for idle and moving - pause when idle, play when moving
                         if is_moving {
                             player.resume_all();
-                            println!("Resumed animation for unit {:?} on entity {:?}", unit_entity, descendant);
                         } else {
                             player.pause_all();
-                            println!("Paused animation for unit {:?} on entity {:?}", unit_entity, descendant);
                         }
                     } else {
                         // Different animations - transition between them
                         transitions
                             .play(&mut player, new_index, Duration::from_secs_f32(0.2))
                             .repeat();
-
-                        println!(
-                            "Switched to {} animation (index {:?}) for unit {:?} on entity {:?}",
-                            if is_moving { "moving" } else { "idle" },
-                            new_index,
-                            unit_entity,
-                            descendant
-                        );
                     }
-                    found_players += 1;
                 }
-            }
-
-            if found_players == 0 {
-                println!(
-                    "Warning: Could not find AnimationPlayer for unit {:?}",
-                    unit_entity
-                );
-            } else {
-                println!(
-                    "Updated {} AnimationPlayer(s) for unit {:?}",
-                    found_players,
-                    unit_entity
-                );
             }
         }
     }
@@ -1365,11 +1352,6 @@ fn play_animation_when_loaded(
     mut players_query: Query<(Entity, &mut AnimationPlayer), Added<AnimationPlayer>>,
 ) {
     for (player_entity, mut player) in players_query.iter_mut() {
-        println!(
-            "Found newly added AnimationPlayer on entity {:?}",
-            player_entity
-        );
-
         for (unit_entity, anim_graphs, graph_handle) in &units_query {
             let mut is_descendant = false;
             for descendant in children_query.iter_descendants(unit_entity) {
@@ -1380,8 +1362,6 @@ fn play_animation_when_loaded(
             }
 
             if is_descendant {
-                println!("AnimationPlayer belongs to unit {:?}", unit_entity);
-
                 let mut transitions = AnimationTransitions::new();
                 transitions
                     .play(&mut player, anim_graphs.idle_index, Duration::from_secs_f32(0.0))
@@ -1393,11 +1373,6 @@ fn play_animation_when_loaded(
                         graph_handle.clone(),
                         transitions,
                     ));
-
-                println!(
-                    "Started idle animation {:?} on entity {:?}",
-                    anim_graphs.idle_index, player_entity
-                );
 
                 break;
             }
@@ -1928,6 +1903,22 @@ fn spawn_unit_from_request(
                     animation_timer: 0.0,
                     bounce_count: 0,
                 },
+            ));
+
+            // Spawn click collider (invisible box for raycasting)
+            let collider_mesh = meshes.add(Cuboid::new(120.0, 80.0, 120.0));
+            let collider_material = materials.add(StandardMaterial {
+                base_color: Color::srgba(1.0, 0.0, 0.0, 0.0), // Fully transparent
+                alpha_mode: AlphaMode::Blend,
+                unlit: true,
+                ..default()
+            });
+            parent.spawn((
+                Mesh3d(collider_mesh),
+                MeshMaterial3d(collider_material),
+                Transform::from_translation(world_pos + Vec3::new(0.0, 5.0, 0.0)),
+                UnitClickCollider { unit_entity },
+                Visibility::Hidden, // Keep hidden so it doesn't render
             ));
         });
 
@@ -2669,6 +2660,22 @@ fn setup_units(
                 },
                 Visibility::Hidden,
             ));
+
+            // Spawn click collider (invisible box for raycasting)
+            let collider_mesh = meshes.add(Cuboid::new(120.0, 80.0, 120.0));
+            let collider_material = materials.add(StandardMaterial {
+                base_color: Color::srgba(1.0, 0.0, 0.0, 0.0), // Fully transparent
+                alpha_mode: AlphaMode::Blend,
+                unlit: true,
+                ..default()
+            });
+            parent.spawn((
+                Mesh3d(collider_mesh),
+                MeshMaterial3d(collider_material),
+                Transform::from_translation(world_pos + Vec3::new(0.0, 5.0, 0.0)),
+                UnitClickCollider { unit_entity },
+                Visibility::Hidden, // Keep hidden so it doesn't render
+            ));
         }
     });
 
@@ -2893,6 +2900,22 @@ fn setup_units(
                     bounce_count: 0,
                 },
                 Visibility::Hidden,
+            ));
+
+            // Spawn click collider (invisible box for raycasting)
+            let collider_mesh = meshes.add(Cuboid::new(120.0, 80.0, 120.0));
+            let collider_material = materials.add(StandardMaterial {
+                base_color: Color::srgba(1.0, 0.0, 0.0, 0.0), // Fully transparent
+                alpha_mode: AlphaMode::Blend,
+                unlit: true,
+                ..default()
+            });
+            parent.spawn((
+                Mesh3d(collider_mesh),
+                MeshMaterial3d(collider_material),
+                Transform::from_translation(world_pos + Vec3::new(0.0, 5.0, 0.0)),
+                UnitClickCollider { unit_entity },
+                Visibility::Hidden, // Keep hidden so it doesn't render
             ));
         }
     });
@@ -3130,6 +3153,85 @@ fn harvester_deposit_crystals(
     }
 }
 
+fn detect_unit_clicks(
+    mouse_button: Res<ButtonInput<MouseButton>>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<crate::ui::GameCamera>>,
+    windows: Query<&Window>,
+    collider_query: Query<(&UnitClickCollider, &GlobalTransform, &Mesh3d)>,
+    meshes: Res<Assets<Mesh>>,
+    mut clicked_unit: ResMut<ClickedUnit>,
+    mut hovered_unit: ResMut<HoveredUnit>,
+) {
+    // Always clear previous hover
+    hovered_unit.entity = None;
+
+    // Clear previous click
+    clicked_unit.entity = None;
+
+    let Ok((camera, camera_transform)) = camera_query.single() else {
+        return;
+    };
+
+    let Ok(window) = windows.single() else {
+        return;
+    };
+
+    let Some(cursor_position) = window.cursor_position() else {
+        return;
+    };
+
+    // Convert screen position to ray
+    let Ok(ray) = camera.viewport_to_world(camera_transform, cursor_position) else {
+        return;
+    };
+
+    let mut closest_distance = f32::INFINITY;
+    let mut closest_unit = None;
+
+    // Check each unit collider for intersection using sphere test
+    for (collider, collider_transform, _mesh_handle) in &collider_query {
+        let collider_pos = collider_transform.translation();
+        let sphere_radius = 100.0; // Large radius for easier clicking
+
+        // Ray-sphere intersection test
+        let oc = ray.origin - collider_pos;
+        let ray_dir = *ray.direction; // Dereference Dir3 to Vec3
+
+        let a = ray_dir.length_squared();
+        let half_b = oc.dot(ray_dir);
+        let c = oc.length_squared() - sphere_radius * sphere_radius;
+        let discriminant = half_b * half_b - a * c;
+
+        if discriminant >= 0.0 {
+            let t = (-half_b - discriminant.sqrt()) / a;
+            if t >= 0.0 && t < closest_distance {
+                closest_distance = t;
+                closest_unit = Some(collider.unit_entity);
+            }
+        }
+    }
+
+    // Always update hovered unit
+    hovered_unit.entity = closest_unit;
+
+    // Only update clicked unit on mouse press
+    if mouse_button.just_pressed(MouseButton::Left) {
+        clicked_unit.entity = closest_unit;
+    }
+}
+
+fn update_collider_positions(
+    mut collider_query: Query<(&UnitClickCollider, &mut Transform), Without<Unit>>,
+    unit_query: Query<&Transform, With<Unit>>,
+) {
+    for (collider, mut collider_transform) in &mut collider_query {
+        if let Ok(unit_transform) = unit_query.get(collider.unit_entity) {
+            // Center the collision box at the unit's position (no Y offset)
+            collider_transform.translation = unit_transform.translation;
+        }
+    }
+}
+
 pub struct UnitsPlugin;
 
 impl Plugin for UnitsPlugin {
@@ -3142,10 +3244,14 @@ impl Plugin for UnitsPlugin {
             .insert_resource(UnitSpawnQueue::default())
             .insert_resource(SpawnCooldowns::default())
             .insert_resource(AIController::default())
+            .insert_resource(ClickedUnit::default())
+            .insert_resource(HoveredUnit::default())
             .add_systems(OnEnter(LoadingState::Playing), setup_units)
             .add_systems(
                 Update,
                 (
+                    detect_unit_clicks,
+                    update_collider_positions,
                     clear_claimed_cells,
                     reset_game,
                     passive_income_system,
