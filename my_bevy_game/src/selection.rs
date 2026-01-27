@@ -23,6 +23,9 @@ pub struct PathVisualization {
     pub unit_entity: Entity,
     pub animation_progress: f32,
     pub loop_count: u32,
+    pub cached_path: Vec<(i32, i32)>,
+    pub cached_target_pos: Option<Vec3>,
+    pub last_mesh_update: f32, // Track when we last updated the mesh
 }
 
 #[derive(Component)]
@@ -1325,6 +1328,7 @@ fn update_path_visualizations(
                 if path_viz.unit_entity == unit_entity {
                     found = true;
 
+                    // Update animation progress
                     if path_viz.loop_count < 2 {
                         let animation_speed = movement.speed * 2.0;
                         path_viz.animation_progress += time.delta_secs() * animation_speed;
@@ -1341,14 +1345,29 @@ fn update_path_visualizations(
                         path_viz.animation_progress
                     };
 
-                    let new_mesh = create_path_line_mesh(
-                        remaining_path,
-                        transform.translation,
-                        animation_progress,
-                        unit.army,
-                        target_pos,
-                    );
-                    mesh_handle.0 = meshes.add(new_mesh);
+                    // Check if we need to regenerate the mesh
+                    let path_changed = path_viz.cached_path != remaining_path;
+                    let target_changed = path_viz.cached_target_pos != target_pos;
+                    let time_for_animation_update = time.elapsed_secs() - path_viz.last_mesh_update >= 0.05;
+
+                    let needs_update = path_changed || target_changed || (time_for_animation_update && path_viz.loop_count < 2);
+
+                    if needs_update {
+                        let new_mesh = create_path_line_mesh(
+                            remaining_path,
+                            transform.translation,
+                            animation_progress,
+                            unit.army,
+                            target_pos,
+                        );
+                        mesh_handle.0 = meshes.add(new_mesh);
+
+                        // Update cache
+                        path_viz.cached_path = remaining_path.to_vec();
+                        path_viz.cached_target_pos = target_pos;
+                        path_viz.last_mesh_update = time.elapsed_secs();
+                    }
+
                     break;
                 }
             }
@@ -1371,6 +1390,9 @@ fn update_path_visualizations(
                         unit_entity,
                         animation_progress: 0.0,
                         loop_count: 0,
+                        cached_path: remaining_path.to_vec(),
+                        cached_target_pos: target_pos,
+                        last_mesh_update: time.elapsed_secs(),
                     },
                 ));
             }
