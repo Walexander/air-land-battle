@@ -1916,7 +1916,7 @@ fn spawn_unit_from_request(
             parent.spawn((
                 Mesh3d(collider_mesh),
                 MeshMaterial3d(collider_material),
-                Transform::from_translation(world_pos + Vec3::new(0.0, 5.0, 0.0)),
+                Transform::from_translation(Vec3::ZERO),
                 UnitClickCollider { unit_entity },
                 Visibility::Hidden, // Keep hidden so it doesn't render
             ));
@@ -2672,7 +2672,7 @@ fn setup_units(
             parent.spawn((
                 Mesh3d(collider_mesh),
                 MeshMaterial3d(collider_material),
-                Transform::from_translation(world_pos + Vec3::new(0.0, 5.0, 0.0)),
+                Transform::from_translation(Vec3::ZERO),
                 UnitClickCollider { unit_entity },
                 Visibility::Hidden, // Keep hidden so it doesn't render
             ));
@@ -2913,7 +2913,7 @@ fn setup_units(
             parent.spawn((
                 Mesh3d(collider_mesh),
                 MeshMaterial3d(collider_material),
-                Transform::from_translation(world_pos + Vec3::new(0.0, 5.0, 0.0)),
+                Transform::from_translation(Vec3::ZERO),
                 UnitClickCollider { unit_entity },
                 Visibility::Hidden, // Keep hidden so it doesn't render
             ));
@@ -3225,9 +3225,10 @@ fn update_collider_positions(
     unit_query: Query<&Transform, With<Unit>>,
 ) {
     for (collider, mut collider_transform) in &mut collider_query {
-        if let Ok(unit_transform) = unit_query.get(collider.unit_entity) {
-            // Center the collision box at the unit's position (no Y offset)
-            collider_transform.translation = unit_transform.translation;
+        if let Ok(_unit_transform) = unit_query.get(collider.unit_entity) {
+            // Collider is a child entity - keep it centered at the unit with no offset
+            // (child transform is relative to parent, so Vec3::ZERO means centered on parent)
+            collider_transform.translation = Vec3::ZERO;
         }
     }
 }

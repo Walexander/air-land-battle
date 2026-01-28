@@ -889,11 +889,14 @@ fn hex_hover_system(
             let world_pos = ray.origin + *ray.direction * t;
 
             let mut closest_hex: Option<(Entity, i32, i32, f32)> = None;
+            // Use a slightly larger radius for more forgiving hex detection
+            let detection_radius = HEX_RADIUS * 1.15;
+
             for (entity, hex_tile) in hex_query.iter() {
                 let hex_world_pos = axial_to_world_pos(hex_tile.q, hex_tile.r);
                 let distance = (world_pos - hex_world_pos).length();
 
-                if distance < HEX_RADIUS {
+                if distance < detection_radius {
                     if let Some((_, _, _, closest_dist)) = closest_hex {
                         if distance < closest_dist {
                             closest_hex = Some((entity, hex_tile.q, hex_tile.r, distance));
