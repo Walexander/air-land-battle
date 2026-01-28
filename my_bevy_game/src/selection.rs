@@ -760,102 +760,11 @@ fn handle_unit_selection(
                 }
             }
         }
-        if let Some(hovered_entity) = hovered_hex.entity {
-            if let Ok(hovered_tile) = hex_query.get(hovered_entity) {
-                let mut clicked_unit = None;
-                for (entity, unit, _movement) in &unit_query {
-                    if unit.q == hovered_tile.q && unit.r == hovered_tile.r && unit.army == Army::Red {
-                        clicked_unit = Some(entity);
-                        break;
-                    }
-                }
 
-                if let Some(unit_entity) = clicked_unit {
-                    for (entity, _, _, _, _) in &selected_query {
-                        commands.entity(entity).remove::<Selected>();
-                    }
-                    commands.entity(unit_entity).insert(Selected);
-                } else {
-                    // Check if clicked cell has enemy unit
-                    let mut clicked_enemy = None;
-                    for (entity, unit, _) in &unit_query {
-                        if unit.q == hovered_tile.q && unit.r == hovered_tile.r && unit.army != Army::Red {
-                            clicked_enemy = Some((entity, (unit.q, unit.r)));
-                            break;
-                        }
-                    }
-
-                    if let Some((enemy_entity, enemy_pos)) = clicked_enemy {
-                        // Player clicked on enemy - initiate targeting
-                        if let Ok((selected_entity, selected_unit, stats, _, _)) = selected_query.single() {
-                            let attacker_pos = (selected_unit.q, selected_unit.r);
-
-                            // Build blocking cells for pathfinding
-                            let mut blocking_cells = obstacles.positions.clone();
-                            for &occupied_pos in &occupancy.positions {
-                                if occupied_pos != attacker_pos {
-                                    blocking_cells.insert(occupied_pos);
-                                }
-                            }
-                            for (entity, &intent_pos) in &occupancy_intent.intentions {
-                                if *entity != selected_entity && intent_pos != attacker_pos {
-                                    blocking_cells.insert(intent_pos);
-                                }
-                            }
-
-                            // Find closest adjacent cell to target
-                            if let Some(adjacent_goal) = crate::units::find_closest_adjacent_cell(enemy_pos, attacker_pos, &blocking_cells) {
-                                // Don't pathfind to cells claimed this frame
-                                if !claimed_cells.cells.contains(&adjacent_goal) {
-                                    // Find path to adjacent cell
-                                    if let Some(path) = crate::units::find_path(attacker_pos, adjacent_goal, config.map_radius, &blocking_cells) {
-                                        let path_to_follow: Vec<(i32, i32)> = if path.len() > 1 {
-                                            path[1..].to_vec()
-                                        } else {
-                                            vec![]
-                                        };
-
-                                        if !path_to_follow.is_empty() {
-                                            // Remove old path visualizations
-                                            for (viz_entity, path_viz) in &path_viz_query {
-                                                if path_viz.unit_entity == selected_entity {
-                                                    commands.entity(viz_entity).despawn();
-                                                    break;
-                                                }
-                                            }
-                                            for (ring_entity, dest_ring) in &dest_ring_query {
-                                                if dest_ring.unit_entity == selected_entity {
-                                                    commands.entity(ring_entity).despawn();
-                                                    break;
-                                                }
-                                            }
-
-                                            // Add Targeting component
-                                            commands.entity(selected_entity).insert(crate::units::Targeting {
-                                                target_entity: enemy_entity,
-                                                target_last_position: enemy_pos,
-                                                repathing_cooldown: 0.5,
-                                                last_repath_time: 0.0,
-                                            });
-
-                                            // Add movement to adjacent cell
-                                            commands.entity(selected_entity).insert(UnitMovement {
-                                                path: path_to_follow,
-                                                current_waypoint: 0,
-                                                progress: 0.0,
-                                                speed: stats.speed,
-                                                segment_start: attacker_pos,
-                                            });
-
-                                            // Don't spawn destination ring for targeting - red square on enemy is sufficient
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        return; // Don't process as normal movement
-                    }
-
+        // Handle movement to empty cells (only if no unit was clicked directly via hitbox)
+        if clicked_unit.entity.is_none() {
+            if let Some(hovered_entity) = hovered_hex.entity {
+                if let Ok(hovered_tile) = hex_query.get(hovered_entity) {
                     if let Ok((selected_entity, selected_unit, stats, existing_movement, _unit_transform)) =
                         selected_query.single()
                     {
