@@ -1402,7 +1402,6 @@ fn visualize_hover_ring(
     hovered_unit: Res<crate::units::HoveredUnit>,
     selected_query: Query<&Unit, With<Selected>>,
     unit_query: Query<(&Unit, &Transform)>,
-    targeting_query: Query<&crate::units::Targeting>,
     existing_hover_rings: Query<Entity, With<HoverRing>>,
 ) {
     // Always remove all existing hover rings first
@@ -1420,34 +1419,28 @@ fn visualize_hover_ring(
     // Only spawn a new hover ring if:
     // 1. We have a friendly unit selected
     // 2. We're hovering over an enemy unit
-    // 3. The hovered enemy is NOT already being targeted (to avoid duplicate rings)
     if let Some(hovered_entity) = hovered_unit.entity {
         if let Ok((unit, transform)) = unit_query.get(hovered_entity) {
             if unit.army != Army::Red {
-                // Check if this enemy is already being targeted by the selected unit
-                let is_already_targeted = targeting_query.iter().any(|t| t.target_entity == hovered_entity);
+                // Spawn orange ring around the hovered enemy (slightly larger than target ring)
+                let ring_mesh = meshes.add(create_ring_mesh_with_segments(55.0, 65.0, 4));
+                let ring_material = materials.add(StandardMaterial {
+                    base_color: Color::srgb(1.0, 0.5, 0.0), // Orange to distinguish from target ring
+                    emissive: Color::srgb(1.0, 0.5, 0.0).into(),
+                    unlit: true,
+                    alpha_mode: AlphaMode::Blend,
+                    ..default()
+                });
 
-                if !is_already_targeted {
-                    // Spawn red square ring around the hovered enemy (slightly larger than target ring)
-                    let ring_mesh = meshes.add(create_ring_mesh_with_segments(55.0, 65.0, 4));
-                    let ring_material = materials.add(StandardMaterial {
-                        base_color: Color::srgb(1.0, 0.5, 0.0), // Orange to distinguish from target ring
-                        emissive: Color::srgb(1.0, 0.5, 0.0).into(),
-                        unlit: true,
-                        alpha_mode: AlphaMode::Blend,
-                        ..default()
-                    });
-
-                    commands.spawn((
-                        Mesh3d(ring_mesh),
-                        MeshMaterial3d(ring_material),
-                        Transform::from_translation(transform.translation + Vec3::new(0.0, 2.0, 0.0))
-                            .with_scale(Vec3::splat(1.0)),
-                        HoverRing {
-                            hovered_entity,
-                        },
-                    ));
-                }
+                commands.spawn((
+                    Mesh3d(ring_mesh),
+                    MeshMaterial3d(ring_material),
+                    Transform::from_translation(transform.translation + Vec3::new(0.0, 2.0, 0.0))
+                        .with_scale(Vec3::splat(1.0)),
+                    HoverRing {
+                        hovered_entity,
+                    },
+                ));
             }
         }
     }
