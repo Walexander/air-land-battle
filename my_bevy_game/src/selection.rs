@@ -689,8 +689,26 @@ fn handle_unit_selection(
             // If clicked unit is an enemy and we have a unit selected, target it
             if let Ok((_, enemy_unit, _)) = unit_query.get(clicked_entity) {
                 if enemy_unit.army != Army::Red {
-                    if let Ok((selected_entity, selected_unit, stats, _, _)) = selected_query.single() {
-                        let attacker_pos = (selected_unit.q, selected_unit.r);
+                    if let Ok((selected_entity, selected_unit, stats, existing_movement, _)) = selected_query.single() {
+                        // Determine actual current position based on existing movement
+                        let attacker_pos = if let Some(movement) = existing_movement {
+                            if movement.current_waypoint < movement.path.len() {
+                                // Unit is moving - determine position based on progress
+                                let current_cell = (selected_unit.q, selected_unit.r);
+                                let next_cell = movement.path[movement.current_waypoint];
+                                if movement.progress >= 0.5 {
+                                    next_cell
+                                } else {
+                                    current_cell
+                                }
+                            } else {
+                                // Path complete, use stored position
+                                (selected_unit.q, selected_unit.r)
+                            }
+                        } else {
+                            // No movement, use stored position
+                            (selected_unit.q, selected_unit.r)
+                        };
                         let enemy_pos = (enemy_unit.q, enemy_unit.r);
 
                         // Build blocking cells for pathfinding
