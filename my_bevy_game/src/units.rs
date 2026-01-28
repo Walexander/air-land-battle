@@ -1916,7 +1916,7 @@ fn spawn_unit_from_request(
             parent.spawn((
                 Mesh3d(collider_mesh),
                 MeshMaterial3d(collider_material),
-                Transform::from_translation(Vec3::ZERO),
+                Transform::from_translation(Vec3::new(0.0, 40.0, 0.0)),
                 UnitClickCollider { unit_entity },
                 Visibility::Hidden, // Keep hidden so it doesn't render
             ));
@@ -2672,7 +2672,7 @@ fn setup_units(
             parent.spawn((
                 Mesh3d(collider_mesh),
                 MeshMaterial3d(collider_material),
-                Transform::from_translation(Vec3::ZERO),
+                Transform::from_translation(Vec3::new(0.0, 40.0, 0.0)),
                 UnitClickCollider { unit_entity },
                 Visibility::Hidden, // Keep hidden so it doesn't render
             ));
@@ -2913,7 +2913,7 @@ fn setup_units(
             parent.spawn((
                 Mesh3d(collider_mesh),
                 MeshMaterial3d(collider_material),
-                Transform::from_translation(Vec3::ZERO),
+                Transform::from_translation(Vec3::new(0.0, 40.0, 0.0)),
                 UnitClickCollider { unit_entity },
                 Visibility::Hidden, // Keep hidden so it doesn't render
             ));
