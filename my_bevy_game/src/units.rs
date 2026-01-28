@@ -987,6 +987,7 @@ fn remove_dead_units(
     children_query: Query<&Children>,
     health_bar_query: Query<(Entity, &HealthBar)>,
     selection_ring_query: Query<(Entity, &crate::selection::SelectionRing)>,
+    collider_query: Query<(Entity, &UnitClickCollider)>,
     targeting_query: Query<(Entity, &Targeting)>,
 ) {
     for (entity, health, _unit, transform) in &unit_query {
@@ -1054,6 +1055,13 @@ fn remove_dead_units(
             for (ring_entity, selection_ring) in &selection_ring_query {
                 if selection_ring.unit_entity == entity {
                     commands.entity(ring_entity).despawn();
+                }
+            }
+
+            // Despawn collision sphere that references this unit
+            for (collider_entity, collider) in &collider_query {
+                if collider.unit_entity == entity {
+                    commands.entity(collider_entity).despawn();
                 }
             }
 
