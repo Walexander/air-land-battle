@@ -690,46 +690,183 @@ fn handle_unit_selection(
             if let Ok((_, enemy_unit, _)) = unit_query.get(clicked_entity) {
                 if enemy_unit.army != Army::Red {
                     if let Ok((selected_entity, selected_unit, stats, existing_movement, _)) = selected_query.single() {
-                        // Determine actual current position based on existing movement
-                        let attacker_pos = if let Some(movement) = existing_movement {
-                            if movement.current_waypoint < movement.path.len() {
-                                // Unit is moving - determine position based on progress
-                                let current_cell = (selected_unit.q, selected_unit.r);
-                                let next_cell = movement.path[movement.current_waypoint];
-                                if movement.progress >= 0.5 {
-                                    next_cell
-                                } else {
-                                    current_cell
-                                }
-                            } else {
-                                // Path complete, use stored position
-                                (selected_unit.q, selected_unit.r)
-                            }
-                        } else {
-                            // No movement, use stored position
-                            (selected_unit.q, selected_unit.r)
-                        };
                         let enemy_pos = (enemy_unit.q, enemy_unit.r);
 
-                        // Build blocking cells for pathfinding
-                        let mut blocking_cells = obstacles.positions.clone();
-                        for &occupied_pos in &occupancy.positions {
-                            if occupied_pos != attacker_pos {
-                                blocking_cells.insert(occupied_pos);
+                        // Remove old path visualizations
+                        for (viz_entity, path_viz) in &path_viz_query {
+                            if path_viz.unit_entity == selected_entity {
+                                commands.entity(viz_entity).despawn();
+                                break;
                             }
                         }
-                        for (entity, &intent_pos) in &occupancy_intent.intentions {
-                            if *entity != selected_entity && intent_pos != attacker_pos {
-                                blocking_cells.insert(intent_pos);
+                        for (ring_entity, dest_ring) in &dest_ring_query {
+                            if dest_ring.unit_entity == selected_entity {
+                                commands.entity(ring_entity).despawn();
+                                break;
                             }
                         }
 
-                        // Find closest adjacent cell to target
-                        if let Some(adjacent_goal) = crate::units::find_closest_adjacent_cell(enemy_pos, attacker_pos, &blocking_cells) {
-                            // Don't pathfind to cells claimed this frame
-                            if !claimed_cells.cells.contains(&adjacent_goal) {
-                                // Find path to adjacent cell
-                                if let Some(path) = crate::units::find_path(attacker_pos, adjacent_goal, config.map_radius, &blocking_cells) {
+                        // Handle based on whether unit is currently moving
+                        if let Some(movement) = existing_movement {
+                            if movement.current_waypoint < movement.path.len() {
+                                // Unit is actively moving
+                                let current_cell = (selected_unit.q, selected_unit.r);
+                                let next_cell = movement.path[movement.current_waypoint];
+
+                                // Build blocking cells
+                                let mut blocking_cells = obstacles.positions.clone();
+                                for &occupied_pos in &occupancy.positions {
+                                    if occupied_pos != current_cell && occupied_pos != next_cell {
+                                        blocking_cells.insert(occupied_pos);
+                                    }
+                                }
+                                for (entity, &intent_pos) in &occupancy_intent.intentions {
+                                    if *entity != selected_entity {
+                                        blocking_cells.insert(intent_pos);
+                                    }
+                                }
+
+                                // Find path from both current and next cell
+                                let goal_from_current = crate::units::find_closest_adjacent_cell(enemy_pos, current_cell, &blocking_cells);
+                                let goal_from_next = crate::units::find_closest_adjacent_cell(enemy_pos, next_cell, &blocking_cells);
+
+                                let path_from_current = goal_from_current.and_then(|goal|
+                                    crate::units::find_path(current_cell, goal, config.map_radius, &blocking_cells)
+                                );
+                                let path_from_next = goal_from_next.and_then(|goal|
+                                    crate::units::find_path(next_cell, goal, config.map_radius, &blocking_cells)
+                                );
+
+                                let should_reverse = match (&path_from_current, &path_from_next) {
+                                    (Some(p1), Some(p2)) => p1.len() < p2.len(),
+                                    (Some(_), None) => true,
+                                    (None, Some(_)) => false,
+                                    (None, None) => false,
+                                };
+
+                                if should_reverse {
+                                    // Reverse and path from current cell
+                                    if let (Some(goal), Some(path)) = (goal_from_current, path_from_current) {
+                                        let path_to_follow: Vec<(i32, i32)> = if path.len() > 1 {
+                                            path[1..].to_vec()
+                                        } else {
+                                            vec![]
+                                        };
+
+                                        if !path_to_follow.is_empty() {
+                                            let unit_position = if movement.progress >= 0.5 { next_cell } else { current_cell };
+
+                                            commands.entity(selected_entity).insert((
+                                                Unit {
+                                                    q: unit_position.0,
+                                                    r: unit_position.1,
+                                                    _sprite_index: selected_unit._sprite_index,
+                                                    army: selected_unit.army,
+                                                },
+                                                UnitMovement {
+                                                    path: path_to_follow,
+                                                    current_waypoint: 0,
+                                                    progress: 1.0 - movement.progress,
+                                                    speed: stats.speed,
+                                                    segment_start: next_cell,
+                                                },
+                                                crate::units::Targeting {
+                                                    target_entity: clicked_entity,
+                                                    target_last_position: enemy_pos,
+                                                    repathing_cooldown: 0.5,
+                                                    last_repath_time: 0.0,
+                                                },
+                                            ));
+                                        }
+                                    }
+                                } else {
+                                    // Continue forward from next cell
+                                    if let (Some(goal), Some(path)) = (goal_from_next, path_from_next) {
+                                        let path_to_follow: Vec<(i32, i32)> = if path.len() > 1 {
+                                            path[1..].to_vec()
+                                        } else {
+                                            vec![]
+                                        };
+
+                                        if !path_to_follow.is_empty() {
+                                            commands.entity(selected_entity).insert((
+                                                UnitMovement {
+                                                    path: path_to_follow,
+                                                    current_waypoint: 0,
+                                                    progress: movement.progress,
+                                                    speed: stats.speed,
+                                                    segment_start: movement.segment_start,
+                                                },
+                                                crate::units::Targeting {
+                                                    target_entity: clicked_entity,
+                                                    target_last_position: enemy_pos,
+                                                    repathing_cooldown: 0.5,
+                                                    last_repath_time: 0.0,
+                                                },
+                                            ));
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Path complete, treat as no movement
+                                let start_pos = (selected_unit.q, selected_unit.r);
+                                let mut blocking_cells = obstacles.positions.clone();
+                                for &occupied_pos in &occupancy.positions {
+                                    if occupied_pos != start_pos {
+                                        blocking_cells.insert(occupied_pos);
+                                    }
+                                }
+                                for (entity, &intent_pos) in &occupancy_intent.intentions {
+                                    if *entity != selected_entity {
+                                        blocking_cells.insert(intent_pos);
+                                    }
+                                }
+
+                                if let Some(goal) = crate::units::find_closest_adjacent_cell(enemy_pos, start_pos, &blocking_cells) {
+                                    if let Some(path) = crate::units::find_path(start_pos, goal, config.map_radius, &blocking_cells) {
+                                        let path_to_follow: Vec<(i32, i32)> = if path.len() > 1 {
+                                            path[1..].to_vec()
+                                        } else {
+                                            vec![]
+                                        };
+
+                                        if !path_to_follow.is_empty() {
+                                            commands.entity(selected_entity).insert((
+                                                UnitMovement {
+                                                    path: path_to_follow,
+                                                    current_waypoint: 0,
+                                                    progress: 0.0,
+                                                    speed: stats.speed,
+                                                    segment_start: start_pos,
+                                                },
+                                                crate::units::Targeting {
+                                                    target_entity: clicked_entity,
+                                                    target_last_position: enemy_pos,
+                                                    repathing_cooldown: 0.5,
+                                                    last_repath_time: 0.0,
+                                                },
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            // No existing movement
+                            let start_pos = (selected_unit.q, selected_unit.r);
+                            let mut blocking_cells = obstacles.positions.clone();
+                            for &occupied_pos in &occupancy.positions {
+                                if occupied_pos != start_pos {
+                                    blocking_cells.insert(occupied_pos);
+                                }
+                            }
+                            for (entity, &intent_pos) in &occupancy_intent.intentions {
+                                if *entity != selected_entity {
+                                    blocking_cells.insert(intent_pos);
+                                }
+                            }
+
+                            if let Some(goal) = crate::units::find_closest_adjacent_cell(enemy_pos, start_pos, &blocking_cells) {
+                                if let Some(path) = crate::units::find_path(start_pos, goal, config.map_radius, &blocking_cells) {
                                     let path_to_follow: Vec<(i32, i32)> = if path.len() > 1 {
                                         path[1..].to_vec()
                                     } else {
@@ -737,47 +874,21 @@ fn handle_unit_selection(
                                     };
 
                                     if !path_to_follow.is_empty() {
-                                        // Remove old path visualizations
-                                        for (viz_entity, path_viz) in &path_viz_query {
-                                            if path_viz.unit_entity == selected_entity {
-                                                commands.entity(viz_entity).despawn();
-                                                break;
-                                            }
-                                        }
-                                        for (ring_entity, dest_ring) in &dest_ring_query {
-                                            if dest_ring.unit_entity == selected_entity {
-                                                commands.entity(ring_entity).despawn();
-                                                break;
-                                            }
-                                        }
-
-                                        // Update unit's logical position to match where we're pathfinding from
-                                        // This prevents visual warping when segment_start doesn't match Unit.q, Unit.r
-                                        commands.entity(selected_entity).insert(Unit {
-                                            q: attacker_pos.0,
-                                            r: attacker_pos.1,
-                                            _sprite_index: selected_unit._sprite_index,
-                                            army: selected_unit.army,
-                                        });
-
-                                        // Add Targeting component
-                                        commands.entity(selected_entity).insert(crate::units::Targeting {
-                                            target_entity: clicked_entity,
-                                            target_last_position: enemy_pos,
-                                            repathing_cooldown: 0.5,
-                                            last_repath_time: 0.0,
-                                        });
-
-                                        // Add movement to adjacent cell
-                                        commands.entity(selected_entity).insert(UnitMovement {
-                                            path: path_to_follow,
-                                            current_waypoint: 0,
-                                            progress: 0.0,
-                                            speed: stats.speed,
-                                            segment_start: attacker_pos,
-                                        });
-
-                                        // Don't spawn destination ring for targeting - red square on enemy is sufficient
+                                        commands.entity(selected_entity).insert((
+                                            UnitMovement {
+                                                path: path_to_follow,
+                                                current_waypoint: 0,
+                                                progress: 0.0,
+                                                speed: stats.speed,
+                                                segment_start: start_pos,
+                                            },
+                                            crate::units::Targeting {
+                                                target_entity: clicked_entity,
+                                                target_last_position: enemy_pos,
+                                                repathing_cooldown: 0.5,
+                                                last_repath_time: 0.0,
+                                            },
+                                        ));
                                     }
                                 }
                             }
