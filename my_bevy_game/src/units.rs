@@ -1906,6 +1906,8 @@ fn spawn_unit_from_request(
             ));
 
             // Spawn click collider (sphere for raycasting)
+            // Use world positioning like other children (not relative positioning)
+            let collider_pos = world_pos + Vec3::new(0.0, 50.0, 0.0);
             let collider_mesh = meshes.add(Sphere::new(50.0).mesh().ico(3).unwrap());
             let collider_material = materials.add(StandardMaterial {
                 base_color: Color::srgba(0.0, 1.0, 0.0, 0.3), // Semi-transparent green for debugging
@@ -1916,7 +1918,7 @@ fn spawn_unit_from_request(
             parent.spawn((
                 Mesh3d(collider_mesh),
                 MeshMaterial3d(collider_material),
-                Transform::from_translation(Vec3::new(0.0, 40.0, 0.0)),
+                Transform::from_translation(collider_pos),
                 UnitClickCollider { unit_entity },
                 // Visibility::Hidden, // Make visible for debugging
             ));
@@ -2662,6 +2664,8 @@ fn setup_units(
             ));
 
             // Spawn click collider (sphere for raycasting)
+            // Use world positioning like other children (not relative positioning)
+            let collider_pos = world_pos + Vec3::new(0.0, 50.0, 0.0);
             let collider_mesh = meshes.add(Sphere::new(50.0).mesh().ico(3).unwrap());
             let collider_material = materials.add(StandardMaterial {
                 base_color: Color::srgba(0.0, 1.0, 0.0, 0.3), // Semi-transparent green for debugging
@@ -2672,7 +2676,7 @@ fn setup_units(
             parent.spawn((
                 Mesh3d(collider_mesh),
                 MeshMaterial3d(collider_material),
-                Transform::from_translation(Vec3::new(0.0, 40.0, 0.0)),
+                Transform::from_translation(collider_pos),
                 UnitClickCollider { unit_entity },
                 // Visibility::Hidden, // Make visible for debugging
             ));
@@ -2903,6 +2907,8 @@ fn setup_units(
             ));
 
             // Spawn click collider (sphere for raycasting)
+            // Use world positioning like other children (not relative positioning)
+            let collider_pos = world_pos + Vec3::new(0.0, 50.0, 0.0);
             let collider_mesh = meshes.add(Sphere::new(50.0).mesh().ico(3).unwrap());
             let collider_material = materials.add(StandardMaterial {
                 base_color: Color::srgba(0.0, 1.0, 0.0, 0.3), // Semi-transparent green for debugging
@@ -2913,7 +2919,7 @@ fn setup_units(
             parent.spawn((
                 Mesh3d(collider_mesh),
                 MeshMaterial3d(collider_material),
-                Transform::from_translation(Vec3::new(0.0, 40.0, 0.0)),
+                Transform::from_translation(collider_pos),
                 UnitClickCollider { unit_entity },
                 // Visibility::Hidden, // Make visible for debugging
             ));
