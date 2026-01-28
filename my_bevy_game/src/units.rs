@@ -1907,7 +1907,8 @@ fn spawn_unit_from_request(
 
             // Spawn click collider (sphere for raycasting)
             // Use world positioning like other children (not relative positioning)
-            let collider_pos = world_pos + Vec3::new(0.0, 50.0, 0.0);
+            // Position at ground level (half underground, half above)
+            let collider_pos = world_pos + Vec3::new(0.0, 0.0, 0.0);
             let collider_mesh = meshes.add(Sphere::new(50.0).mesh().ico(3).unwrap());
             let collider_material = materials.add(StandardMaterial {
                 base_color: Color::srgba(0.0, 1.0, 0.0, 0.3), // Semi-transparent green for debugging
@@ -2427,7 +2428,8 @@ fn update_collision_spheres(
     for (collider, mut collider_transform) in &mut collider_query {
         if let Ok(unit_transform) = unit_query.get(collider.unit_entity) {
             let unit_world_pos = unit_transform.translation;
-            collider_transform.translation = unit_world_pos + Vec3::new(0.0, 50.0, 0.0);
+            // Position sphere at ground level (half underground, half above)
+            collider_transform.translation = unit_world_pos + Vec3::new(0.0, 0.0, 0.0);
         }
     }
 }
@@ -2677,7 +2679,8 @@ fn setup_units(
 
             // Spawn click collider (sphere for raycasting)
             // Use world positioning like other children (not relative positioning)
-            let collider_pos = world_pos + Vec3::new(0.0, 50.0, 0.0);
+            // Position at ground level (half underground, half above)
+            let collider_pos = world_pos + Vec3::new(0.0, 0.0, 0.0);
             let collider_mesh = meshes.add(Sphere::new(50.0).mesh().ico(3).unwrap());
             let collider_material = materials.add(StandardMaterial {
                 base_color: Color::srgba(0.0, 1.0, 0.0, 0.3), // Semi-transparent green for debugging
@@ -2920,7 +2923,8 @@ fn setup_units(
 
             // Spawn click collider (sphere for raycasting)
             // Use world positioning like other children (not relative positioning)
-            let collider_pos = world_pos + Vec3::new(0.0, 50.0, 0.0);
+            // Position at ground level (half underground, half above)
+            let collider_pos = world_pos + Vec3::new(0.0, 0.0, 0.0);
             let collider_mesh = meshes.add(Sphere::new(50.0).mesh().ico(3).unwrap());
             let collider_material = materials.add(StandardMaterial {
                 base_color: Color::srgba(0.0, 1.0, 0.0, 0.3), // Semi-transparent green for debugging
