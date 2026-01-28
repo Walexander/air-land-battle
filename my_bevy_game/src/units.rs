@@ -1906,7 +1906,7 @@ fn spawn_unit_from_request(
             ));
 
             // Spawn click collider (sphere for raycasting)
-            let collider_mesh = meshes.add(Sphere::new(100.0).mesh().ico(3).unwrap());
+            let collider_mesh = meshes.add(Sphere::new(50.0).mesh().ico(3).unwrap());
             let collider_material = materials.add(StandardMaterial {
                 base_color: Color::srgba(0.0, 1.0, 0.0, 0.3), // Semi-transparent green for debugging
                 alpha_mode: AlphaMode::Blend,
@@ -2662,7 +2662,7 @@ fn setup_units(
             ));
 
             // Spawn click collider (sphere for raycasting)
-            let collider_mesh = meshes.add(Sphere::new(100.0).mesh().ico(3).unwrap());
+            let collider_mesh = meshes.add(Sphere::new(50.0).mesh().ico(3).unwrap());
             let collider_material = materials.add(StandardMaterial {
                 base_color: Color::srgba(0.0, 1.0, 0.0, 0.3), // Semi-transparent green for debugging
                 alpha_mode: AlphaMode::Blend,
@@ -2903,7 +2903,7 @@ fn setup_units(
             ));
 
             // Spawn click collider (sphere for raycasting)
-            let collider_mesh = meshes.add(Sphere::new(100.0).mesh().ico(3).unwrap());
+            let collider_mesh = meshes.add(Sphere::new(50.0).mesh().ico(3).unwrap());
             let collider_material = materials.add(StandardMaterial {
                 base_color: Color::srgba(0.0, 1.0, 0.0, 0.3), // Semi-transparent green for debugging
                 alpha_mode: AlphaMode::Blend,
@@ -3191,7 +3191,7 @@ fn detect_unit_clicks(
     // Check each unit collider for intersection using sphere test
     for (collider, collider_transform, _mesh_handle) in &collider_query {
         let collider_pos = collider_transform.translation();
-        let sphere_radius = 100.0; // Large radius for easier clicking
+        let sphere_radius = 50.0; // Radius matching the collision sphere mesh
 
         // Ray-sphere intersection test
         let oc = ray.origin - collider_pos;
