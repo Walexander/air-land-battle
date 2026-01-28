@@ -1905,10 +1905,10 @@ fn spawn_unit_from_request(
                 },
             ));
 
-            // Spawn click collider (invisible box for raycasting)
-            let collider_mesh = meshes.add(Cuboid::new(120.0, 80.0, 120.0));
+            // Spawn click collider (sphere for raycasting)
+            let collider_mesh = meshes.add(Sphere::new(100.0).mesh().ico(3).unwrap());
             let collider_material = materials.add(StandardMaterial {
-                base_color: Color::srgba(1.0, 0.0, 0.0, 0.0), // Fully transparent
+                base_color: Color::srgba(0.0, 1.0, 0.0, 0.3), // Semi-transparent green for debugging
                 alpha_mode: AlphaMode::Blend,
                 unlit: true,
                 ..default()
@@ -1918,7 +1918,7 @@ fn spawn_unit_from_request(
                 MeshMaterial3d(collider_material),
                 Transform::from_translation(Vec3::new(0.0, 40.0, 0.0)),
                 UnitClickCollider { unit_entity },
-                Visibility::Hidden, // Keep hidden so it doesn't render
+                // Visibility::Hidden, // Make visible for debugging
             ));
         });
 
@@ -2661,10 +2661,10 @@ fn setup_units(
                 Visibility::Hidden,
             ));
 
-            // Spawn click collider (invisible box for raycasting)
-            let collider_mesh = meshes.add(Cuboid::new(120.0, 80.0, 120.0));
+            // Spawn click collider (sphere for raycasting)
+            let collider_mesh = meshes.add(Sphere::new(100.0).mesh().ico(3).unwrap());
             let collider_material = materials.add(StandardMaterial {
-                base_color: Color::srgba(1.0, 0.0, 0.0, 0.0), // Fully transparent
+                base_color: Color::srgba(0.0, 1.0, 0.0, 0.3), // Semi-transparent green for debugging
                 alpha_mode: AlphaMode::Blend,
                 unlit: true,
                 ..default()
@@ -2674,7 +2674,7 @@ fn setup_units(
                 MeshMaterial3d(collider_material),
                 Transform::from_translation(Vec3::new(0.0, 40.0, 0.0)),
                 UnitClickCollider { unit_entity },
-                Visibility::Hidden, // Keep hidden so it doesn't render
+                // Visibility::Hidden, // Make visible for debugging
             ));
         }
     });
@@ -2902,10 +2902,10 @@ fn setup_units(
                 Visibility::Hidden,
             ));
 
-            // Spawn click collider (invisible box for raycasting)
-            let collider_mesh = meshes.add(Cuboid::new(120.0, 80.0, 120.0));
+            // Spawn click collider (sphere for raycasting)
+            let collider_mesh = meshes.add(Sphere::new(100.0).mesh().ico(3).unwrap());
             let collider_material = materials.add(StandardMaterial {
-                base_color: Color::srgba(1.0, 0.0, 0.0, 0.0), // Fully transparent
+                base_color: Color::srgba(0.0, 1.0, 0.0, 0.3), // Semi-transparent green for debugging
                 alpha_mode: AlphaMode::Blend,
                 unlit: true,
                 ..default()
@@ -2915,7 +2915,7 @@ fn setup_units(
                 MeshMaterial3d(collider_material),
                 Transform::from_translation(Vec3::new(0.0, 40.0, 0.0)),
                 UnitClickCollider { unit_entity },
-                Visibility::Hidden, // Keep hidden so it doesn't render
+                // Visibility::Hidden, // Make visible for debugging
             ));
         }
     });
