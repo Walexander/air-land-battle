@@ -751,6 +751,15 @@ fn handle_unit_selection(
                                             }
                                         }
 
+                                        // Update unit's logical position to match where we're pathfinding from
+                                        // This prevents visual warping when segment_start doesn't match Unit.q, Unit.r
+                                        commands.entity(selected_entity).insert(Unit {
+                                            q: attacker_pos.0,
+                                            r: attacker_pos.1,
+                                            _sprite_index: selected_unit._sprite_index,
+                                            army: selected_unit.army,
+                                        });
+
                                         // Add Targeting component
                                         commands.entity(selected_entity).insert(crate::units::Targeting {
                                             target_entity: clicked_entity,
