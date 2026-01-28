@@ -2420,6 +2420,18 @@ fn update_health_bars(
     }
 }
 
+fn update_collision_spheres(
+    unit_query: Query<&Transform, With<Unit>>,
+    mut collider_query: Query<(&UnitClickCollider, &mut Transform), Without<Unit>>,
+) {
+    for (collider, mut collider_transform) in &mut collider_query {
+        if let Ok(unit_transform) = unit_query.get(collider.unit_entity) {
+            let unit_world_pos = unit_transform.translation;
+            collider_transform.translation = unit_world_pos + Vec3::new(0.0, 50.0, 0.0);
+        }
+    }
+}
+
 fn setup_units(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -3274,6 +3286,7 @@ impl Plugin for UnitsPlugin {
                     update_unit_animations,
                     play_animation_when_loaded,
                     update_health_bars,
+                    update_collision_spheres,
                     harvester_ai_find_target,
                     harvester_move_to_field,
                     harvester_collect_crystals,
