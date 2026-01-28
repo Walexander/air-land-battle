@@ -3220,18 +3220,6 @@ fn detect_unit_clicks(
     }
 }
 
-fn update_collider_positions(
-    mut collider_query: Query<(&UnitClickCollider, &mut Transform), Without<Unit>>,
-    unit_query: Query<&Transform, With<Unit>>,
-) {
-    for (collider, mut collider_transform) in &mut collider_query {
-        if let Ok(_unit_transform) = unit_query.get(collider.unit_entity) {
-            // Collider is a child entity - keep it centered at the unit with no offset
-            // (child transform is relative to parent, so Vec3::ZERO means centered on parent)
-            collider_transform.translation = Vec3::ZERO;
-        }
-    }
-}
 
 pub struct UnitsPlugin;
 
@@ -3252,7 +3240,6 @@ impl Plugin for UnitsPlugin {
                 Update,
                 (
                     detect_unit_clicks,
-                    update_collider_positions,
                     clear_claimed_cells,
                     reset_game,
                     passive_income_system,
