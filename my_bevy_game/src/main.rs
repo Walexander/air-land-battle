@@ -77,9 +77,14 @@ fn main() {
         .add_plugins(UnitsPlugin)
         .add_plugins(SelectionPlugin)
         .add_plugins(UIPlugin)
-        .add_systems(Startup, setup_fps_counter)
+        .add_systems(Startup, (setup_fps_counter, setup_game_speed))
         .add_systems(Update, update_fps_text)
         .run();
+}
+
+fn setup_game_speed(mut time: ResMut<Time<Virtual>>) {
+    // Slow down game by 20% (0.8 = 80% speed)
+    time.set_relative_speed(0.8);
 }
 
 #[derive(Component)]
