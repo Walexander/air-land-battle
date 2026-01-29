@@ -509,8 +509,8 @@ fn update_spawn_button_visuals(
         let can_afford = economy.red_money >= unit_class.cost();
         let is_ready = red_cooldowns.is_ready(unit_class);
 
-        // Set fill bar color based on affordability
-        if is_ready && !can_afford {
+        // Set fill bar color based on affordability (regardless of cooldown status)
+        if !can_afford {
             *fill_color = BackgroundColor(Color::srgb(0.8, 0.0, 0.0)); // Bright red when can't afford
         } else {
             *fill_color = BackgroundColor(Color::srgb(0.0, 0.6, 0.0)); // Green when affordable
