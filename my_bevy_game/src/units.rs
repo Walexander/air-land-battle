@@ -1919,7 +1919,7 @@ fn spawn_unit_from_request(
             let collider_pos = world_pos + Vec3::new(0.0, 0.0, 0.0);
             let collider_mesh = meshes.add(Sphere::new(50.0).mesh().ico(3).unwrap());
             let collider_material = materials.add(StandardMaterial {
-                base_color: Color::srgba(0.0, 1.0, 0.0, 0.3), // Semi-transparent green for debugging
+                base_color: Color::srgba(0.5, 0.5, 0.5, 0.3), // Semi-transparent grey for debugging
                 alpha_mode: AlphaMode::Blend,
                 unlit: true,
                 ..default()
@@ -2691,7 +2691,7 @@ fn setup_units(
             let collider_pos = world_pos + Vec3::new(0.0, 0.0, 0.0);
             let collider_mesh = meshes.add(Sphere::new(50.0).mesh().ico(3).unwrap());
             let collider_material = materials.add(StandardMaterial {
-                base_color: Color::srgba(0.0, 1.0, 0.0, 0.3), // Semi-transparent green for debugging
+                base_color: Color::srgba(0.5, 0.5, 0.5, 0.3), // Semi-transparent grey for debugging
                 alpha_mode: AlphaMode::Blend,
                 unlit: true,
                 ..default()
@@ -2935,7 +2935,7 @@ fn setup_units(
             let collider_pos = world_pos + Vec3::new(0.0, 0.0, 0.0);
             let collider_mesh = meshes.add(Sphere::new(50.0).mesh().ico(3).unwrap());
             let collider_material = materials.add(StandardMaterial {
-                base_color: Color::srgba(0.0, 1.0, 0.0, 0.3), // Semi-transparent green for debugging
+                base_color: Color::srgba(0.5, 0.5, 0.5, 0.3), // Semi-transparent grey for debugging
                 alpha_mode: AlphaMode::Blend,
                 unlit: true,
                 ..default()
