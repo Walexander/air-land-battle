@@ -1397,7 +1397,10 @@ fn update_path_visualizations(
                     let target_changed = path_viz.cached_target_pos != target_pos;
                     let time_for_animation_update = time.elapsed_secs() - path_viz.last_mesh_update >= 0.05;
 
-                    let needs_update = path_changed || target_changed || (time_for_animation_update && path_viz.loop_count < 2);
+                    // Always update when there's only one waypoint left so the line starts from the unit's current position
+                    let is_last_waypoint = remaining_path.len() == 1;
+
+                    let needs_update = path_changed || target_changed || (time_for_animation_update && path_viz.loop_count < 2) || is_last_waypoint;
 
                     if needs_update {
                         let new_mesh = create_path_line_mesh(
