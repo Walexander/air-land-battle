@@ -747,13 +747,13 @@ fn handle_unit_selection(
                                 if should_reverse {
                                     // Reverse and path from current cell
                                     if let (Some(goal), Some(path)) = (goal_from_current, path_from_current) {
-                                        let path_to_follow: Vec<(i32, i32)> = if path.len() > 1 {
-                                            path[1..].to_vec()
-                                        } else {
-                                            vec![]
-                                        };
+                                        // Build path including current_cell as first element to maintain visual position
+                                        let mut new_path = vec![current_cell];
+                                        if path.len() > 1 {
+                                            new_path.extend_from_slice(&path[1..]);
+                                        }
 
-                                        if !path_to_follow.is_empty() {
+                                        if new_path.len() > 1 {
                                             let unit_position = if movement.progress >= 0.5 { next_cell } else { current_cell };
 
                                             commands.entity(selected_entity).insert((
@@ -764,7 +764,7 @@ fn handle_unit_selection(
                                                     army: selected_unit.army,
                                                 },
                                                 UnitMovement {
-                                                    path: path_to_follow,
+                                                    path: new_path,
                                                     current_waypoint: 0,
                                                     progress: 1.0 - movement.progress,
                                                     speed: stats.speed,
@@ -782,16 +782,16 @@ fn handle_unit_selection(
                                 } else {
                                     // Continue forward from next cell
                                     if let (Some(goal), Some(path)) = (goal_from_next, path_from_next) {
-                                        let path_to_follow: Vec<(i32, i32)> = if path.len() > 1 {
-                                            path[1..].to_vec()
-                                        } else {
-                                            vec![]
-                                        };
+                                        // Build path including next_cell as first element to maintain visual position
+                                        let mut new_full_path = vec![next_cell];
+                                        if path.len() > 1 {
+                                            new_full_path.extend_from_slice(&path[1..]);
+                                        }
 
-                                        if !path_to_follow.is_empty() {
+                                        if new_full_path.len() > 1 {
                                             commands.entity(selected_entity).insert((
                                                 UnitMovement {
-                                                    path: path_to_follow,
+                                                    path: new_full_path,
                                                     current_waypoint: 0,
                                                     progress: movement.progress,
                                                     speed: stats.speed,
