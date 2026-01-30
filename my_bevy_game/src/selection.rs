@@ -1239,7 +1239,7 @@ fn animate_selection_rings(
                 if ring.bounce_count < max_bounces {
                     ring.animation_timer += time.delta_secs();
 
-                    let bounce_duration = 0.5;
+                    let bounce_duration = 0.8;  // Slower animation (was 0.5)
                     let cycle_progress = (ring.animation_timer / bounce_duration) % 1.0;
 
                     let current_bounce = (ring.animation_timer / bounce_duration).floor() as u32;
@@ -1249,35 +1249,48 @@ fn animate_selection_rings(
 
                     if ring.bounce_count < max_bounces {
                         let min_scale = 0.5;
-                        let max_scale = 1.0;
+                        let max_scale = 0.9;  // 10% smaller starting size (was 1.0)
 
                         // Calculate line width (lerp from thick to thin)
                         let min_line_width = 10.0;  // Final line width
                         let max_line_width = 16.0; // Initial line width
 
-                        let (current_scale, current_line_width) = if cycle_progress < 0.5 {
-                            // Hold at max scale and max line width for first half of animation
+                        let (current_scale, current_line_width) = if cycle_progress < 0.25 {
+                            // Hold at max scale and max line width for first quarter of animation
                             (max_scale, max_line_width)
                         } else {
-                            // Ease down from max to min during second half
-                            let ease_progress = (cycle_progress - 0.5) * 2.0; // Map 0.5-1.0 to 0.0-1.0
-                            let ease = (ease_progress * std::f32::consts::PI / 2.0).cos(); // Cosine ease-out
-                            let scale = max_scale - (max_scale - min_scale) * (1.0 - ease);
-                            let line_width = max_line_width - (max_line_width - min_line_width) * (1.0 - ease);
+                            // Spring bounce effect: oscillate around target with decreasing amplitude
+                            let ease_progress = (cycle_progress - 0.25) / 0.75; // Map 0.25-1.0 to 0.0-1.0
+
+                            // Spring parameters
+                            let bounce_frequency = 3.0; // How many bounces/oscillations
+                            let damping = 2.5; // How quickly oscillations decay (lower = more bounce)
+
+                            // Create damped oscillation around target (1.0)
+                            // The cosine makes it start at 1.0, dip below, bounce back above, etc.
+                            let spring = (-damping * ease_progress).exp() *
+                                        (bounce_frequency * std::f32::consts::PI * ease_progress).cos();
+
+                            // Map spring oscillation to scale range
+                            // When spring = 1.0 (start), we want max_scale
+                            // When spring = 0.0 (settled), we want min_scale
+                            let scale = min_scale + (max_scale - min_scale) * spring;
+                            let line_width = min_line_width + (max_line_width - min_line_width) * spring;
+
                             (scale, line_width)
                         };
 
                         ring_transform.scale = Vec3::splat(current_scale);
 
                         // Update mesh with new line width
-                        let outer_radius = 63.0;
+                        let outer_radius = 100.0;
                         let inner_radius = outer_radius - current_line_width;
                         let new_mesh = create_selection_ring_mesh(inner_radius, outer_radius);
                         mesh_handle.0 = meshes.add(new_mesh);
                     } else {
                         ring_transform.scale = Vec3::splat(0.5);
                         // Set final mesh with standard line width
-                        let new_mesh = create_selection_ring_mesh(53.0, 63.0);
+                        let new_mesh = create_selection_ring_mesh(90.0, 100.0);
                         mesh_handle.0 = meshes.add(new_mesh);
                     }
                 } else {

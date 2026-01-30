@@ -1670,7 +1670,7 @@ fn spawn_unit_from_request(
         let model_path = spawn_request.unit_class.model_path();
         let stats = spawn_request.unit_class.default_stats();
 
-        let ring_mesh = meshes.add(create_selection_ring_mesh(53.0, 63.0));
+        let ring_mesh = meshes.add(create_selection_ring_mesh(90.0, 100.0));
         let ring_material = materials.add(StandardMaterial {
             base_color: Color::srgb(1.0, 1.0, 1.0),
             emissive: Color::srgb(1.0, 1.0, 1.0).into(),

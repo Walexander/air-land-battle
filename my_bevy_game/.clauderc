@@ -1,0 +1,8 @@
+# Claude Code Instructions
+
+## Git Workflow
+- NEVER commit changes automatically
+- ONLY create commits when the user explicitly says "commit", "commit this", "commit that", etc.
+- After making code changes, wait for the user to review and explicitly request a commit
+- If unsure whether to commit, ask the user first
+
