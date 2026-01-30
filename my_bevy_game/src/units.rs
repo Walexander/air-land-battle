@@ -158,8 +158,8 @@ impl UnitClass {
     pub fn scale(&self) -> f32 {
         match self {
             UnitClass::Infantry => 12.0,
-            UnitClass::Cavalry => 0.5,
-            UnitClass::Artillery => 30.0,
+            UnitClass::Cavalry => 0.4,  // 20% smaller (was 0.5)
+            UnitClass::Artillery => 36.0,  // 20% bigger (was 30.0)
             UnitClass::Harvester => 16.0,
         }
     }
