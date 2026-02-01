@@ -1,9 +1,0 @@
-[package]
-name = "my_bevy_game"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-bevy = { version = "0.18.0", features = ["jpeg"] }
-bevy-inspector-egui = "0.36.0"
-rand = "0.8"
