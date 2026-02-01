@@ -401,6 +401,8 @@ pub struct AIController {
     pub command_interval: f32,
     pub strategy: AIStrategy,
     pub strategy_timer: f32, // Time to reconsider strategy
+    pub strategy_commitment_timer: f32, // Time in current strategy
+    pub min_commitment_time: f32, // Minimum time before switching strategies
 }
 
 impl Default for AIController {
@@ -412,6 +414,8 @@ impl Default for AIController {
             command_interval: 1.5, // Give commands every 1.5 seconds
             strategy: AIStrategy::Economic, // Start with economy
             strategy_timer: 0.0,
+            strategy_commitment_timer: 0.0,
+            min_commitment_time: 20.0, // Stay in strategy for at least 20 seconds
         }
     }
 }
@@ -1955,9 +1959,11 @@ fn ai_spawn_units(
     unit_query: Query<(&Unit, &UnitClass)>,
     pad_ownership: Res<LaunchPadOwnership>,
     launch_pads: Res<LaunchPads>,
+    game_timer: Res<GameTimer>,
 ) {
     ai_controller.spawn_timer += time.delta_secs();
     ai_controller.strategy_timer += time.delta_secs();
+    ai_controller.strategy_commitment_timer += time.delta_secs();
 
     if ai_controller.spawn_timer < ai_controller.spawn_interval {
         return;
@@ -1968,12 +1974,31 @@ fn ai_spawn_units(
     // Reconsider strategy every 15 seconds
     if ai_controller.strategy_timer >= 15.0 {
         ai_controller.strategy_timer = 0.0;
-        ai_controller.strategy = evaluate_strategy(
+
+        // Evaluate what the best strategy would be
+        let new_strategy = evaluate_strategy(
             &unit_query,
             &economy,
             &pad_ownership,
             &launch_pads,
+            &game_timer,
         );
+
+        // Only switch strategies if:
+        // 1. We've been in current strategy for at least min_commitment_time
+        // 2. The new strategy is different from current
+        if new_strategy != ai_controller.strategy {
+            if ai_controller.strategy_commitment_timer >= ai_controller.min_commitment_time {
+                println!("🔄 AI Strategy change: {:?} -> {:?} (after {:.1}s)",
+                    ai_controller.strategy, new_strategy, ai_controller.strategy_commitment_timer);
+                ai_controller.strategy = new_strategy;
+                ai_controller.strategy_commitment_timer = 0.0;
+            } else {
+                println!("⏳ AI wants to switch to {:?} but committed to {:?} for {:.1}s more",
+                    new_strategy, ai_controller.strategy,
+                    ai_controller.min_commitment_time - ai_controller.strategy_commitment_timer);
+            }
+        }
     }
 
     // Count blue units by type and army
@@ -2004,8 +2029,8 @@ fn ai_spawn_units(
     // Decide what to spawn based on strategy
     let unit_to_spawn = match ai_controller.strategy {
         AIStrategy::Economic => {
-            // Build harvesters if we have less than 2
-            if blue_harvesters < 2 && blue_money >= UnitClass::Harvester.cost() {
+            // Build only 1 harvester initially for economy
+            if blue_harvesters < 1 && blue_money >= UnitClass::Harvester.cost() {
                 Some(UnitClass::Harvester)
             }
             // Then build cheap infantry for defense
@@ -2038,11 +2063,13 @@ fn ai_spawn_units(
             }
         }
         AIStrategy::Defensive => {
-            // Build artillery for defense, then infantry
-            if blue_money >= UnitClass::Artillery.cost() && blue_artillery < 2 {
-                Some(UnitClass::Artillery)
+            // Build infantry quickly for defense, then artillery
+            if blue_money >= UnitClass::Infantry.cost() && blue_combat_units < 3 {
+                Some(UnitClass::Infantry) // Get 3 infantry out quickly
+            } else if blue_money >= UnitClass::Artillery.cost() && blue_artillery < 1 {
+                Some(UnitClass::Artillery) // Then add artillery
             } else if blue_money >= UnitClass::Infantry.cost() {
-                Some(UnitClass::Infantry)
+                Some(UnitClass::Infantry) // Back to infantry
             } else {
                 None
             }
@@ -2068,10 +2095,13 @@ fn evaluate_strategy(
     economy: &Economy,
     pad_ownership: &LaunchPadOwnership,
     launch_pads: &LaunchPads,
+    game_timer: &GameTimer,
 ) -> AIStrategy {
     let mut blue_units = 0;
     let mut red_units = 0;
     let mut blue_harvesters = 0;
+    let mut blue_combat_units = 0;
+    let mut red_combat_units = 0;
 
     for (unit, unit_class) in unit_query.iter() {
         match unit.army {
@@ -2079,9 +2109,16 @@ fn evaluate_strategy(
                 blue_units += 1;
                 if *unit_class == UnitClass::Harvester {
                     blue_harvesters += 1;
+                } else {
+                    blue_combat_units += 1;
                 }
             }
-            Army::Red => red_units += 1,
+            Army::Red => {
+                red_units += 1;
+                if *unit_class != UnitClass::Harvester {
+                    red_combat_units += 1;
+                }
+            }
         }
     }
 
@@ -2089,49 +2126,160 @@ fn evaluate_strategy(
     let mut blue_pads = 0;
     let mut neutral_pads = 0;
     let mut red_pads = 0;
+    let mut contested_pads = 0;
 
     for owner in &pad_ownership.owners {
         match owner {
             LaunchPadOwner::Blue => blue_pads += 1,
             LaunchPadOwner::Neutral => neutral_pads += 1,
             LaunchPadOwner::Red => red_pads += 1,
-            LaunchPadOwner::Contested => {}
+            LaunchPadOwner::Contested => contested_pads += 1,
         }
     }
 
-    // Strategic decision tree:
-    // 1. If we have no harvesters and low income, focus on economy
-    if blue_harvesters == 0 || (blue_harvesters < 2 && economy.blue_money < 50) {
-        return AIStrategy::Economic;
+    // CRITICAL 1: Early game rush detection
+    // If player has combat units and we don't, respond immediately!
+    if red_combat_units > 0 && blue_combat_units == 0 {
+        println!("⚠️ EARLY RUSH DETECTED: Player has {} combat units, we have 0 - BUILDING ARMY!", red_combat_units);
+        return AIStrategy::Defensive; // Build units to defend, not harvesters
     }
 
-    // 2. If enemy has more pads, expand aggressively
-    if red_pads > blue_pads && neutral_pads > 0 {
-        return AIStrategy::Expansionist;
+    // If player is way ahead in combat units early, stop building economy
+    if red_combat_units >= 2 && blue_combat_units < red_combat_units {
+        println!("⚠️ PLAYER ARMY ADVANTAGE: Red {} vs Blue {} - BUILDING COMBAT UNITS!", red_combat_units, blue_combat_units);
+        return AIStrategy::Aggressive; // Focus on combat
     }
 
-    // 3. If we're outnumbered significantly, play defensive
-    if red_units > blue_units * 2 {
-        return AIStrategy::Defensive;
+    // CRITICAL 2: Check win condition urgency
+    // If timer is active and counting down, this overrides all other strategies
+    if game_timer.is_active {
+        if let Some(winning_army) = game_timer.winning_army {
+            match winning_army {
+                Army::Red => {
+                    // Player is winning! We MUST attack and contest their pads immediately
+                    println!("🚨 EMERGENCY: Player winning with {:.1}s left - ATTACKING PADS!", game_timer.time_remaining);
+                    return AIStrategy::Aggressive; // Attack enemy pads aggressively
+                }
+                Army::Blue => {
+                    // We're winning! Different behavior based on time remaining
+                    if game_timer.time_remaining < 10.0 {
+                        println!("🎯 AI WINNING: {:.1}s left - HOLD POSITIONS!", game_timer.time_remaining);
+                        return AIStrategy::Defensive; // Just hold what we have
+                    }
+                }
+            }
+        }
     }
 
-    // 4. If we have military advantage, be aggressive
-    if blue_units > red_units && economy.blue_money > 100 {
-        return AIStrategy::Aggressive;
+    // Score all strategies (timer urgency is handled above, this is for normal play)
+    let mut scores = vec![
+        (AIStrategy::Economic, score_economic_strategy(blue_harvesters, economy.blue_money)),
+        (AIStrategy::Aggressive, score_aggressive_strategy(blue_units, red_units, economy.blue_money)),
+        (AIStrategy::Expansionist, score_expansionist_strategy(blue_pads, red_pads, neutral_pads)),
+        (AIStrategy::Defensive, score_defensive_strategy(blue_units, red_units, blue_pads, red_pads, contested_pads)),
+    ];
+
+    // Sort by score descending
+    scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+    scores[0].0
+}
+
+// Helper functions to score each strategy
+fn score_economic_strategy(blue_harvesters: usize, blue_money: i32) -> f32 {
+    let mut score = 0.0;
+
+    // Strong need for economy if no harvesters
+    if blue_harvesters == 0 {
+        score += 50.0;
     }
 
-    // 5. If there are neutral pads, try to expand
+    // Moderate need for second harvester if low money
+    if blue_harvesters == 1 && blue_money < 80 {
+        score += 20.0; // Reduced from 30
+    }
+
+    // Economy is less valuable if we already have good income
+    if blue_harvesters >= 2 {
+        score -= 40.0; // Increased penalty
+    }
+
+    // After first harvester, economy is less urgent
+    if blue_harvesters >= 1 {
+        score -= 15.0;
+    }
+
+    score
+}
+
+fn score_aggressive_strategy(blue_units: usize, red_units: usize, blue_money: i32) -> f32 {
+    let mut score = 0.0;
+
+    // Good if we have military advantage
+    if blue_units > red_units {
+        score += 40.0;
+    }
+
+    // Good if we have money to sustain aggression
+    if blue_money > 100 {
+        score += 30.0;
+    }
+
+    // Bad if we're outnumbered
+    if red_units > blue_units {
+        score -= 20.0;
+    }
+
+    score
+}
+
+fn score_expansionist_strategy(blue_pads: usize, red_pads: usize, neutral_pads: usize) -> f32 {
+    let mut score = 0.0;
+
+    // Strong priority if neutral pads exist
     if neutral_pads > 0 {
-        return AIStrategy::Expansionist;
+        score += 50.0;
     }
 
-    // 6. Default to aggressive if we have good economy
-    if economy.blue_money > 150 {
-        return AIStrategy::Aggressive;
+    // Higher priority if enemy has more pads
+    if red_pads > blue_pads {
+        score += 30.0;
     }
 
-    // Otherwise, stay defensive
-    AIStrategy::Defensive
+    // No point in expansion if no pads to capture
+    if neutral_pads == 0 && red_pads <= blue_pads {
+        score -= 40.0;
+    }
+
+    score
+}
+
+fn score_defensive_strategy(blue_units: usize, red_units: usize, blue_pads: usize, red_pads: usize, contested_pads: usize) -> f32 {
+    let mut score = 0.0;
+
+    // High priority if outnumbered
+    if red_units > blue_units * 2 {
+        score += 60.0;
+    } else if red_units > blue_units {
+        score += 30.0;
+    }
+
+    // Very high priority if pads are contested
+    if contested_pads > 0 {
+        score += 50.0;
+    }
+
+    // Defensive if we're winning on pads (protect what we have)
+    if blue_pads > red_pads {
+        score += 20.0;
+    }
+
+    // Lower priority if we have advantage
+    if blue_units > red_units {
+        score -= 20.0;
+    }
+
+    score
 }
 
 fn ai_command_units(
@@ -2179,6 +2327,8 @@ fn ai_command_units(
     // Find targets based on current strategy
     let strategy = ai_controller.strategy;
 
+    println!("🤖 AI commanding {} idle units (Strategy: {:?})", idle_blue_units.len(), strategy);
+
     for (entity, unit, stats, unit_class) in idle_blue_units {
         let unit_pos = (unit.q, unit.r);
 
@@ -2207,7 +2357,10 @@ fn ai_command_units(
                 if *unit_class == UnitClass::Harvester {
                     None // Harvesters have their own AI
                 } else {
+                    // Defend our pads, attack enemy pads, or capture neutral pads (game start)
                     find_defensive_target(unit_pos, &launch_pads, &pad_ownership, &blocking_cells)
+                        .or_else(|| find_enemy_pad_target(unit_pos, &launch_pads, &pad_ownership, &blocking_cells))
+                        .or_else(|| find_neutral_pad_target(unit_pos, &launch_pads, &pad_ownership, &blocking_cells))
                 }
             }
             AIStrategy::Aggressive => {
@@ -2215,6 +2368,7 @@ fn ai_command_units(
                 find_enemy_harvester_target(unit_pos, &all_red_units, &blocking_cells)
                     .or_else(|| find_enemy_unit_target(unit_pos, &all_red_units, &launch_pads, &pad_ownership, &blocking_cells))
                     .or_else(|| find_enemy_pad_target(unit_pos, &launch_pads, &pad_ownership, &blocking_cells))
+                    .or_else(|| find_neutral_pad_target(unit_pos, &launch_pads, &pad_ownership, &blocking_cells))
             }
             AIStrategy::Expansionist => {
                 // Priority: Neutral pads > Enemy pads
@@ -2223,7 +2377,10 @@ fn ai_command_units(
             }
             AIStrategy::Defensive => {
                 // Protect our pads, stay near them
+                // If no blue/contested pads to defend, attack enemy pads to contest them
                 find_defensive_target(unit_pos, &launch_pads, &pad_ownership, &blocking_cells)
+                    .or_else(|| find_enemy_pad_target(unit_pos, &launch_pads, &pad_ownership, &blocking_cells))
+                    .or_else(|| find_neutral_pad_target(unit_pos, &launch_pads, &pad_ownership, &blocking_cells))
             }
         };
 
@@ -2246,6 +2403,9 @@ fn ai_command_units(
                     }
                 }
             }
+        } else {
+            println!("⚠️ AI unit at ({}, {}) has NO TARGET (Strategy: {:?}, Class: {:?})",
+                unit_pos.0, unit_pos.1, strategy, unit_class);
         }
     }
 }
