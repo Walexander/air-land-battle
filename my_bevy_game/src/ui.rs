@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy::input::mouse::MouseWheel;
 
 use crate::launch_pads::{GameState, GameTimer};
 use crate::units::{Army, Economy, UnitClass, UnitSpawnRequest, UnitSpawnQueue, SpawnCooldowns};
@@ -741,6 +742,55 @@ struct CameraSlider {
     value: f32,
 }
 
+fn handle_keyboard_and_scroll_camera(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut scroll_events: MessageReader<MouseWheel>,
+    mut settings: ResMut<CameraSettings>,
+    time: Res<Time>,
+) {
+    // Reset camera to original position when 'R' is pressed
+    if keyboard.just_pressed(KeyCode::KeyR) {
+        settings.x = 0.0;
+        settings.y = 300.0;
+        settings.z = 500.0;
+        settings.look_at_x = 0.0;
+        settings.look_at_y = 0.0;
+        settings.look_at_z = 0.0;
+        settings.scale = 0.8;
+        return;
+    }
+
+    // Pan speed based on current scale (zoom level)
+    let pan_speed = 400.0 * settings.scale * time.delta_secs();
+
+    // Handle arrow key panning - move both camera and look-at target together
+    if keyboard.pressed(KeyCode::ArrowUp) {
+        settings.z -= pan_speed;
+        settings.look_at_z -= pan_speed;
+    }
+    if keyboard.pressed(KeyCode::ArrowDown) {
+        settings.z += pan_speed;
+        settings.look_at_z += pan_speed;
+    }
+    if keyboard.pressed(KeyCode::ArrowLeft) {
+        settings.x -= pan_speed;
+        settings.look_at_x -= pan_speed;
+    }
+    if keyboard.pressed(KeyCode::ArrowRight) {
+        settings.x += pan_speed;
+        settings.look_at_x += pan_speed;
+    }
+
+    // Handle mouse scroll wheel zooming
+    for event in scroll_events.read() {
+        let zoom_speed = 0.1;
+        let zoom_delta = -event.y * zoom_speed; // Negative because scroll up should zoom in
+
+        settings.scale += zoom_delta * settings.scale; // Scale zoom by current zoom level
+        settings.scale = settings.scale.clamp(0.1, 3.0); // Limit zoom range
+    }
+}
+
 fn update_camera_from_settings(
     mut camera_query: Query<(&mut Transform, &mut Projection), With<GameCamera>>,
     settings: Res<CameraSettings>,
@@ -908,6 +958,12 @@ impl Plugin for UIPlugin {
                 update_spawn_button_visuals,
                 show_game_over_screen,
                 handle_restart,
+            ).run_if(in_state(LoadingState::Playing)),
+        )
+        .add_systems(
+            Update,
+            (
+                handle_keyboard_and_scroll_camera,
                 handle_camera_slider_input,
                 update_camera_from_settings,
                 toggle_camera_controls_visibility,

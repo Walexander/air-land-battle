@@ -947,26 +947,9 @@ fn update_outline_colors(
         None
     };
 
-    for (outline, mut visibility, material_handle) in &mut outline_query {
-        let is_hovered = hovered_hex.entity == Some(outline.hex_entity);
-
-        // Determine if should show outline and what color
-        let should_show = is_hovered && hovered_unit_info.is_some();
-
-        if should_show {
-            *visibility = Visibility::Visible;
-
-            // Always use grey outline - hover ring on units provides enemy feedback
-            let outline_color = Color::srgb(0.7, 0.7, 0.7);
-
-            // Update material color
-            if let Some(material) = materials.get_mut(&material_handle.0) {
-                material.base_color = outline_color;
-                material.emissive = outline_color.into();
-            }
-        } else {
-            *visibility = Visibility::Hidden;
-        }
+    for (outline, mut visibility, _material_handle) in &mut outline_query {
+        // Disabled: hover ring on units provides all feedback needed
+        *visibility = Visibility::Hidden;
     }
 }
 
