@@ -95,6 +95,20 @@ impl Plugin for MapPlugin {
             }
         }
 
+        // Add left edge obstacles
+        obstacles.positions.insert((-3, -4));
+        obstacles.positions.insert((-4, -2));
+        obstacles.positions.insert((-5, 0));
+        obstacles.positions.insert((-6, 2));
+        obstacles.positions.insert((-7, 4));
+
+        // Add right edge obstacles
+        obstacles.positions.insert((7, -4));
+        obstacles.positions.insert((6, -2));
+        obstacles.positions.insert((5, 0));
+        obstacles.positions.insert((4, 2));
+        obstacles.positions.insert((3, 4));
+
         app.insert_resource(HexMapConfig { map_radius: 5 })
             .insert_resource(HoveredHex::default())
             .insert_resource(obstacles)
@@ -561,10 +575,9 @@ fn setup_hex_map(
     let filled_hex_mesh = meshes.add(create_filled_hexagon_mesh());
     let hex_border_mesh = meshes.add(create_filled_hexagon_border_mesh());
     let hover_outline_mesh = meshes.add(create_hexagon_outline_mesh(63.0, 4.0)); // Same as destination ring
-    let billboard_mesh = meshes.add(create_billboard_mesh(HEX_WIDTH - 32.0, HEX_WIDTH - 32.0));
 
-    // Load obstacle sprite texture
-    let obstacle_texture = asset_server.load("details.png");
+    // Load mountain 3D model
+    let mountain_model = asset_server.load("mountains.glb#Scene0");
 
     // Create parent HexMap entity
     commands.spawn((
@@ -573,17 +586,24 @@ fn setup_hex_map(
         Visibility::default(),
         Name::new("HexMap"),
     )).with_children(|parent| {
-        for q in -config.map_radius..=config.map_radius {
-            let r1 = (-config.map_radius).max(-q - config.map_radius);
-            let r2 = config.map_radius.min(-q + config.map_radius);
+        // Iterate over a wider range to ensure we cover the square area
+        let search_radius = (config.map_radius as f32 * 1.5) as i32;
+        for q in -search_radius..=search_radius {
+            for r in -search_radius..=search_radius {
+                let world_pos = axial_to_world_pos(q, r);
 
-            for r in r1..=r2 {
-                // Skip top and bottom rows to make room for UI
-                if r == -config.map_radius || r == config.map_radius {
+                // Create a square map by checking if the hex falls within square bounds
+                let map_size = HEX_HEIGHT * config.map_radius as f32;
+                if world_pos.x.abs() > map_size || world_pos.z.abs() > map_size {
                     continue;
                 }
+
+                // Skip top and bottom rows to make room for UI
+                if world_pos.z <= -map_size + HEX_WIDTH || world_pos.z >= map_size - HEX_WIDTH {
+                    continue;
+                }
+
                 let height = prism_height;
-                let world_pos = axial_to_world_pos(q, r);
 
                 let is_obstacle = obstacles.positions.contains(&(q, r));
 
@@ -655,20 +675,19 @@ fn setup_hex_map(
                 let outline_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
 
                 if is_obstacle {
-                    // Spawn billboard mesh with texture for obstacles
-                    let sprite_height = 10.0;
-                    let sprite_pos = world_pos + Vec3::new(0.0, sprite_height, 0.0);
+                    // Spawn 3D mountain model for obstacles
+                    // Mountain is 4x4 in Blender, scale to fill hex cell
+                    let mountain_scale = 25.0;
+                    // Raise the mountain so its base sits above the tile
+                    let mountain_pos = world_pos + Vec3::new(0.0, 10.0, 0.0);
+                    // Rotate to align with hex grid
+                    let mountain_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
 
                     parent.spawn((
-                        Mesh3d(billboard_mesh.clone()),
-                        MeshMaterial3d(materials.add(StandardMaterial {
-                            base_color_texture: Some(obstacle_texture.clone()),
-                            alpha_mode: AlphaMode::Blend,
-                            unlit: true,
-                            ..default()
-                        })),
-                        Transform::from_translation(sprite_pos),
-                        ObstacleSprite,
+                        SceneRoot(mountain_model.clone()),
+                        Transform::from_translation(mountain_pos)
+                            .with_rotation(mountain_rotation)
+                            .with_scale(Vec3::splat(mountain_scale)),
                     ));
                 } else if is_launch_pad {
                     // Only process this once per pad (only for the first hex in the pad)
