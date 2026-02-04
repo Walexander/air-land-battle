@@ -539,6 +539,8 @@ fn setup_hex_map(
     // Spawn 3D camera with orthographic projection
     let mut orthographic = OrthographicProjection::default_3d();
     orthographic.scale = 0.8;
+    // Increase far plane to prevent clipping when camera pans
+    orthographic.far = 2000.0;
 
     commands.spawn((
         Camera3d::default(),
