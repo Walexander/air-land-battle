@@ -1,7 +1,6 @@
 use bevy::prelude::*;
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
-use std::collections::HashSet;
 use bevy_mod_outline::OutlineVolume;
 
 use crate::map::{axial_to_world_pos, HexMapConfig, HexTile, HoveredHex, Obstacles};
@@ -11,6 +10,9 @@ use crate::loading::LoadingState;
 // Components
 #[derive(Component)]
 pub struct Selected;
+
+#[derive(Component)]
+pub struct Hovered;
 
 #[derive(Component)]
 pub struct SelectionRing {
@@ -40,11 +42,6 @@ pub struct DestinationRing {
 pub struct TargetRing {
     pub unit_entity: Entity,
     pub target_entity: Entity,
-}
-
-#[derive(Component)]
-pub struct HoverRing {
-    pub hovered_entity: Entity,
 }
 
 // Mesh creation functions
@@ -1192,7 +1189,7 @@ fn handle_unit_selection(
 fn update_selected_visual(
     mut commands: Commands,
     selected_query: Query<(Entity, Option<&Children>), (With<Unit>, With<Selected>)>,
-    unselected_query: Query<(Entity, Option<&Children>), (With<Unit>, Without<Selected>)>,
+    unselected_query: Query<(Entity, Option<&Children>), (With<Unit>, Without<Selected>, Without<Hovered>)>,
     children_query: Query<&Children>,
     mesh_query: Query<Entity, With<Mesh3d>>,
     outline_query: Query<Entity, With<OutlineVolume>>,
@@ -1206,7 +1203,7 @@ fn update_selected_visual(
         }
     }
 
-    // Remove outlines from unselected units' mesh children
+    // Remove outlines from unselected, non-hovered units' mesh children
     for (_unit_entity, children_opt) in &unselected_query {
         if let Some(children) = children_opt {
             remove_outline_from_children(children, &children_query, &mesh_query, &mut commands);
@@ -1661,18 +1658,16 @@ fn cleanup_target_rings(
     }
 }
 
-fn visualize_hover_ring(
+fn mark_hovered_unit(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     hovered_unit: Res<crate::units::HoveredUnit>,
     selected_query: Query<&Unit, With<Selected>>,
-    unit_query: Query<(&Unit, &Transform)>,
-    existing_hover_rings: Query<Entity, With<HoverRing>>,
+    unit_query: Query<(Entity, &Unit)>,
+    currently_hovered: Query<Entity, With<Hovered>>,
 ) {
-    // Always remove all existing hover rings first
-    for ring_entity in &existing_hover_rings {
-        commands.entity(ring_entity).despawn();
+    // Remove Hovered marker from all units first
+    for entity in &currently_hovered {
+        commands.entity(entity).remove::<Hovered>();
     }
 
     // Check if we have a friendly unit selected
@@ -1682,32 +1677,64 @@ fn visualize_hover_ring(
         return;
     }
 
-    // Only spawn a new hover ring if:
+    // Add Hovered marker if:
     // 1. We have a friendly unit selected
     // 2. We're hovering over an enemy unit
     if let Some(hovered_entity) = hovered_unit.entity {
-        if let Ok((unit, transform)) = unit_query.get(hovered_entity) {
+        if let Ok((entity, unit)) = unit_query.get(hovered_entity) {
             if unit.army != Army::Red {
-                // Spawn orange ring around the hovered enemy (slightly larger than target ring)
-                let ring_mesh = meshes.add(create_ring_mesh_with_segments(55.0, 65.0, 4));
-                let ring_material = materials.add(StandardMaterial {
-                    base_color: Color::srgb(1.0, 0.5, 0.0), // Orange to distinguish from target ring
-                    emissive: Color::srgb(1.0, 0.5, 0.0).into(),
-                    unlit: true,
-                    alpha_mode: AlphaMode::Blend,
-                    ..default()
-                });
-
-                commands.spawn((
-                    Mesh3d(ring_mesh),
-                    MeshMaterial3d(ring_material),
-                    Transform::from_translation(transform.translation + Vec3::new(0.0, 2.0, 0.0))
-                        .with_scale(Vec3::splat(1.0)),
-                    HoverRing {
-                        hovered_entity,
-                    },
-                ));
+                commands.entity(entity).insert(Hovered);
             }
+        }
+    }
+}
+
+fn update_hover_visual(
+    mut commands: Commands,
+    hovered_query: Query<(Entity, Option<&Children>), (With<Unit>, With<Hovered>)>,
+    not_hovered_query: Query<(Entity, Option<&Children>), (With<Unit>, Without<Hovered>, Without<Selected>)>,
+    children_query: Query<&Children>,
+    mesh_query: Query<Entity, With<Mesh3d>>,
+    outline_query: Query<Entity, With<OutlineVolume>>,
+) {
+    // Add red outlines to hovered units' mesh children (if they don't already have them)
+    for (_unit_entity, children_opt) in &hovered_query {
+        if let Some(children) = children_opt {
+            if !has_outline_in_children(children, &children_query, &outline_query) {
+                add_red_outline_to_children(children, &children_query, &mesh_query, &mut commands);
+            }
+        }
+    }
+
+    // Remove outlines from non-hovered, non-selected units' mesh children
+    for (_unit_entity, children_opt) in &not_hovered_query {
+        if let Some(children) = children_opt {
+            remove_outline_from_children(children, &children_query, &mesh_query, &mut commands);
+        }
+    }
+}
+
+fn add_red_outline_to_children(
+    children: &Children,
+    children_query: &Query<&Children>,
+    mesh_query: &Query<Entity, With<Mesh3d>>,
+    commands: &mut Commands,
+) {
+    for child in children.iter() {
+        // If this child has a mesh, try to add outline (may fail if entity was despawned)
+        if mesh_query.contains(child) {
+            if let Ok(mut entity_commands) = commands.get_entity(child) {
+                entity_commands.insert(OutlineVolume {
+                    visible: true,
+                    width: 2.0,
+                    colour: Color::srgb(1.0, 0.0, 0.0), // Red for hover
+                });
+            }
+        }
+
+        // Recursively process grandchildren
+        if let Ok(grandchildren) = children_query.get(child) {
+            add_red_outline_to_children(grandchildren, children_query, mesh_query, commands);
         }
     }
 }
@@ -1733,7 +1760,10 @@ impl Plugin for SelectionPlugin {
         );
         app.add_systems(
             Update,
-            visualize_hover_ring.run_if(in_state(LoadingState::Playing))
+            (
+                mark_hovered_unit,
+                update_hover_visual,
+            ).run_if(in_state(LoadingState::Playing))
         );
         app.add_systems(
             Update,
