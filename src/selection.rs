@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use std::collections::HashSet;
+use bevy_mod_outline::OutlineVolume;
 
 use crate::map::{axial_to_world_pos, HexMapConfig, HexTile, HoveredHex, Obstacles};
 use crate::units::{find_path, Occupancy, OccupancyIntent, ClaimedCellsThisFrame, Unit, UnitMovement, Army, UnitStats};
@@ -1189,19 +1190,67 @@ fn handle_unit_selection(
 }
 
 fn update_selected_visual(
-    selected_query: Query<&MeshMaterial3d<StandardMaterial>, (With<Unit>, With<Selected>)>,
-    unselected_query: Query<&MeshMaterial3d<StandardMaterial>, (With<Unit>, Without<Selected>)>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut commands: Commands,
+    selected_query: Query<(Entity, Option<&Children>), (With<Unit>, With<Selected>, Without<OutlineVolume>)>,
+    unselected_query: Query<(Entity, Option<&Children>), (With<Unit>, Without<Selected>, With<OutlineVolume>)>,
+    children_query: Query<&Children>,
+    mesh_query: Query<Entity, With<Mesh3d>>,
 ) {
-    for material_handle in &selected_query {
-        if let Some(material) = materials.get_mut(&material_handle.0) {
-            material.emissive = Color::srgb(0.5, 0.5, 0.0).into();
+    // Add outlines to newly selected units' mesh children
+    for (_unit_entity, children_opt) in &selected_query {
+        if let Some(children) = children_opt {
+            add_outline_to_children(children, &children_query, &mesh_query, &mut commands);
         }
     }
 
-    for material_handle in &unselected_query {
-        if let Some(material) = materials.get_mut(&material_handle.0) {
-            material.emissive = Color::BLACK.into();
+    // Remove outlines from unselected units' mesh children
+    for (_unit_entity, children_opt) in &unselected_query {
+        if let Some(children) = children_opt {
+            remove_outline_from_children(children, &children_query, &mesh_query, &mut commands);
+        }
+    }
+}
+
+fn add_outline_to_children(
+    children: &Children,
+    children_query: &Query<&Children>,
+    mesh_query: &Query<Entity, With<Mesh3d>>,
+    commands: &mut Commands,
+) {
+    for child in children.iter() {
+        // If this child has a mesh, try to add outline (may fail if entity was despawned)
+        if mesh_query.contains(child) {
+            if let Ok(mut entity_commands) = commands.get_entity(child) {
+                entity_commands.insert(OutlineVolume {
+                    visible: true,
+                    width: 2.0,
+                    colour: Color::srgb(1.0, 1.0, 1.0), // White
+                });
+            }
+        }
+
+        // Recursively process grandchildren
+        if let Ok(grandchildren) = children_query.get(child) {
+            add_outline_to_children(grandchildren, children_query, mesh_query, commands);
+        }
+    }
+}
+
+fn remove_outline_from_children(
+    children: &Children,
+    children_query: &Query<&Children>,
+    mesh_query: &Query<Entity, With<Mesh3d>>,
+    commands: &mut Commands,
+) {
+    for child in children.iter() {
+        if mesh_query.contains(child) {
+            if let Ok(mut entity_commands) = commands.get_entity(child) {
+                entity_commands.remove::<OutlineVolume>();
+            }
+        }
+
+        if let Ok(grandchildren) = children_query.get(child) {
+            remove_outline_from_children(grandchildren, children_query, mesh_query, commands);
         }
     }
 }

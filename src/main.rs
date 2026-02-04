@@ -71,6 +71,7 @@ fn main() {
         .add_plugins(FrameTimeDiagnosticsPlugin::default())
         .add_plugins(EguiPlugin::default())
         .add_plugins(WorldInspectorPlugin::new())
+        .add_plugins(bevy_mod_outline::OutlinePlugin)
         .add_plugins(LoadingPlugin)
         .add_plugins(LaunchPadsPlugin)
         .add_plugins(MapPlugin)

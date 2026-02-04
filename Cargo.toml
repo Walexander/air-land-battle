@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = { version = "0.18.0", features = ["jpeg"] }
-bevy-inspector-egui = "0.36.0"
+bevy = { version = "0.17", features = ["jpeg"] }
+bevy-inspector-egui = "0.35"
+bevy_mod_outline = { git = "https://github.com/komadori/bevy_mod_outline.git", branch = "bevy-0.17" }
 rand = "0.8"
