@@ -1191,15 +1191,18 @@ fn handle_unit_selection(
 
 fn update_selected_visual(
     mut commands: Commands,
-    selected_query: Query<(Entity, Option<&Children>), (With<Unit>, With<Selected>, Without<OutlineVolume>)>,
-    unselected_query: Query<(Entity, Option<&Children>), (With<Unit>, Without<Selected>, With<OutlineVolume>)>,
+    selected_query: Query<(Entity, Option<&Children>), (With<Unit>, With<Selected>)>,
+    unselected_query: Query<(Entity, Option<&Children>), (With<Unit>, Without<Selected>)>,
     children_query: Query<&Children>,
     mesh_query: Query<Entity, With<Mesh3d>>,
+    outline_query: Query<Entity, With<OutlineVolume>>,
 ) {
-    // Add outlines to newly selected units' mesh children
+    // Add outlines to newly selected units' mesh children (if they don't already have them)
     for (_unit_entity, children_opt) in &selected_query {
         if let Some(children) = children_opt {
-            add_outline_to_children(children, &children_query, &mesh_query, &mut commands);
+            if !has_outline_in_children(children, &children_query, &outline_query) {
+                add_outline_to_children(children, &children_query, &mesh_query, &mut commands);
+            }
         }
     }
 
@@ -1209,6 +1212,26 @@ fn update_selected_visual(
             remove_outline_from_children(children, &children_query, &mesh_query, &mut commands);
         }
     }
+}
+
+fn has_outline_in_children(
+    children: &Children,
+    children_query: &Query<&Children>,
+    outline_query: &Query<Entity, With<OutlineVolume>>,
+) -> bool {
+    for child in children.iter() {
+        if outline_query.contains(child) {
+            return true;
+        }
+
+        // Check grandchildren recursively
+        if let Ok(grandchildren) = children_query.get(child) {
+            if has_outline_in_children(grandchildren, children_query, outline_query) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn add_outline_to_children(
