@@ -8,9 +8,21 @@ use std::cmp::Ordering;
 use rand::Rng;
 
 use crate::map::{axial_to_world_pos, HexMapConfig, Obstacles, CrystalField};
-use crate::selection::{SelectionRing, create_selection_ring_mesh};
+use crate::selection::{SelectionRing, create_selection_ring_mesh, create_ring_arc_mesh, InnerQuarterCircle};
 use crate::launch_pads::{GameState, GameTimer, LaunchPads, LaunchPadOwnership, LaunchPadOwner};
 use crate::loading::LoadingState;
+
+// Resource for selection ring assets
+#[derive(Resource)]
+pub struct SelectionRingAssets {
+    pub main_ring_mesh: Handle<Mesh>,
+    pub main_ring_material: Handle<StandardMaterial>,
+    pub outer_ring_mesh: Handle<Mesh>,
+    pub outer_ring_material: Handle<StandardMaterial>,
+    pub inner_ring_left_mesh: Handle<Mesh>,
+    pub inner_ring_right_mesh: Handle<Mesh>,
+    pub inner_ring_material: Handle<StandardMaterial>,
+}
 
 // Components
 #[derive(Component)]
@@ -1097,6 +1109,7 @@ fn reset_game(
     mut game_timer: ResMut<GameTimer>,
     mut economy: ResMut<Economy>,
     mut spawn_cooldowns: ResMut<SpawnCooldowns>,
+    ring_assets: Res<SelectionRingAssets>,
 ) {
     if keyboard.just_pressed(KeyCode::KeyR) {
         println!("Resetting game...");
@@ -1141,7 +1154,7 @@ fn reset_game(
         *spawn_cooldowns = SpawnCooldowns::default();
 
         // Respawn units by calling setup_units logic
-        setup_units(commands, meshes, materials, animation_graphs, asset_server);
+        setup_units(commands, meshes, materials, animation_graphs, asset_server, ring_assets);
 
         println!("Game reset complete!");
     }
@@ -1599,6 +1612,7 @@ fn spawn_unit_from_request(
     blue_army_query: Query<Entity, With<BlueArmy>>,
     unit_query: Query<(&Unit, &UnitClass)>,
     mut spawn_cooldowns: ResMut<SpawnCooldowns>,
+    ring_assets: Res<SelectionRingAssets>,
 ) {
     let requests: Vec<_> = spawn_queue.requests.drain(..).collect();
     for spawn_request in requests.iter() {
@@ -1673,14 +1687,6 @@ fn spawn_unit_from_request(
 
         let model_path = spawn_request.unit_class.model_path();
         let stats = spawn_request.unit_class.default_stats();
-
-        let ring_mesh = meshes.add(create_selection_ring_mesh(90.0, 100.0));
-        let ring_material = materials.add(StandardMaterial {
-            base_color: Color::srgb(1.0, 1.0, 1.0),
-            emissive: Color::srgb(1.0, 1.0, 1.0).into(),
-            unlit: true,
-            ..default()
-        });
 
         // Prepare health bar meshes
         let bar_width = 40.0;
@@ -1906,8 +1912,8 @@ fn spawn_unit_from_request(
             let ring_pos = world_pos + Vec3::new(0.0, 6.0, 0.0);
             let ring_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
             parent.spawn((
-                Mesh3d(ring_mesh),
-                MeshMaterial3d(ring_material),
+                Mesh3d(ring_assets.main_ring_mesh.clone()),
+                MeshMaterial3d(ring_assets.main_ring_material.clone()),
                 Transform::from_translation(ring_pos)
                     .with_rotation(ring_rotation)
                     .with_scale(Vec3::splat(0.5)),
@@ -1917,7 +1923,31 @@ fn spawn_unit_from_request(
                     animation_timer: 0.0,
                     bounce_count: 0,
                 },
-            ));
+            )).with_children(|ring_parent| {
+                // Outer ring
+                ring_parent.spawn((
+                    Mesh3d(ring_assets.outer_ring_mesh.clone()),
+                    MeshMaterial3d(ring_assets.outer_ring_material.clone()),
+                    Transform::default(),
+                    Visibility::Inherited,
+                ));
+                // Inner left quarter circle
+                ring_parent.spawn((
+                    Mesh3d(ring_assets.inner_ring_left_mesh.clone()),
+                    MeshMaterial3d(ring_assets.inner_ring_material.clone()),
+                    Transform::default(),
+                    Visibility::Inherited,
+                    InnerQuarterCircle,
+                ));
+                // Inner right quarter circle
+                ring_parent.spawn((
+                    Mesh3d(ring_assets.inner_ring_right_mesh.clone()),
+                    MeshMaterial3d(ring_assets.inner_ring_material.clone()),
+                    Transform::default(),
+                    Visibility::Inherited,
+                    InnerQuarterCircle,
+                ));
+            });
 
             // Spawn click collider (sphere for raycasting)
             // Use world positioning like other children (not relative positioning)
@@ -2610,19 +2640,12 @@ fn setup_units(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut animation_graphs: ResMut<Assets<AnimationGraph>>,
     asset_server: Res<AssetServer>,
+    ring_assets: Res<SelectionRingAssets>,
 ) {
     // (q, r, unit_index, army, class)
     let units: Vec<(i32, i32, usize, Army, UnitClass)> = vec![
         // Start with no units - players must purchase them
     ];
-
-    let ring_mesh = meshes.add(create_selection_ring_mesh(53.0, 63.0));
-    let ring_material = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 1.0, 1.0), // White
-        emissive: Color::srgb(1.0, 1.0, 1.0).into(), // White
-        unlit: true,
-        ..default()
-    });
 
     // Create Red Army parent
     commands.spawn((
@@ -2835,8 +2858,8 @@ fn setup_units(
             let ring_pos = world_pos + Vec3::new(0.0, 6.0, 0.0);
             let ring_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
             parent.spawn((
-                Mesh3d(ring_mesh.clone()),
-                MeshMaterial3d(ring_material.clone()),
+                Mesh3d(ring_assets.main_ring_mesh.clone()),
+                MeshMaterial3d(ring_assets.main_ring_material.clone()),
                 Transform::from_translation(ring_pos)
                     .with_rotation(ring_rotation)
                     .with_scale(Vec3::splat(0.5)),
@@ -2846,7 +2869,31 @@ fn setup_units(
                     bounce_count: 0,
                 },
                 Visibility::Hidden,
-            ));
+            )).with_children(|ring_parent| {
+                // Outer ring
+                ring_parent.spawn((
+                    Mesh3d(ring_assets.outer_ring_mesh.clone()),
+                    MeshMaterial3d(ring_assets.outer_ring_material.clone()),
+                    Transform::default(),
+                    Visibility::Inherited,
+                ));
+                // Inner left quarter circle
+                ring_parent.spawn((
+                    Mesh3d(ring_assets.inner_ring_left_mesh.clone()),
+                    MeshMaterial3d(ring_assets.inner_ring_material.clone()),
+                    Transform::default(),
+                    Visibility::Inherited,
+                    InnerQuarterCircle,
+                ));
+                // Inner right quarter circle
+                ring_parent.spawn((
+                    Mesh3d(ring_assets.inner_ring_right_mesh.clone()),
+                    MeshMaterial3d(ring_assets.inner_ring_material.clone()),
+                    Transform::default(),
+                    Visibility::Inherited,
+                    InnerQuarterCircle,
+                ));
+            });
 
             // Spawn click collider (sphere for raycasting)
             // Use world positioning like other children (not relative positioning)
@@ -3080,8 +3127,8 @@ fn setup_units(
             let ring_pos = world_pos + Vec3::new(0.0, 6.0, 0.0);
             let ring_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
             parent.spawn((
-                Mesh3d(ring_mesh.clone()),
-                MeshMaterial3d(ring_material.clone()),
+                Mesh3d(ring_assets.main_ring_mesh.clone()),
+                MeshMaterial3d(ring_assets.main_ring_material.clone()),
                 Transform::from_translation(ring_pos)
                     .with_rotation(ring_rotation)
                     .with_scale(Vec3::splat(0.5)),
@@ -3091,7 +3138,31 @@ fn setup_units(
                     bounce_count: 0,
                 },
                 Visibility::Hidden,
-            ));
+            )).with_children(|ring_parent| {
+                // Outer ring
+                ring_parent.spawn((
+                    Mesh3d(ring_assets.outer_ring_mesh.clone()),
+                    MeshMaterial3d(ring_assets.outer_ring_material.clone()),
+                    Transform::default(),
+                    Visibility::Inherited,
+                ));
+                // Inner left quarter circle
+                ring_parent.spawn((
+                    Mesh3d(ring_assets.inner_ring_left_mesh.clone()),
+                    MeshMaterial3d(ring_assets.inner_ring_material.clone()),
+                    Transform::default(),
+                    Visibility::Inherited,
+                    InnerQuarterCircle,
+                ));
+                // Inner right quarter circle
+                ring_parent.spawn((
+                    Mesh3d(ring_assets.inner_ring_right_mesh.clone()),
+                    MeshMaterial3d(ring_assets.inner_ring_material.clone()),
+                    Transform::default(),
+                    Visibility::Inherited,
+                    InnerQuarterCircle,
+                ));
+            });
 
             // Spawn click collider (sphere for raycasting)
             // Use world positioning like other children (not relative positioning)
@@ -3414,6 +3485,62 @@ fn detect_unit_clicks(
     }
 }
 
+fn setup_selection_ring_assets(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    // Main ring: 10 units wide
+    let main_ring_mesh = meshes.add(create_selection_ring_mesh(90.0, 100.0));
+    let main_ring_material = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 1.0, 1.0, 1.0),
+        emissive: LinearRgba::new(3.0, 3.0, 3.0, 1.0).into(), // Brighter emissive
+        unlit: true,
+        alpha_mode: AlphaMode::Opaque,
+        ..default()
+    });
+
+    // Outer ring: 5 units wide, outside main ring
+    let outer_ring_mesh = meshes.add(create_selection_ring_mesh(105.0, 110.0));
+    let outer_ring_material = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 1.0, 1.0, 1.0),
+        emissive: LinearRgba::new(3.0, 3.0, 3.0, 1.0).into(), // Brighter emissive
+        unlit: true,
+        alpha_mode: AlphaMode::Opaque,
+        ..default()
+    });
+
+    // Inner quarter circles: 5 units wide, inside main ring, on left and right sides
+    let inner_ring_left_mesh = meshes.add(create_ring_arc_mesh(
+        80.0, 85.0,
+        std::f32::consts::PI,
+        std::f32::consts::PI * 1.5,
+        8
+    ));
+    let inner_ring_right_mesh = meshes.add(create_ring_arc_mesh(
+        80.0, 85.0,
+        0.0,
+        std::f32::consts::PI * 0.5,
+        8
+    ));
+    let inner_ring_material = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 1.0, 1.0, 1.0),
+        emissive: LinearRgba::new(3.0, 3.0, 3.0, 1.0).into(), // Brighter emissive
+        unlit: true,
+        alpha_mode: AlphaMode::Opaque,
+        ..default()
+    });
+
+    commands.insert_resource(SelectionRingAssets {
+        main_ring_mesh,
+        main_ring_material,
+        outer_ring_mesh,
+        outer_ring_material,
+        inner_ring_left_mesh,
+        inner_ring_right_mesh,
+        inner_ring_material,
+    });
+}
 
 pub struct UnitsPlugin;
 
@@ -3429,7 +3556,7 @@ impl Plugin for UnitsPlugin {
             .insert_resource(AIController::default())
             .insert_resource(ClickedUnit::default())
             .insert_resource(HoveredUnit::default())
-            .add_systems(OnEnter(LoadingState::Playing), setup_units)
+            .add_systems(OnEnter(LoadingState::Playing), (setup_selection_ring_assets, setup_units).chain())
             .add_systems(
                 Update,
                 (

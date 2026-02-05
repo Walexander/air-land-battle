@@ -12,6 +12,9 @@ use crate::loading::LoadingState;
 pub struct Selected;
 
 #[derive(Component)]
+pub struct InnerQuarterCircle;
+
+#[derive(Component)]
 pub struct SelectionRing {
     pub unit_entity: Entity,
     pub animation_timer: f32,
@@ -49,6 +52,53 @@ pub struct HoverRing {
 // Mesh creation functions
 pub fn create_selection_ring_mesh(inner_radius: f32, outer_radius: f32) -> Mesh {
     create_ring_mesh_with_segments(inner_radius, outer_radius, 32)
+}
+
+pub fn create_ring_arc_mesh(inner_radius: f32, outer_radius: f32, start_angle: f32, end_angle: f32, segments: u32) -> Mesh {
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut uvs = Vec::new();
+    let mut indices = Vec::new();
+
+    for i in 0..=segments {
+        let t = i as f32 / segments as f32;
+        let angle = start_angle + (end_angle - start_angle) * t;
+        let cos = angle.cos();
+        let sin = angle.sin();
+
+        positions.push([outer_radius * cos, 0.1, outer_radius * sin]);
+        normals.push([0.0, 1.0, 0.0]);
+        uvs.push([0.5 + cos * 0.5, 0.5 + sin * 0.5]);
+
+        positions.push([inner_radius * cos, 0.1, inner_radius * sin]);
+        normals.push([0.0, 1.0, 0.0]);
+        uvs.push([0.5 + cos * 0.3, 0.5 + sin * 0.3]);
+    }
+
+    for i in 0..segments {
+        let outer_current = (i * 2) as u32;
+        let inner_current = (i * 2 + 1) as u32;
+        let outer_next = ((i + 1) * 2) as u32;
+        let inner_next = ((i + 1) * 2 + 1) as u32;
+
+        indices.push(outer_current);
+        indices.push(inner_current);
+        indices.push(outer_next);
+
+        indices.push(inner_current);
+        indices.push(inner_next);
+        indices.push(outer_next);
+    }
+
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_indices(Indices::U32(indices));
+    mesh
 }
 
 pub fn create_ring_mesh_with_segments(inner_radius: f32, outer_radius: f32, segments: u32) -> Mesh {
@@ -1360,7 +1410,7 @@ fn animate_selection_rings(
                         mesh_handle.0 = meshes.add(new_mesh);
                     } else {
                         ring_transform.scale = Vec3::splat(0.5);
-                        // Set final mesh with standard line width
+                        // Set final mesh with 10-unit line width
                         let new_mesh = create_selection_ring_mesh(90.0, 100.0);
                         mesh_handle.0 = meshes.add(new_mesh);
                     }
@@ -1736,6 +1786,19 @@ fn update_hover_ring_positions(
     }
 }
 
+fn animate_inner_quarter_circles(
+    time: Res<Time>,
+    mut quarter_circle_query: Query<&mut Transform, With<InnerQuarterCircle>>,
+) {
+    let rotation_speed = 0.5; // Radians per second (slow rotation)
+    let delta_rotation = rotation_speed * time.delta_secs();
+
+    for mut transform in &mut quarter_circle_query {
+        // Rotate around Y axis
+        transform.rotate_y(delta_rotation);
+    }
+}
+
 impl Plugin for SelectionPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
@@ -1745,6 +1808,7 @@ impl Plugin for SelectionPlugin {
                 animate_selection_rings,
                 animate_destination_rings,
                 update_path_visualizations,
+                animate_inner_quarter_circles,
             ).run_if(in_state(LoadingState::Playing))
         );
         app.add_systems(

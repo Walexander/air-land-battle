@@ -1152,7 +1152,7 @@ fn update_fog_of_war(
                 visible_enemy_units.insert(entity);
             } else {
                 *visibility = Visibility::Hidden;
-                println!("Hiding enemy unit at ({}, {})", unit_pos.0, unit_pos.1);
+                // println!("Hiding enemy unit at ({}, {})", unit_pos.0, unit_pos.1);
             }
         }
     }
