@@ -341,23 +341,34 @@ impl Default for ArmyCooldowns {
 }
 
 impl ArmyCooldowns {
-    pub fn is_ready(&self, _unit_class: UnitClass) -> bool {
-        self.timer >= self.cooldown
+    pub fn is_ready(&self, _unit_class: UnitClass, current_unit_count: usize) -> bool {
+        // If no cooldown has been started yet, we're ready
+        if self.cooldown == 0.0 {
+            return true;
+        }
+
+        let required_cooldown = Self::calculate_cooldown(current_unit_count);
+        self.timer >= required_cooldown
     }
 
-    pub fn get_progress(&self, _unit_class: UnitClass) -> f32 {
-        if self.cooldown == 0.0 {
+    pub fn get_progress(&self, _unit_class: UnitClass, current_unit_count: usize) -> f32 {
+        let required_cooldown = Self::calculate_cooldown(current_unit_count);
+        if required_cooldown == 0.0 {
             1.0
         } else {
-            (self.timer / self.cooldown).min(1.0)
+            (self.timer / required_cooldown).min(1.0)
         }
     }
 
-    pub fn start_cooldown(&mut self, _unit_class: UnitClass, total_units: usize) {
+    fn calculate_cooldown(total_units: usize) -> f32 {
         // Exponential cooldown that grows rapidly as approaching 5 unit limit
         // Formula: 3.0 * 2.5^total_units
         // 0 units: 3s, 1: 7.5s, 2: 19s, 3: 47s, 4: 118s (hard limit at 5)
-        self.cooldown = 3.0 * 2.5_f32.powf(total_units as f32);
+        3.0 * 2.5_f32.powf(total_units as f32)
+    }
+
+    pub fn start_cooldown(&mut self, _unit_class: UnitClass, total_units: usize) {
+        self.cooldown = Self::calculate_cooldown(total_units);
         self.timer = 0.0;
     }
 
@@ -2122,8 +2133,13 @@ fn ai_spawn_units(
 
     // Spawn the chosen unit if cooldown is ready
     if let Some(unit_class) = unit_to_spawn {
+        // Count current Blue army units (including harvesters)
+        let blue_unit_count = unit_query.iter()
+            .filter(|(u, _uc)| u.army == Army::Blue)
+            .count();
+
         let blue_cooldowns = spawn_cooldowns.get_army_cooldowns(Army::Blue);
-        if blue_cooldowns.is_ready(unit_class) {
+        if blue_cooldowns.is_ready(unit_class, blue_unit_count) {
             spawn_queue.requests.push(UnitSpawnRequest {
                 unit_class,
                 army: Army::Blue,
