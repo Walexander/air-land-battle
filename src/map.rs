@@ -254,6 +254,53 @@ fn create_filled_hexagon_mesh() -> Mesh {
     create_filled_hexagon_mesh_with_radius(HEX_RADIUS - 1.0)
 }
 
+fn create_fog_hex_mesh(world_x: f32, world_z: f32, uv_scale: f32) -> Mesh {
+    // Create a filled hexagon with UVs based on world position for continuous texture
+    let radius = HEX_RADIUS - 1.0;
+
+    let x = |i: f32| radius * (i * 2.0 * std::f32::consts::PI / 6.0).cos();
+    let z = |i: f32| radius * (i * 2.0 * std::f32::consts::PI / 6.0).sin();
+
+    // Calculate UVs based on world position for continuous texture mapping
+    let uv_center = (world_x / uv_scale, world_z / uv_scale);
+    let uv_offset = |dx: f32, dz: f32| ((world_x + dx) / uv_scale, (world_z + dz) / uv_scale);
+
+    let vertices = [
+        ([0.0, 0.0, 0.0], [0.0, 1.0, 0.0], uv_center),
+        ([x(0.0), 0.0, z(0.0)], [0.0, 1.0, 0.0], uv_offset(x(0.0), z(0.0))),
+        ([x(1.0), 0.0, z(1.0)], [0.0, 1.0, 0.0], uv_offset(x(1.0), z(1.0))),
+        ([x(2.0), 0.0, z(2.0)], [0.0, 1.0, 0.0], uv_offset(x(2.0), z(2.0))),
+        ([x(3.0), 0.0, z(3.0)], [0.0, 1.0, 0.0], uv_offset(x(3.0), z(3.0))),
+        ([x(4.0), 0.0, z(4.0)], [0.0, 1.0, 0.0], uv_offset(x(4.0), z(4.0))),
+        ([x(5.0), 0.0, z(5.0)], [0.0, 1.0, 0.0], uv_offset(x(5.0), z(5.0))),
+    ];
+
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut uvs = Vec::new();
+
+    for (position, normal, uv) in vertices.iter() {
+        positions.push(*position);
+        normals.push(*normal);
+        uvs.push([uv.0, uv.1]);
+    }
+
+    let indices = Indices::U32(vec![
+        0, 1, 2,
+        0, 2, 3,
+        0, 3, 4,
+        0, 4, 5,
+        0, 5, 6,
+        0, 6, 1
+    ]);
+
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+        .with_inserted_indices(indices)
+}
+
 fn create_filled_hexagon_border_mesh() -> Mesh {
     // Border uses the full hex radius
     create_filled_hexagon_mesh_with_radius(HEX_RADIUS)
