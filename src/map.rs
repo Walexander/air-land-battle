@@ -91,16 +91,6 @@ impl Plugin for MapPlugin {
         // Set up obstacles
         let mut obstacles = Obstacles::default();
 
-        // Make all top row cells (r=-4) into obstacles
-        let map_radius: i32 = 5;
-        for q in -map_radius..=map_radius {
-            let r: i32 = -4;
-            // Check if this cell is within the hexagonal bounds
-            if q.abs().max((q + r).abs()).max(r.abs()) <= map_radius {
-                obstacles.positions.insert((q, r));
-            }
-        }
-
         // Add left edge obstacles
         obstacles.positions.insert((-3, -4));
         obstacles.positions.insert((-4, -2));
@@ -114,6 +104,9 @@ impl Plugin for MapPlugin {
         obstacles.positions.insert((5, 0));
         obstacles.positions.insert((4, 2));
         obstacles.positions.insert((3, 4));
+
+        // Add center obstacle
+        obstacles.positions.insert((-1, 2));
 
         app.insert_resource(HexMapConfig { map_radius: 5 })
             .insert_resource(HoveredHex::default())
@@ -732,9 +725,9 @@ fn setup_hex_map(
                 if is_obstacle {
                     // Spawn 3D mountain model for obstacles
                     // Mountain is 4x4 in Blender, scale to fill hex cell
-                    let mountain_scale = 25.0;
-                    // Raise the mountain so its base sits above the tile
-                    let mountain_pos = world_pos + Vec3::new(0.0, 10.0, 0.0);
+                    let mountain_scale = 21.25; // 25.0 * 0.85
+                    // Raise the mountain so its base sits above the tile, offset slightly in tile
+                    let mountain_pos = world_pos + Vec3::new(0.0, 10.0, 12.0);
                     // Rotate to align with hex grid
                     let mountain_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
 
