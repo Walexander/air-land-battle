@@ -787,7 +787,7 @@ fn handle_keyboard_and_scroll_camera(
         let zoom_delta = -event.y * zoom_speed; // Negative because scroll up should zoom in
 
         settings.scale += zoom_delta * settings.scale; // Scale zoom by current zoom level
-        settings.scale = settings.scale.clamp(0.1, 3.0); // Limit zoom range
+        settings.scale = settings.scale.clamp(0.3, 0.8); // Only allow zooming out from initial scale (smaller = more zoomed out for ortho)
     }
 }
 
