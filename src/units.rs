@@ -209,6 +209,7 @@ pub struct Harvester {
     pub harvest_timer: f32,
     pub harvest_duration: f32, // Time to fill up (10 seconds)
     pub crystals_carried: i32,
+    pub crystal_accumulator: f32, // Fractional crystals accumulated
     pub spawn_point: (i32, i32), // Base location
     pub target_field: Option<(i32, i32)>,
 }
@@ -1860,6 +1861,7 @@ fn spawn_unit_from_request(
                         harvest_timer: 0.0,
                         harvest_duration: 10.0,
                         crystals_carried: 0,
+                        crystal_accumulator: 0.0,
                         spawn_point: (q, r),
                         target_field: None,
                     });
@@ -3255,6 +3257,7 @@ fn harvester_move_to_field(
             if unit.q == target_q && unit.r == target_r {
                 harvester.state = HarvesterState::Harvesting;
                 harvester.harvest_timer = 0.0;
+                harvester.crystal_accumulator = 0.0;
                 println!("Harvester arrived at crystal field ({}, {}), starting to harvest", target_q, target_r);
                 continue;
             }
@@ -3324,17 +3327,29 @@ fn harvester_collect_crystals(
 
         // Collect crystals over time (5 crystals per second = 50 total in 10 seconds)
         let crystals_per_second = 5.0;
-        let delta_crystals = (crystals_per_second * time.delta_secs()).ceil() as i32;
+        harvester.crystal_accumulator += crystals_per_second * time.delta_secs();
 
-        // Find the crystal field at this position
-        for mut crystal_field in &mut crystal_query {
-            if crystal_field.q == unit.q && crystal_field.r == unit.r {
-                if crystal_field.crystals_remaining > 0 {
-                    let amount = delta_crystals.min(crystal_field.crystals_remaining);
-                    crystal_field.crystals_remaining -= amount;
-                    harvester.crystals_carried += amount;
+        // Extract integer crystals from accumulator
+        let delta_crystals = harvester.crystal_accumulator.floor() as i32;
+        if delta_crystals > 0 {
+            harvester.crystal_accumulator -= delta_crystals as f32;
+
+            // Find the crystal field at this position
+            for mut crystal_field in &mut crystal_query {
+                if crystal_field.q == unit.q && crystal_field.r == unit.r {
+                    if crystal_field.crystals_remaining > 0 {
+                        let amount = delta_crystals.min(crystal_field.crystals_remaining);
+                        crystal_field.crystals_remaining -= amount;
+                        harvester.crystals_carried += amount;
+
+                        // Pay money immediately as crystals are collected (1 crystal = 1 money)
+                        match army {
+                            Army::Red => economy.red_money += amount,
+                            Army::Blue => economy.blue_money += amount,
+                        }
+                    }
+                    break;
                 }
-                break;
             }
         }
 
@@ -3405,18 +3420,12 @@ struct HarvesterDepositing;
 
 fn harvester_deposit_crystals(
     mut commands: Commands,
-    mut economy: ResMut<Economy>,
     mut harvester_query: Query<(Entity, &Army, &mut Harvester), With<HarvesterDepositing>>,
 ) {
     for (entity, army, mut harvester) in &mut harvester_query {
-        // Award money (1 crystal = 1 money)
-        match army {
-            Army::Red => economy.red_money += harvester.crystals_carried,
-            Army::Blue => economy.blue_money += harvester.crystals_carried,
-        }
-
-        println!("{:?} harvester deposited {} crystals (+${}) at base",
-            army, harvester.crystals_carried, harvester.crystals_carried);
+        // Money was already paid during collection, just reset the harvester
+        println!("{:?} harvester returned to base with {} crystals collected",
+            army, harvester.crystals_carried);
 
         // Reset harvester state
         harvester.state = HarvesterState::Idle;
