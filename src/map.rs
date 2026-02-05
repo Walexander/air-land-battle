@@ -44,6 +44,12 @@ pub struct LaunchPadTile {
 }
 
 #[derive(Component)]
+pub struct FogOfWar {
+    pub hex_q: i32,
+    pub hex_r: i32,
+}
+
+#[derive(Component)]
 pub struct CrystalField {
     pub q: i32,
     pub r: i32,
@@ -114,7 +120,7 @@ impl Plugin for MapPlugin {
             .insert_resource(obstacles)
             .insert_resource(ClearColor(Color::srgb(0.53, 0.81, 0.92))) // Light sky blue
             .add_systems(OnEnter(LoadingState::Playing), setup_hex_map)
-            .add_systems(Update, (hex_hover_system, update_outline_colors, update_launch_pad_colors, billboard_sprites, apply_crystal_materials, animate_crystal_sparkle).run_if(in_state(LoadingState::Playing)));
+            .add_systems(Update, (hex_hover_system, update_outline_colors, update_launch_pad_colors, billboard_sprites, apply_crystal_materials, animate_crystal_sparkle, update_fog_of_war).run_if(in_state(LoadingState::Playing)));
     }
 }
 
@@ -798,6 +804,28 @@ fn setup_hex_map(
                         HexOutline { hex_entity },
                         Visibility::Hidden,
                     ));
+
+                    // Spawn fog of war overlay (visible by default until units reveal the area)
+                    let fog_pos = world_pos + Vec3::new(0.0, 3.0, 0.0);
+                    let fog_color = Color::srgba(0.0, 0.0, 0.0, 0.7); // Dark semi-transparent overlay
+                    parent.spawn((
+                        Mesh3d(filled_hex_mesh.clone()),
+                        MeshMaterial3d(materials.add(StandardMaterial {
+                            base_color: fog_color,
+                            alpha_mode: AlphaMode::Blend,
+                            unlit: true,
+                            double_sided: true,
+                            cull_mode: None,
+                            ..default()
+                        })),
+                        Transform::from_translation(fog_pos)
+                            .with_rotation(hex_rotation),
+                        FogOfWar {
+                            hex_q: q,
+                            hex_r: r,
+                        },
+                        Visibility::Visible,
+                    ));
                 }
 
                 if is_obstacle {
@@ -1011,6 +1039,92 @@ fn billboard_sprites(
     for mut sprite_transform in &mut sprite_query {
         // Make sprite face the camera
         sprite_transform.look_at(camera_transform.translation, Vec3::Y);
+    }
+}
+
+fn update_fog_of_war(
+    unit_query: Query<(Entity, &Unit)>,
+    mut visibility_query: Query<&mut Visibility>,
+    fog_query: Query<(Entity, &FogOfWar)>,
+    health_bar_query: Query<(&crate::units::HealthBar, Entity)>,
+) {
+    use std::collections::HashSet;
+
+    // Collect all visible hex positions (within 2 hexes of any Red unit)
+    let mut visible_hexes: HashSet<(i32, i32)> = HashSet::new();
+
+    for (_, unit) in &unit_query {
+        // Only Red (player) units reveal fog
+        if unit.army != crate::units::Army::Red {
+            continue;
+        }
+
+        let unit_pos = (unit.q, unit.r);
+
+        // Add all hexes within 2-hex radius
+        for dq in -2i32..=2i32 {
+            for dr in -2i32..=2i32 {
+                let ds = -dq - dr;
+                // Cube coordinate constraint: |dq| + |dr| + |ds| must be even
+                // For hex distance <= 2: max(|dq|, |dr|, |ds|) <= 2
+                if dq.abs().max(dr.abs()).max(ds.abs()) <= 2 {
+                    visible_hexes.insert((unit_pos.0 + dq, unit_pos.1 + dr));
+                }
+            }
+        }
+    }
+
+    // Update fog visibility
+    for (fog_entity, fog) in &fog_query {
+        let hex_pos = (fog.hex_q, fog.hex_r);
+        if let Ok(mut visibility) = visibility_query.get_mut(fog_entity) {
+            if visible_hexes.contains(&hex_pos) {
+                *visibility = Visibility::Hidden; // Hide fog where units can see
+            } else {
+                *visibility = Visibility::Visible; // Show fog where units can't see
+            }
+        }
+    }
+
+    // Track which enemy units should be visible
+    let mut visible_enemy_units: HashSet<Entity> = HashSet::new();
+
+    // Check each unit and update visibility
+    for (entity, unit) in &unit_query {
+        // Only hide enemy units (not player's Red units)
+        if unit.army == crate::units::Army::Red {
+            continue;
+        }
+
+        let unit_pos = (unit.q, unit.r);
+        let should_be_visible = visible_hexes.contains(&unit_pos);
+
+        if let Ok(mut visibility) = visibility_query.get_mut(entity) {
+            if should_be_visible {
+                *visibility = Visibility::Visible;
+                visible_enemy_units.insert(entity);
+            } else {
+                *visibility = Visibility::Hidden;
+                println!("Hiding enemy unit at ({}, {})", unit_pos.0, unit_pos.1);
+            }
+        }
+    }
+
+    // Update health/progress bar visibility for enemy units
+    for (health_bar, bar_entity) in &health_bar_query {
+        // Check if this bar belongs to an enemy unit
+        if let Ok((_, unit)) = unit_query.get(health_bar.unit_entity) {
+            if unit.army != crate::units::Army::Red {
+                // This is an enemy unit's bar
+                if let Ok(mut visibility) = visibility_query.get_mut(bar_entity) {
+                    if visible_enemy_units.contains(&health_bar.unit_entity) {
+                        *visibility = Visibility::Visible;
+                    } else {
+                        *visibility = Visibility::Hidden;
+                    }
+                }
+            }
+        }
     }
 }
 

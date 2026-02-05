@@ -1744,6 +1744,7 @@ fn spawn_unit_from_request(
                 parent
                     .spawn((
                         Transform::from_translation(unit_pos),
+                        Visibility::Visible,
                         Unit {
                             q,
                             r,
@@ -1805,6 +1806,7 @@ fn spawn_unit_from_request(
                     SceneRoot(scene),
                     Transform::from_translation(unit_pos)
                         .with_scale(Vec3::splat(spawn_request.unit_class.scale())),
+                    Visibility::Visible,
                     Unit {
                         q,
                         r,
@@ -2683,6 +2685,7 @@ fn setup_units(
                 parent
                     .spawn((
                         Transform::from_translation(unit_pos),
+                        Visibility::Visible,
                         Unit {
                             q: *q,
                             r: *r,
@@ -2927,6 +2930,7 @@ fn setup_units(
                 parent
                     .spawn((
                         Transform::from_translation(unit_pos),
+                        Visibility::Visible,
                         Unit {
                             q: *q,
                             r: *r,
