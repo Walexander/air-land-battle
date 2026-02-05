@@ -352,11 +352,11 @@ impl ArmyCooldowns {
         }
     }
 
-    pub fn start_cooldown(&mut self, _unit_class: UnitClass, combat_units: usize) {
-        // Exponential cooldown: 4 units = 30s, 5 units = 60s
-        // Formula: 1.875 * 2^combat_units
-        // 0 units: ~2s, 1: ~4s, 2: ~8s, 3: ~15s, 4: 30s, 5: 60s
-        self.cooldown = 1.875 * 2.0_f32.powf(combat_units as f32);
+    pub fn start_cooldown(&mut self, _unit_class: UnitClass, total_units: usize) {
+        // Exponential cooldown that grows rapidly as approaching 5 unit limit
+        // Formula: 3.0 * 2.5^total_units
+        // 0 units: 3s, 1: 7.5s, 2: 19s, 3: 47s, 4: 118s (hard limit at 5)
+        self.cooldown = 3.0 * 2.5_f32.powf(total_units as f32);
         self.timer = 0.0;
     }
 
@@ -1629,6 +1629,16 @@ fn spawn_unit_from_request(
             continue;
         }
 
+        // Check unit limit (hard cap at 5 units including harvesters)
+        let total_units = unit_query.iter()
+            .filter(|(u, _uc)| u.army == spawn_request.army)
+            .count();
+
+        if total_units >= 5 {
+            println!("{:?} army: Unit limit reached (5/5)!", spawn_request.army);
+            continue;
+        }
+
         // Find available spawn location based on army
         // Harvesters prefer (-4, 0) and (4, 0) positions
         let spawn_candidates = match spawn_request.army {
@@ -1969,12 +1979,12 @@ fn spawn_unit_from_request(
             ));
         });
 
-        // Start cooldown based on this army's combat unit count (excluding harvesters)
-        let combat_units = unit_query.iter()
-            .filter(|(u, uc)| u.army == spawn_request.army && **uc != UnitClass::Harvester)
+        // Start cooldown based on this army's total unit count (including harvesters)
+        let total_units = unit_query.iter()
+            .filter(|(u, _uc)| u.army == spawn_request.army)
             .count();
         let army_cooldowns = spawn_cooldowns.get_army_cooldowns_mut(spawn_request.army);
-        army_cooldowns.start_cooldown(spawn_request.unit_class, combat_units);
+        army_cooldowns.start_cooldown(spawn_request.unit_class, total_units);
 
         println!("Spawned {:?} {:?} unit at ({}, {}) for ${} (global cooldown: {:.1}s)",
             spawn_request.army, spawn_request.unit_class, q, r, cost, army_cooldowns.cooldown
