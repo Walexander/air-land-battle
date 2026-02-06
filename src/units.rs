@@ -361,10 +361,15 @@ impl ArmyCooldowns {
     }
 
     fn calculate_cooldown(total_units: usize) -> f32 {
-        // Exponential cooldown that grows rapidly as approaching 5 unit limit
-        // Formula: 3.0 * 2.5^total_units
-        // 0 units: 3s, 1: 7.5s, 2: 19s, 3: 47s, 4: 118s (hard limit at 5)
-        3.0 * 2.5_f32.powf(total_units as f32)
+        // Exponential cooldown that grows but caps at 15 seconds
+        // No cooldown with 0 units, then grows exponentially
+        // Formula: min(15.0, 3.0 * 1.7^(total_units - 1))
+        // 0 units: 0s, 1: 3s, 2: 5.1s, 3: 8.7s, 4: 14.8s, 5+: 15s (capped)
+        if total_units == 0 {
+            0.0
+        } else {
+            (3.0 * 1.7_f32.powf((total_units - 1) as f32)).min(15.0)
+        }
     }
 
     pub fn start_cooldown(&mut self, _unit_class: UnitClass, total_units: usize) {
