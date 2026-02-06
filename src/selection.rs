@@ -707,7 +707,6 @@ fn handle_unit_selection(
     mouse_button: Res<ButtonInput<MouseButton>>,
     clicked_unit: Res<crate::units::ClickedUnit>,
     hovered_hex: Res<HoveredHex>,
-    hex_query: Query<&HexTile>,
     config: Res<HexMapConfig>,
     obstacles: Res<Obstacles>,
     occupancy: Res<Occupancy>,
@@ -717,11 +716,17 @@ fn handle_unit_selection(
     selected_query: Query<(Entity, &Unit, &UnitStats, Option<&UnitMovement>, &Transform), With<Selected>>,
     path_viz_query: Query<(Entity, &PathVisualization)>,
     dest_ring_query: Query<(Entity, &DestinationRing)>,
+    ui_clicked: Res<crate::ui::UIClicked>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut commands: Commands,
 ) {
     if mouse_button.just_pressed(MouseButton::Left) {
+        // Don't process game clicks if clicking on UI
+        if ui_clicked.0 {
+            return;
+        }
+
         // Check if a unit was clicked directly (prioritize direct clicks)
         if let Some(clicked_entity) = clicked_unit.entity {
             // Check if the clicked unit is from the Red army (player controlled)
@@ -991,15 +996,14 @@ fn handle_unit_selection(
 
         // Handle movement to empty cells (only if no unit was clicked directly via hitbox)
         if clicked_unit.entity.is_none() {
-            if let Some(hovered_entity) = hovered_hex.entity {
-                if let Ok(hovered_tile) = hex_query.get(hovered_entity) {
-                    if let Ok((selected_entity, selected_unit, stats, existing_movement, _unit_transform)) =
-                        selected_query.single()
-                    {
-                        // Remove targeting when issuing normal movement command
-                        commands.entity(selected_entity).remove::<crate::units::Targeting>();
+            if hovered_hex.entity.is_some() {
+                if let Ok((selected_entity, selected_unit, stats, existing_movement, _unit_transform)) =
+                    selected_query.single()
+                {
+                    // Remove targeting when issuing normal movement command
+                    commands.entity(selected_entity).remove::<crate::units::Targeting>();
 
-                        let goal = (hovered_tile.q, hovered_tile.r);
+                    let goal = (hovered_hex.q, hovered_hex.r);
 
                         if obstacles.positions.contains(&goal) {
                             return;
@@ -1234,7 +1238,6 @@ fn handle_unit_selection(
                     }
                 }
             }
-        }
     }
 }
 

@@ -58,20 +58,27 @@ pub struct CameraSettings {
 #[derive(Resource)]
 pub struct CameraControlsVisible(pub bool);
 
+#[derive(Resource, Default)]
+pub struct UIClicked(pub bool);
+
 // Systems
+fn reset_ui_clicked(mut ui_clicked: ResMut<UIClicked>) {
+    ui_clicked.0 = false;
+}
+
 fn setup_ui(mut commands: Commands) {
     // Bottom bar with buttons and money counter
     commands
         .spawn(Node {
             width: Val::Percent(100.0),
-            height: Val::Px(60.0),
+            height: Val::Px(90.0),
             position_type: PositionType::Absolute,
             bottom: Val::Px(0.0),
             flex_direction: FlexDirection::Row,
             align_items: AlignItems::Center,
-            column_gap: Val::Px(8.0),
+            column_gap: Val::Px(12.0),
             justify_content: JustifyContent::Center,
-            padding: UiRect::all(Val::Px(5.0)),
+            padding: UiRect::all(Val::Px(7.5)),
             ..default()
         })
         .insert(BackgroundColor(Color::srgb(1.0, 1.0, 1.0)))
@@ -81,11 +88,11 @@ fn setup_ui(mut commands: Commands) {
                 .spawn((
                     Button,
                     Node {
-                        width: Val::Px(50.0),
-                        height: Val::Px(50.0),
+                        width: Val::Px(75.0),
+                        height: Val::Px(75.0),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
-                        border: UiRect::all(Val::Px(2.0)),
+                        border: UiRect::all(Val::Px(3.0)),
                         ..default()
                     },
                     BackgroundColor(Color::srgb(0.0, 0.0, 0.0)),
@@ -112,7 +119,7 @@ fn setup_ui(mut commands: Commands) {
                     button_parent.spawn((
                         Text::new("I"),
                         TextFont {
-                            font_size: 24.0,
+                            font_size: 36.0,
                             ..default()
                         },
                         TextColor(Color::WHITE),
@@ -124,11 +131,11 @@ fn setup_ui(mut commands: Commands) {
                 .spawn((
                     Button,
                     Node {
-                        width: Val::Px(50.0),
-                        height: Val::Px(50.0),
+                        width: Val::Px(75.0),
+                        height: Val::Px(75.0),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
-                        border: UiRect::all(Val::Px(2.0)),
+                        border: UiRect::all(Val::Px(3.0)),
                         ..default()
                     },
                     BackgroundColor(Color::srgb(0.0, 0.0, 0.0)),
@@ -155,7 +162,7 @@ fn setup_ui(mut commands: Commands) {
                     button_parent.spawn((
                         Text::new("C"),
                         TextFont {
-                            font_size: 24.0,
+                            font_size: 36.0,
                             ..default()
                         },
                         TextColor(Color::WHITE),
@@ -167,11 +174,11 @@ fn setup_ui(mut commands: Commands) {
                 .spawn((
                     Button,
                     Node {
-                        width: Val::Px(50.0),
-                        height: Val::Px(50.0),
+                        width: Val::Px(75.0),
+                        height: Val::Px(75.0),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
-                        border: UiRect::all(Val::Px(2.0)),
+                        border: UiRect::all(Val::Px(3.0)),
                         ..default()
                     },
                     BackgroundColor(Color::srgb(0.0, 0.0, 0.0)),
@@ -198,7 +205,7 @@ fn setup_ui(mut commands: Commands) {
                     button_parent.spawn((
                         Text::new("A"),
                         TextFont {
-                            font_size: 24.0,
+                            font_size: 36.0,
                             ..default()
                         },
                         TextColor(Color::WHITE),
@@ -210,11 +217,11 @@ fn setup_ui(mut commands: Commands) {
                 .spawn((
                     Button,
                     Node {
-                        width: Val::Px(50.0),
-                        height: Val::Px(50.0),
+                        width: Val::Px(75.0),
+                        height: Val::Px(75.0),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
-                        border: UiRect::all(Val::Px(2.0)),
+                        border: UiRect::all(Val::Px(3.0)),
                         ..default()
                     },
                     BackgroundColor(Color::srgb(0.0, 0.0, 0.0)),
@@ -241,7 +248,7 @@ fn setup_ui(mut commands: Commands) {
                     button_parent.spawn((
                         Text::new("H"),
                         TextFont {
-                            font_size: 24.0,
+                            font_size: 36.0,
                             ..default()
                         },
                         TextColor(Color::WHITE),
@@ -252,12 +259,12 @@ fn setup_ui(mut commands: Commands) {
             parent.spawn((
                 Text::new("Red: $100"),
                 TextFont {
-                    font_size: 24.0,
+                    font_size: 36.0,
                     ..default()
                 },
                 TextColor(Color::srgb(0.9, 0.2, 0.2)),
                 Node {
-                    width: Val::Px(150.0),
+                    width: Val::Px(225.0),
                     ..default()
                 },
                 RedMoneyText,
@@ -268,14 +275,14 @@ fn setup_ui(mut commands: Commands) {
     commands.spawn((
         Text::new("Blue: $100"),
         TextFont {
-            font_size: 24.0,
+            font_size: 36.0,
             ..default()
         },
         TextColor(Color::srgb(0.2, 0.4, 0.9)),
         Node {
             position_type: PositionType::Absolute,
-            top: Val::Px(10.0),
-            right: Val::Px(10.0),
+            top: Val::Px(15.0),
+            right: Val::Px(15.0),
             ..default()
         },
         BlueMoneyText,
@@ -409,8 +416,14 @@ fn handle_unit_spawn_buttons(
     spawn_cooldowns: Res<SpawnCooldowns>,
     unit_query: Query<&Unit>,
     mut spawn_queue: ResMut<UnitSpawnQueue>,
+    mut ui_clicked: ResMut<UIClicked>,
 ) {
     for (interaction, button, mut border_color, mut node) in &mut interaction_query {
+        // Mark that UI was clicked
+        if *interaction == Interaction::Pressed {
+            ui_clicked.0 = true;
+        }
+
         let unit_class = match button {
             UnitSpawnButton::Infantry => UnitClass::Infantry,
             UnitSpawnButton::Cavalry => UnitClass::Cavalry,
@@ -955,14 +968,16 @@ impl Plugin for UIPlugin {
             z: 500.0,
             look_at_x: 0.0,
             look_at_y: 0.0,
-            look_at_z: 0.0,
+            look_at_z: 100.0,
             scale: 0.8,
         })
         .insert_resource(CameraControlsVisible(false))
+        .insert_resource(UIClicked(false))
         .add_systems(OnEnter(LoadingState::Playing), (setup_ui, setup_camera_controls))
         .add_systems(
             Update,
             (
+                reset_ui_clicked,
                 update_timer_ui,
                 update_money_ui,
                 update_hex_coordinate_display,

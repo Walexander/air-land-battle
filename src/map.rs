@@ -92,18 +92,14 @@ impl Plugin for MapPlugin {
         let mut obstacles = Obstacles::default();
 
         // Add left edge obstacles
-        obstacles.positions.insert((-3, -4));
         obstacles.positions.insert((-4, -2));
         obstacles.positions.insert((-5, 0));
         obstacles.positions.insert((-6, 2));
-        obstacles.positions.insert((-7, 4));
 
         // Add right edge obstacles
-        obstacles.positions.insert((7, -4));
         obstacles.positions.insert((6, -2));
         obstacles.positions.insert((5, 0));
         obstacles.positions.insert((4, 2));
-        obstacles.positions.insert((3, 4));
 
         // Add center obstacle
         obstacles.positions.insert((-1, 2));
