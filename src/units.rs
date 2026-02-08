@@ -1355,6 +1355,32 @@ fn create_health_bar_mesh(width: f32, height: f32) -> Mesh {
     .with_inserted_indices(indices)
 }
 
+// Configuration for spawning a health bar
+pub struct HealthBarConfig {
+    pub world_pos: Vec3,
+    pub unit_entity: Entity,
+    pub color: Color,
+    pub bar_width: f32,
+    pub bar_height: f32,
+    pub border_width_sides: f32,
+    pub border_height_extra: f32,
+}
+
+impl Default for HealthBarConfig {
+    fn default() -> Self {
+        Self {
+            world_pos: Vec3::ZERO,
+            unit_entity: Entity::PLACEHOLDER,
+            color: Color::srgb(0.9, 0.2, 0.2),
+            bar_width: 40.0,
+            bar_height: 10.0,
+            border_width_sides: 4.0,
+            border_height_extra: 8.0,
+        }
+    }
+}
+
+
 
 fn handle_flash_effects(
     time: Res<Time>,
@@ -1618,17 +1644,6 @@ fn spawn_unit_from_request(
         let model_path = spawn_request.unit_class.model_path();
         let stats = spawn_request.unit_class.default_stats();
 
-        // Prepare health bar meshes
-        let bar_width = 40.0;
-        let bar_height = 10.0;
-        let border_width_sides = 4.0;
-        let border_height_extra = 8.0;
-        let health_bar_mesh = meshes.add(create_health_bar_mesh(bar_width, bar_height));
-        let border_mesh = meshes.add(create_health_bar_mesh(
-            bar_width + border_width_sides,
-            bar_height + border_height_extra,
-        ));
-
         // Find the appropriate army parent entity
         let army_entity = match spawn_request.army {
             Army::Red => {
@@ -1744,8 +1759,25 @@ fn spawn_unit_from_request(
                 }
             });
 
-            // Spawn health bars (matching original setup)
-            let bar_pos_world = world_pos + Vec3::new(0.0, 70.0, 0.0);
+            // Spawn health bar using config
+            let health_bar_config = HealthBarConfig {
+                world_pos,
+                unit_entity,
+                color: health_bar_color,
+                ..Default::default()
+            };
+
+            // Create health bar meshes
+            let health_bar_mesh = meshes.add(create_health_bar_mesh(
+                health_bar_config.bar_width,
+                health_bar_config.bar_height,
+            ));
+            let border_mesh = meshes.add(create_health_bar_mesh(
+                health_bar_config.bar_width + health_bar_config.border_width_sides,
+                health_bar_config.bar_height + health_bar_config.border_height_extra,
+            ));
+
+            let bar_pos_world = health_bar_config.world_pos + Vec3::new(0.0, 70.0, 0.0);
 
             // Border (black)
             parent.spawn((
@@ -1759,7 +1791,7 @@ fn spawn_unit_from_request(
                     ..default()
                 })),
                 Transform::from_translation(bar_pos_world),
-                HealthBar { unit_entity },
+                HealthBar { unit_entity: health_bar_config.unit_entity },
                 HealthBarBorder,
             ));
 
@@ -1775,22 +1807,22 @@ fn spawn_unit_from_request(
                     ..default()
                 })),
                 Transform::from_translation(bar_pos_world + Vec3::new(0.0, 0.1, 0.0)),
-                HealthBar { unit_entity },
+                HealthBar { unit_entity: health_bar_config.unit_entity },
             ));
 
             // Fill (color based on army)
             parent.spawn((
                 Mesh3d(health_bar_mesh.clone()),
                 MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: health_bar_color,
-                    emissive: health_bar_color.into(),
+                    base_color: health_bar_config.color,
+                    emissive: health_bar_config.color.into(),
                     unlit: true,
                     double_sided: true,
                     cull_mode: None,
                     ..default()
                 })),
                 Transform::from_translation(bar_pos_world + Vec3::new(0.0, 0.2, 0.0)),
-                HealthBar { unit_entity },
+                HealthBar { unit_entity: health_bar_config.unit_entity },
                 HealthBarFill,
             ));
 
