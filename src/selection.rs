@@ -124,8 +124,8 @@ pub fn create_ring_mesh_with_segments(inner_radius: f32, outer_radius: f32, segm
     for i in 0..segments {
         let outer_current = i * 2 ;
         let inner_current = i * 2 + 1 ;
-        let outer_next = ((i * 2 + 2) % (segments * 2));
-        let inner_next = ((i * 2 + 3) % (segments * 2));
+        let outer_next = (i * 2 + 2) % (segments * 2) ;
+        let inner_next = (i * 2 + 3) % (segments * 2) ;
 
         indices.push(outer_current);
         indices.push(inner_current);

@@ -25,9 +25,7 @@ pub struct HexTile {
 }
 
 #[derive(Component)]
-pub struct HexOutline {
-    pub hex_entity: Entity,
-}
+pub struct HexOutline {}
 
 #[derive(Component)]
 pub struct ObstacleSprite;
@@ -38,9 +36,7 @@ pub struct LaunchPadOutline {
 }
 
 #[derive(Component)]
-pub struct LaunchPadTile {
-    pub pad_index: usize,
-}
+pub struct LaunchPadTile {}
 
 #[derive(Component)]
 pub struct FogOfWar {
@@ -56,8 +52,6 @@ pub struct CrystalField {
     pub max_crystals: i32,
 }
 
-#[derive(Component)]
-struct CrystalMaterialApplied;
 
 #[derive(Component)]
 struct CrystalVisual {
@@ -545,11 +539,9 @@ fn setup_hex_map(
                 ));
 
                 // Add LaunchPadTile component if this is a launch pad
-                if let Some(idx) = pad_index {
-                    hex_entity_commands.insert(LaunchPadTile { pad_index: idx });
+                if pad_index.is_some() {
+                    hex_entity_commands.insert(LaunchPadTile {});
                 }
-
-                let hex_entity = hex_entity_commands.id();
 
                 // Spawn hex outline (skip for obstacles since they use sprites)
                 let base_outline_height = 1.0;
@@ -681,7 +673,7 @@ fn setup_hex_map(
                         Transform::from_translation(hover_pos)
                             .with_rotation(outline_rotation)
                             .with_scale(Vec3::splat(0.75)), // Match destination ring resting scale
-                        HexOutline { hex_entity },
+                        HexOutline {},
                         Visibility::Hidden,
                     ));
 
@@ -1119,5 +1111,3 @@ fn update_crystal_visuals(
     }
 }
 
-#[derive(Component)]
-struct CoordinateLabel;

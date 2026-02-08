@@ -56,9 +56,7 @@ pub struct UnitMovement {
 
 #[derive(Component)]
 pub struct AnimationGraphs {
-    pub idle_graph: Handle<AnimationGraph>,
     pub idle_index: AnimationNodeIndex,
-    pub moving_graph: Handle<AnimationGraph>,
     pub moving_index: AnimationNodeIndex,
 }
 
@@ -246,7 +244,6 @@ pub struct ExplosionEffect {
 #[derive(Component)]
 pub struct ExplosionVisual {
     pub timer: f32,
-    pub initial_scale: f32,
 }
 
 #[derive(Component)]
@@ -261,11 +258,7 @@ pub struct ClickedUnit {
     pub entity: Option<Entity>,
 }
 
-impl ClickedUnit {
-    pub fn clear(&mut self) {
-        self.entity = None;
-    }
-}
+impl ClickedUnit {}
 
 #[derive(Resource, Default)]
 pub struct HoveredUnit {
@@ -1031,7 +1024,6 @@ fn remove_dead_units(
                 Transform::from_translation(death_pos).with_scale(Vec3::splat(0.1)),
                 ExplosionVisual {
                     timer: 0.0,
-                    initial_scale: 0.1,
                 },
             ));
 
@@ -1527,7 +1519,6 @@ fn handle_explosion_effects(
                 Transform::from_translation(explosion_pos).with_scale(Vec3::splat(0.1)),
                 ExplosionVisual {
                     timer: 0.0,
-                    initial_scale: 1.0,
                 },
             ));
         }
@@ -1773,9 +1764,7 @@ fn spawn_unit_from_request(
                         stats.clone(),
                         AnimationGraphHandle(graph_handle.clone()),
                         AnimationGraphs {
-                            idle_graph: graph_handle.clone(),
                             idle_index,
-                            moving_graph: graph_handle.clone(),
                             moving_index,
                         },
                         CurrentAnimationState { is_moving: false },
@@ -1835,9 +1824,7 @@ fn spawn_unit_from_request(
                     stats.clone(),
                     AnimationGraphHandle(graph_handle.clone()),
                     AnimationGraphs {
-                        idle_graph: graph_handle.clone(),
                         idle_index,
-                        moving_graph: graph_handle.clone(),
                         moving_index,
                     },
                     CurrentAnimationState { is_moving: false },
@@ -2050,7 +2037,6 @@ fn ai_spawn_units(
     let mut blue_cavalry = 0;
     let mut blue_artillery = 0;
     let mut blue_harvesters = 0;
-    let mut red_combat_units = 0;
 
     for (unit, unit_class) in unit_query.iter() {
         if unit.army == Army::Blue {
@@ -2060,10 +2046,7 @@ fn ai_spawn_units(
                 UnitClass::Artillery => blue_artillery += 1,
                 UnitClass::Harvester => blue_harvesters += 1,
             }
-        } else if unit.army == Army::Red
-            && *unit_class != UnitClass::Harvester {
-                red_combat_units += 1;
-            }
+        }
     }
 
     let blue_combat_units = blue_infantry + blue_cavalry + blue_artillery;
@@ -2732,9 +2715,7 @@ fn setup_units(
                         stats.clone(),
                         AnimationGraphHandle(graph_handle.clone()),
                         AnimationGraphs {
-                            idle_graph: graph_handle.clone(),
                             idle_index,
-                            moving_graph: graph_handle.clone(),
                             moving_index,
                         },
                         CurrentAnimationState { is_moving: false },
@@ -2796,9 +2777,7 @@ fn setup_units(
                         stats.clone(),
                         AnimationGraphHandle(graph_handle.clone()),
                         AnimationGraphs {
-                            idle_graph: graph_handle.clone(),
                             idle_index,
-                            moving_graph: graph_handle.clone(),
                             moving_index,
                         },
                         CurrentAnimationState { is_moving: false },
@@ -3001,9 +2980,7 @@ fn setup_units(
                         stats.clone(),
                         AnimationGraphHandle(graph_handle.clone()),
                         AnimationGraphs {
-                            idle_graph: graph_handle.clone(),
                             idle_index,
-                            moving_graph: graph_handle.clone(),
                             moving_index,
                         },
                         CurrentAnimationState { is_moving: false },
@@ -3065,9 +3042,7 @@ fn setup_units(
                         stats.clone(),
                         AnimationGraphHandle(graph_handle.clone()),
                         AnimationGraphs {
-                            idle_graph: graph_handle.clone(),
                             idle_index,
-                            moving_graph: graph_handle.clone(),
                             moving_index,
                         },
                         CurrentAnimationState { is_moving: false },
