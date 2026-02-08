@@ -290,22 +290,22 @@ impl Default for ArmyCooldowns {
 }
 
 impl ArmyCooldowns {
-    pub fn is_ready(&self, _unit_class: UnitClass, current_unit_count: usize) -> bool {
+    pub fn is_ready(&self, _unit_class: UnitClass, _current_unit_count: usize) -> bool {
         // If no cooldown has been started yet, we're ready
         if self.cooldown == 0.0 {
             return true;
         }
 
-        let required_cooldown = Self::calculate_cooldown(current_unit_count);
-        self.timer >= required_cooldown
+        // Check if the current active cooldown has expired
+        self.timer >= self.cooldown
     }
 
-    pub fn get_progress(&self, _unit_class: UnitClass, current_unit_count: usize) -> f32 {
-        let required_cooldown = Self::calculate_cooldown(current_unit_count);
-        if required_cooldown == 0.0 {
+    pub fn get_progress(&self, _unit_class: UnitClass, _current_unit_count: usize) -> f32 {
+        // If no cooldown active, return 100% progress
+        if self.cooldown == 0.0 {
             1.0
         } else {
-            (self.timer / required_cooldown).min(1.0)
+            (self.timer / self.cooldown).min(1.0)
         }
     }
 
@@ -1552,8 +1552,9 @@ fn spawn_unit_from_request(
         }
 
         // Check if spawn cooldown is ready
+        // Pass the count AFTER spawning would occur (current + 1) to match how cooldown was started
         let army_cooldowns = spawn_cooldowns.get_army_cooldowns(spawn_request.army);
-        if !army_cooldowns.is_ready(spawn_request.unit_class, total_units) {
+        if !army_cooldowns.is_ready(spawn_request.unit_class, total_units + 1) {
             println!("{:?} army: Spawn cooldown not ready for {:?}", spawn_request.army, spawn_request.unit_class);
             continue;
         }
@@ -1855,11 +1856,10 @@ fn spawn_unit_from_request(
         });
 
         // Start cooldown based on this army's total unit count (including harvesters)
-        let total_units = unit_query.iter()
-            .filter(|(u, _uc)| u.army == spawn_request.army)
-            .count();
+        // Use total_units + 1 (the unit we just spawned) since the spawned unit
+        // won't appear in queries until the command buffer flushes
         let army_cooldowns = spawn_cooldowns.get_army_cooldowns_mut(spawn_request.army);
-        army_cooldowns.start_cooldown(spawn_request.unit_class, total_units);
+        army_cooldowns.start_cooldown(spawn_request.unit_class, total_units + 1);
 
         println!("Spawned {:?} {:?} unit at ({}, {}) for ${} (global cooldown: {:.1}s)",
             spawn_request.army, spawn_request.unit_class, q, r, cost, army_cooldowns.cooldown

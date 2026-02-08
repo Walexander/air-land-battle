@@ -176,7 +176,8 @@ fn ai_spawn_units(
             .count();
 
         let blue_cooldowns = spawn_cooldowns.get_army_cooldowns(Army::Blue);
-        if blue_cooldowns.is_ready(unit_class, blue_unit_count) {
+        // Check cooldown for count after spawning (current + 1)
+        if blue_cooldowns.is_ready(unit_class, blue_unit_count + 1) {
             spawn_queue.requests.push(UnitSpawnRequest {
                 unit_class,
                 army: Army::Blue,

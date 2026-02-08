@@ -442,7 +442,8 @@ fn handle_unit_spawn_buttons(
                 let cost = unit_class.cost();
                 let can_afford = economy.red_money >= cost;
                 let red_cooldowns = spawn_cooldowns.get_army_cooldowns(Army::Red);
-                let cooldown_ready = red_cooldowns.is_ready(unit_class, red_unit_count);
+                // Check cooldown for the count AFTER spawning (current + 1)
+                let cooldown_ready = red_cooldowns.is_ready(unit_class, red_unit_count + 1);
 
                 // Visual: make button look pressed
                 node.border = UiRect {
@@ -471,8 +472,8 @@ fn handle_unit_spawn_buttons(
                 node.border = UiRect::all(Val::Px(3.0));
 
                 let red_cooldowns = spawn_cooldowns.get_army_cooldowns(Army::Red);
-                // Highlight border when hovered
-                if red_cooldowns.is_ready(unit_class, red_unit_count) {
+                // Highlight border when hovered - check for count after spawning
+                if red_cooldowns.is_ready(unit_class, red_unit_count + 1) {
                     *border_color = BorderColor::all(Color::srgb(0.6, 0.6, 0.6));
                 } else {
                     *border_color = BorderColor::all(Color::srgb(0.2, 0.2, 0.2));
@@ -513,7 +514,7 @@ fn update_spawn_button_visuals(
         };
 
         let can_afford = economy.red_money >= unit_class.cost();
-        let is_ready = red_cooldowns.is_ready(unit_class, red_unit_count);
+        let is_ready = red_cooldowns.is_ready(unit_class, red_unit_count + 1);
 
         if is_ready && !can_afford {
             // Not affordable but ready - red background
@@ -534,7 +535,7 @@ fn update_spawn_button_visuals(
         };
 
         let can_afford = economy.red_money >= unit_class.cost();
-        let _is_ready = red_cooldowns.is_ready(unit_class, red_unit_count);
+        let _is_ready = red_cooldowns.is_ready(unit_class, red_unit_count + 1);
 
         // Set fill bar color based on affordability (regardless of cooldown status)
         if !can_afford {
@@ -543,7 +544,7 @@ fn update_spawn_button_visuals(
             *fill_color = BackgroundColor(Color::srgb(0.0, 0.6, 0.0)); // Green when affordable
         }
 
-        let progress = red_cooldowns.get_progress(unit_class, red_unit_count);
+        let progress = red_cooldowns.get_progress(unit_class, red_unit_count + 1);
         let height_percent = progress * 100.0;
         node.height = Val::Percent(height_percent);
     }
