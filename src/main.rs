@@ -9,6 +9,7 @@ mod selection;
 mod launch_pads;
 mod ui;
 mod loading;
+mod ai;
 
 use map::MapPlugin;
 use units::UnitsPlugin;
@@ -16,6 +17,7 @@ use selection::SelectionPlugin;
 use launch_pads::LaunchPadsPlugin;
 use ui::UIPlugin;
 use loading::LoadingPlugin;
+use ai::AIPlugin;
 
 // #[derive(Component)]
 // struct Position {
@@ -76,6 +78,7 @@ fn main() {
         .add_plugins(LaunchPadsPlugin)
         .add_plugins(MapPlugin)
         .add_plugins(UnitsPlugin)
+        .add_plugins(AIPlugin)
         .add_plugins(SelectionPlugin)
         .add_plugins(UIPlugin)
         .add_systems(Startup, (setup_fps_counter, setup_game_speed))
