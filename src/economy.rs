@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use std::collections::HashSet;
 
 use crate::loading::LoadingState;
 use crate::map::{CrystalField, HexMapConfig, Obstacles};

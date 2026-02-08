@@ -8,8 +8,8 @@ use std::cmp::Ordering;
 use rand::Rng;
 
 use crate::economy::{Economy, Harvester, HarvesterState};
-use crate::map::{axial_to_world_pos, HexMapConfig, Obstacles, CrystalField};
-use crate::selection::{SelectionRing, create_selection_ring_mesh, create_ring_arc_mesh, InnerQuarterCircle};
+use crate::map::{axial_to_world_pos, HexMapConfig, Obstacles};
+use crate::selection::{create_selection_ring_mesh, create_ring_arc_mesh, InnerQuarterCircle};
 use crate::launch_pads::{GameState, GameTimer};
 use crate::loading::LoadingState;
 
@@ -1014,17 +1014,17 @@ fn reset_game(
     mut commands: Commands,
     army_query: Query<Entity, Or<(With<RedArmy>, With<BlueArmy>)>>,
     children_query: Query<&Children>,
-    meshes: ResMut<Assets<Mesh>>,
-    materials: ResMut<Assets<StandardMaterial>>,
-    animation_graphs: ResMut<Assets<AnimationGraph>>,
-    asset_server: Res<AssetServer>,
+    _meshes: ResMut<Assets<Mesh>>,
+    _materials: ResMut<Assets<StandardMaterial>>,
+    _animation_graphs: ResMut<Assets<AnimationGraph>>,
+    _asset_server: Res<AssetServer>,
     mut occupancy: ResMut<Occupancy>,
     mut occupancy_intent: ResMut<OccupancyIntent>,
     mut game_state: ResMut<GameState>,
     mut game_timer: ResMut<GameTimer>,
     mut economy: ResMut<Economy>,
     mut spawn_cooldowns: ResMut<SpawnCooldowns>,
-    ring_assets: Res<SelectionRingAssets>,
+    _ring_assets: Res<SelectionRingAssets>,
 ) {
     if keyboard.just_pressed(KeyCode::KeyR) {
         println!("Resetting game...");
