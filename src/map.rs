@@ -10,9 +10,8 @@ use crate::loading::LoadingState;
 
 // Hex grid constants
 const HEX_WIDTH: f32 = 128.0;
-const HEX_HEIGHT: f32 = HEX_WIDTH * 0.866025404; // width * sqrt(3)/2
+const HEX_HEIGHT: f32 = HEX_WIDTH * 0.866_025_4; // width * sqrt(3)/2
 const HEX_RADIUS: f32 = HEX_WIDTH / 2.0;
-const OUTLINE_WIDTH: f32 = 8.0;
 
 // Components
 #[derive(Component)]
@@ -244,99 +243,9 @@ fn create_filled_hexagon_mesh() -> Mesh {
     create_filled_hexagon_mesh_with_radius(HEX_RADIUS - 1.0)
 }
 
-fn create_fog_hex_mesh(world_x: f32, world_z: f32, uv_scale: f32) -> Mesh {
-    // Create a filled hexagon with UVs based on world position for continuous texture
-    let radius = HEX_RADIUS - 1.0;
-
-    let x = |i: f32| radius * (i * 2.0 * std::f32::consts::PI / 6.0).cos();
-    let z = |i: f32| radius * (i * 2.0 * std::f32::consts::PI / 6.0).sin();
-
-    // Calculate UVs based on world position for continuous texture mapping
-    let uv_center = (world_x / uv_scale, world_z / uv_scale);
-    let uv_offset = |dx: f32, dz: f32| ((world_x + dx) / uv_scale, (world_z + dz) / uv_scale);
-
-    let vertices = [
-        ([0.0, 0.0, 0.0], [0.0, 1.0, 0.0], uv_center),
-        ([x(0.0), 0.0, z(0.0)], [0.0, 1.0, 0.0], uv_offset(x(0.0), z(0.0))),
-        ([x(1.0), 0.0, z(1.0)], [0.0, 1.0, 0.0], uv_offset(x(1.0), z(1.0))),
-        ([x(2.0), 0.0, z(2.0)], [0.0, 1.0, 0.0], uv_offset(x(2.0), z(2.0))),
-        ([x(3.0), 0.0, z(3.0)], [0.0, 1.0, 0.0], uv_offset(x(3.0), z(3.0))),
-        ([x(4.0), 0.0, z(4.0)], [0.0, 1.0, 0.0], uv_offset(x(4.0), z(4.0))),
-        ([x(5.0), 0.0, z(5.0)], [0.0, 1.0, 0.0], uv_offset(x(5.0), z(5.0))),
-    ];
-
-    let mut positions = Vec::new();
-    let mut normals = Vec::new();
-    let mut uvs = Vec::new();
-
-    for (position, normal, uv) in vertices.iter() {
-        positions.push(*position);
-        normals.push(*normal);
-        uvs.push([uv.0, uv.1]);
-    }
-
-    let indices = Indices::U32(vec![
-        0, 1, 2,
-        0, 2, 3,
-        0, 3, 4,
-        0, 4, 5,
-        0, 5, 6,
-        0, 6, 1
-    ]);
-
-    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
-        .with_inserted_indices(indices)
-}
-
 fn create_filled_hexagon_border_mesh() -> Mesh {
     // Border uses the full hex radius
     create_filled_hexagon_mesh_with_radius(HEX_RADIUS)
-}
-
-fn create_billboard_mesh(width: f32, height: f32) -> Mesh {
-    let half_width = width / 2.0;
-    let half_height = height / 2.0;
-
-    let positions = vec![
-        [-half_width, half_height, 0.0],   // Top-left
-        [half_width, half_height, 0.0],    // Top-right
-        [half_width, -half_height, 0.0],   // Bottom-right
-        [-half_width, -half_height, 0.0],  // Bottom-left
-    ];
-
-    let normals = vec![
-        [0.0, 0.0, 1.0],
-        [0.0, 0.0, 1.0],
-        [0.0, 0.0, 1.0],
-        [0.0, 0.0, 1.0],
-    ];
-
-    // UV coordinates for the sprite (x: 32, y: 0, width: 30, height: 32)
-    // Texture is 128x128
-    let texture_width = 128.0;
-    let texture_height = 128.0;
-    let u_min = 33.0 / texture_width;
-    let u_max = (33.0 + 28.0) / texture_width;
-    let v_min = 0.0 / texture_height;
-    let v_max = 32.0 / texture_height;
-
-    let uvs = vec![
-        [u_min, v_min],  // Top-left
-        [u_max, v_min],  // Top-right
-        [u_max, v_max],  // Bottom-right
-        [u_min, v_max],  // Bottom-left
-    ];
-
-    let indices = vec![0, 1, 2, 0, 2, 3];
-
-    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
-        .with_inserted_indices(Indices::U32(indices))
 }
 
 fn create_launch_pad_outline_mesh(perimeter_edges: &[((i32, i32), (i32, i32))], pad_center: Vec3) -> Mesh {
@@ -495,72 +404,6 @@ fn create_launch_pad_outline_mesh(perimeter_edges: &[((i32, i32), (i32, i32))], 
             indices.push(center_idx + 1 + i);
             indices.push(center_idx + 1 + next_i);
         }
-    }
-
-    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
-        .with_inserted_indices(Indices::U32(indices))
-}
-
-fn create_hexagon_edges_mesh(edges: &[bool; 6]) -> Mesh {
-    // Create a mesh with only specific edges enabled
-    // edges[i] = true means draw edge i
-    let mut positions = Vec::new();
-    let mut normals = Vec::new();
-    let mut uvs = Vec::new();
-    let mut indices = Vec::new();
-
-    let y = 0.0;
-    // Make outline 8px smaller
-    let outer_radius = HEX_RADIUS + (OUTLINE_WIDTH / 2.0) - 8.0;
-    let inner_radius = HEX_RADIUS - (OUTLINE_WIDTH / 2.0) - 8.0;
-
-    // Create vertices only for enabled edges
-    for i in 0..6 {
-        if !edges[i] {
-            continue;
-        }
-
-        let angle = std::f32::consts::PI / 3.0 * i as f32;
-        let next_angle = std::f32::consts::PI / 3.0 * ((i + 1) % 6) as f32;
-
-        let cos1 = angle.cos();
-        let sin1 = angle.sin();
-        let cos2 = next_angle.cos();
-        let sin2 = next_angle.sin();
-
-        let base_idx = positions.len() as u32;
-
-        // First corner outer
-        positions.push([outer_radius * cos1, y, outer_radius * sin1]);
-        normals.push([0.0, 1.0, 0.0]);
-        uvs.push([1.0, 0.0]);
-
-        // First corner inner
-        positions.push([inner_radius * cos1, y, inner_radius * sin1]);
-        normals.push([0.0, 1.0, 0.0]);
-        uvs.push([0.0, 0.0]);
-
-        // Second corner outer
-        positions.push([outer_radius * cos2, y, outer_radius * sin2]);
-        normals.push([0.0, 1.0, 0.0]);
-        uvs.push([1.0, 0.0]);
-
-        // Second corner inner
-        positions.push([inner_radius * cos2, y, inner_radius * sin2]);
-        normals.push([0.0, 1.0, 0.0]);
-        uvs.push([0.0, 0.0]);
-
-        // Create triangles for this edge
-        indices.push(base_idx);
-        indices.push(base_idx + 1);
-        indices.push(base_idx + 2);
-
-        indices.push(base_idx + 1);
-        indices.push(base_idx + 3);
-        indices.push(base_idx + 2);
     }
 
     Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
@@ -1151,8 +994,8 @@ fn update_fog_of_war(
     // Update health/progress bar visibility for enemy units
     for (health_bar, bar_entity) in &health_bar_query {
         // Check if this bar belongs to an enemy unit
-        if let Ok((_, unit)) = unit_query.get(health_bar.unit_entity) {
-            if unit.army != crate::units::Army::Red {
+        if let Ok((_, unit)) = unit_query.get(health_bar.unit_entity)
+            && unit.army != crate::units::Army::Red {
                 // This is an enemy unit's bar
                 if let Ok(mut visibility) = visibility_query.get_mut(bar_entity) {
                     if visible_enemy_units.contains(&health_bar.unit_entity) {
@@ -1162,7 +1005,6 @@ fn update_fog_of_war(
                     }
                 }
             }
-        }
     }
 }
 
@@ -1238,15 +1080,14 @@ fn animate_crystal_sparkle(
         }
 
         while let Some(entity) = entities_to_check.pop() {
-            if let Ok((_, material_handle)) = mesh_query.get(entity) {
-                if let Some(mat) = materials.get_mut(&material_handle.0) {
+            if let Ok((_, material_handle)) = mesh_query.get(entity)
+                && let Some(mat) = materials.get_mut(&material_handle.0) {
                     // Only update if it's gold (check base color)
                     let is_gold = (mat.base_color.to_srgba().red - 1.0).abs() < 0.1;
                     if is_gold {
                         mat.emissive = Color::srgb(1.0 * intensity, 0.84 * intensity, 0.0).into();
                     }
                 }
-            }
 
             if let Ok(entity_children) = children_query.get(entity) {
                 for &child in entity_children {
@@ -1270,11 +1111,10 @@ fn update_crystal_visuals(
 
         // Find all crystal visual children and despawn those beyond visible_count
         for &child in children {
-            if let Ok((entity, visual)) = crystal_visual_query.get(child) {
-                if visual.index >= visible_count {
+            if let Ok((entity, visual)) = crystal_visual_query.get(child)
+                && visual.index >= visible_count {
                     commands.entity(entity).despawn();
                 }
-            }
         }
     }
 }

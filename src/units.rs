@@ -383,19 +383,12 @@ impl ArmyCooldowns {
 }
 
 #[derive(Resource)]
+#[derive(Default)]
 pub struct SpawnCooldowns {
     pub red: ArmyCooldowns,
     pub blue: ArmyCooldowns,
 }
 
-impl Default for SpawnCooldowns {
-    fn default() -> Self {
-        Self {
-            red: ArmyCooldowns::default(),
-            blue: ArmyCooldowns::default(),
-        }
-    }
-}
 
 impl SpawnCooldowns {
     pub fn get_army_cooldowns(&self, army: Army) -> &ArmyCooldowns {
@@ -545,10 +538,6 @@ pub fn find_path(
     None
 }
 
-pub fn is_adjacent(pos1: (i32, i32), pos2: (i32, i32)) -> bool {
-    hex_distance(pos1, pos2) == 1
-}
-
 pub fn get_adjacent_hexes(pos: (i32, i32)) -> Vec<(i32, i32)> {
     hex_neighbors(pos).to_vec()
 }
@@ -621,18 +610,16 @@ fn move_units(
             let mut cell_occupied = false;
 
             // Check existing occupancy
-            if let Some(&occupying_entity) = occupancy.position_to_entity.get(&target_hex) {
-                if occupying_entity != entity {
+            if let Some(&occupying_entity) = occupancy.position_to_entity.get(&target_hex)
+                && occupying_entity != entity {
                     cell_occupied = true;
                 }
-            }
 
             // Also check if another unit claimed it THIS FRAME
-            if let Some(&claiming_entity) = cells_claimed_this_frame.get(&target_hex) {
-                if claiming_entity != entity {
+            if let Some(&claiming_entity) = cells_claimed_this_frame.get(&target_hex)
+                && claiming_entity != entity {
                     cell_occupied = true;
                 }
-            }
 
             if cell_occupied {
                 // Target cell is occupied - reverse direction and return to start cell
@@ -728,8 +715,8 @@ fn rotate_units_toward_enemies(
         }
 
         // Rotate toward nearest enemy if found
-        if let Some(enemy_pos) = nearest_enemy_pos {
-            if let Ok((_, _, _, _, mut transform)) = unit_query.get_mut(*entity) {
+        if let Some(enemy_pos) = nearest_enemy_pos
+            && let Ok((_, _, _, _, mut transform)) = unit_query.get_mut(*entity) {
                 let direction = (enemy_pos - *pos).normalize();
                 let distance = pos.distance(enemy_pos);
 
@@ -742,7 +729,6 @@ fn rotate_units_toward_enemies(
                     transform.rotation = transform.rotation.slerp(target_rotation, time.delta_secs() * rotation_speed);
                 }
             }
-        }
     }
 }
 
@@ -1308,13 +1294,13 @@ fn detect_collisions_and_repath(
             }
         }
 
-        if let Some(path) = find_path(current_cell, final_goal, config.map_radius, &blocking) {
-            if path.len() > 1 {
+        if let Some(path) = find_path(current_cell, final_goal, config.map_radius, &blocking)
+            && path.len() > 1 {
                 let mut new_path = vec![current_cell];
                 new_path.extend_from_slice(&path[1..]);
 
-                if new_path != old_movement.path {
-                    if let Ok((_, mut unit_component, mut movement)) = unit_query.get_mut(entity) {
+                if new_path != old_movement.path
+                    && let Ok((_, mut unit_component, mut movement)) = unit_query.get_mut(entity) {
                         // Update unit's stored position to next_cell so lerp works correctly
                         // Visual position is currently: segment_start.lerp(next_cell, progress)
                         // We want to maintain that position while reversing direction
@@ -1328,9 +1314,7 @@ fn detect_collisions_and_repath(
                         movement.progress = 1.0 - old_movement.progress;
                         movement.segment_start = next_cell;
                     }
-                }
             }
-        }
     }
 }
 
@@ -1809,7 +1793,7 @@ fn spawn_unit_from_request(
                     ))
                     .with_children(|unit_parent| {
                         for offset in offsets.iter() {
-                            let scene: Handle<Scene> = asset_server.load(&format!("{}#Scene0", model_path));
+                            let scene: Handle<Scene> = asset_server.load(format!("{}#Scene0", model_path));
                             unit_parent.spawn((
                                 SceneRoot(scene),
                                 Transform::from_translation(*offset)
@@ -1820,7 +1804,7 @@ fn spawn_unit_from_request(
                     .id()
             } else {
                 // Single model for Cavalry and Artillery
-                let scene: Handle<Scene> = asset_server.load(&format!("{}#Scene0", model_path));
+                let scene: Handle<Scene> = asset_server.load(format!("{}#Scene0", model_path));
 
                 let mut animation_graph = AnimationGraph::new();
                 let idle_index = animation_graph.add_clip(
@@ -2076,11 +2060,10 @@ fn ai_spawn_units(
                 UnitClass::Artillery => blue_artillery += 1,
                 UnitClass::Harvester => blue_harvesters += 1,
             }
-        } else if unit.army == Army::Red {
-            if *unit_class != UnitClass::Harvester {
+        } else if unit.army == Army::Red
+            && *unit_class != UnitClass::Harvester {
                 red_combat_units += 1;
             }
-        }
     }
 
     let blue_combat_units = blue_infantry + blue_cavalry + blue_artillery;
@@ -2217,8 +2200,8 @@ fn evaluate_strategy(
 
     // CRITICAL 2: Check win condition urgency
     // If timer is active and counting down, this overrides all other strategies
-    if game_timer.is_active {
-        if let Some(winning_army) = game_timer.winning_army {
+    if game_timer.is_active
+        && let Some(winning_army) = game_timer.winning_army {
             match winning_army {
                 Army::Red => {
                     // Player is winning! We MUST attack and contest their pads immediately
@@ -2234,15 +2217,12 @@ fn evaluate_strategy(
                 }
             }
         }
-    }
 
     // Score all strategies (timer urgency is handled above, this is for normal play)
-    let mut scores = vec![
-        (AIStrategy::Economic, score_economic_strategy(blue_harvesters, economy.blue_money)),
+    let mut scores = [(AIStrategy::Economic, score_economic_strategy(blue_harvesters, economy.blue_money)),
         (AIStrategy::Aggressive, score_aggressive_strategy(blue_units, red_units, economy.blue_money)),
         (AIStrategy::Expansionist, score_expansionist_strategy(blue_pads, red_pads, neutral_pads)),
-        (AIStrategy::Defensive, score_defensive_strategy(blue_units, red_units, blue_pads, red_pads, contested_pads)),
-    ];
+        (AIStrategy::Defensive, score_defensive_strategy(blue_units, red_units, blue_pads, red_pads, contested_pads))];
 
     // Sort by score descending
     scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
@@ -2376,7 +2356,7 @@ fn ai_command_units(
         if unit.army == Army::Blue {
             // Unit is idle if it has no movement component or has reached end of path
             let is_idle = movement.is_none()
-                || movement.map_or(false, |m| m.current_waypoint >= m.path.len());
+                || movement.is_some_and(|m| m.current_waypoint >= m.path.len());
             if is_idle {
                 idle_blue_units.push((entity, unit, stats, unit_class));
             }
@@ -2451,8 +2431,8 @@ fn ai_command_units(
 
         // Command unit to move to target
         if let Some(target_pos) = target {
-            if let Some(path) = find_path(unit_pos, target_pos, map_config.map_radius, &blocking_cells) {
-                if path.len() > 1 {
+            if let Some(path) = find_path(unit_pos, target_pos, map_config.map_radius, &blocking_cells)
+                && path.len() > 1 {
                     let path_to_follow: Vec<(i32, i32)> = path[1..].to_vec();
 
                     commands.entity(entity).insert(UnitMovement {
@@ -2467,7 +2447,6 @@ fn ai_command_units(
                         claimed_cells.cells.insert(cell);
                     }
                 }
-            }
         } else {
             println!("⚠️ AI unit at ({}, {}) has NO TARGET (Strategy: {:?}, Class: {:?})",
                 unit_pos.0, unit_pos.1, strategy, unit_class);
@@ -2774,7 +2753,7 @@ fn setup_units(
                     .with_children(|unit_parent| {
                         // Spawn model instances
                         for (i, offset) in offsets.iter().enumerate() {
-                            let scene: Handle<Scene> = asset_server.load(&format!("{}#Scene0", model_path));
+                            let scene: Handle<Scene> = asset_server.load(format!("{}#Scene0", model_path));
 
                             unit_parent.spawn((
                                 SceneRoot(scene),
@@ -2787,7 +2766,7 @@ fn setup_units(
                     .id()
             } else {
                 // Other classes: single model instance
-                let scene: Handle<Scene> = asset_server.load(&format!("{}#Scene0", model_path));
+                let scene: Handle<Scene> = asset_server.load(format!("{}#Scene0", model_path));
                 let mut animation_graph = AnimationGraph::new();
                 let idle_index = animation_graph.add_clip(
                     asset_server.load(GltfAssetLabel::Animation(unit_class.idle_animation_index()).from_asset(model_path)),
@@ -3043,7 +3022,7 @@ fn setup_units(
                     .with_children(|unit_parent| {
                         // Spawn model instances
                         for (i, offset) in offsets.iter().enumerate() {
-                            let scene: Handle<Scene> = asset_server.load(&format!("{}#Scene0", model_path));
+                            let scene: Handle<Scene> = asset_server.load(format!("{}#Scene0", model_path));
 
                             unit_parent.spawn((
                                 SceneRoot(scene),
@@ -3056,7 +3035,7 @@ fn setup_units(
                     .id()
             } else {
                 // Other classes: single model instance
-                let scene: Handle<Scene> = asset_server.load(&format!("{}#Scene0", model_path));
+                let scene: Handle<Scene> = asset_server.load(format!("{}#Scene0", model_path));
                 let mut animation_graph = AnimationGraph::new();
                 let idle_index = animation_graph.add_clip(
                     asset_server.load(GltfAssetLabel::Animation(unit_class.idle_animation_index()).from_asset(model_path)),
@@ -3534,7 +3513,7 @@ fn setup_selection_ring_assets(
     let main_ring_mesh = meshes.add(create_selection_ring_mesh(90.0, 100.0));
     let main_ring_material = materials.add(StandardMaterial {
         base_color: Color::srgba(1.0, 1.0, 1.0, 1.0),
-        emissive: LinearRgba::new(3.0, 3.0, 3.0, 1.0).into(), // Brighter emissive
+        emissive: LinearRgba::new(3.0, 3.0, 3.0, 1.0), // Brighter emissive
         unlit: true,
         alpha_mode: AlphaMode::Opaque,
         ..default()
@@ -3544,7 +3523,7 @@ fn setup_selection_ring_assets(
     let outer_ring_mesh = meshes.add(create_selection_ring_mesh(105.0, 110.0));
     let outer_ring_material = materials.add(StandardMaterial {
         base_color: Color::srgba(1.0, 1.0, 1.0, 1.0),
-        emissive: LinearRgba::new(3.0, 3.0, 3.0, 1.0).into(), // Brighter emissive
+        emissive: LinearRgba::new(3.0, 3.0, 3.0, 1.0), // Brighter emissive
         unlit: true,
         alpha_mode: AlphaMode::Opaque,
         ..default()
@@ -3565,7 +3544,7 @@ fn setup_selection_ring_assets(
     ));
     let inner_ring_material = materials.add(StandardMaterial {
         base_color: Color::srgba(1.0, 1.0, 1.0, 1.0),
-        emissive: LinearRgba::new(3.0, 3.0, 3.0, 1.0).into(), // Brighter emissive
+        emissive: LinearRgba::new(3.0, 3.0, 3.0, 1.0), // Brighter emissive
         unlit: true,
         alpha_mode: AlphaMode::Opaque,
         ..default()
