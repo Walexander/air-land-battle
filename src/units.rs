@@ -67,6 +67,47 @@ pub struct CurrentAnimationState {
 }
 
 #[derive(Component)]
+pub struct AnimationOffset {
+    pub offset: f32,
+}
+
+// Track which infantry models have died for progressive death animations
+#[derive(Component)]
+pub struct InfantryDeaths {
+    pub died_at_66: bool,
+    pub died_at_33: bool,
+    pub model_index_for_66: Option<usize>,
+    pub model_index_for_33: Option<usize>,
+}
+
+impl Default for InfantryDeaths {
+    fn default() -> Self {
+        Self {
+            died_at_66: false,
+            died_at_33: false,
+            model_index_for_66: None,
+            model_index_for_33: None,
+        }
+    }
+}
+
+// Marker to identify which infantry model this is (0, 1, or 2)
+#[derive(Component)]
+pub struct InfantryModelIndex {
+    pub index: usize,
+}
+
+// Track death animation timing for fade out
+#[derive(Component)]
+pub struct InfantryModelDying {
+    pub death_started_at: f32,
+    pub animation_duration: f32,
+    pub fade_delay: f32,
+    pub fade_duration: f32,
+    pub materials_cloned: bool, // Track if we've already cloned materials
+}
+
+#[derive(Component)]
 pub struct Health {
     pub current: f32,
     pub max: f32,
@@ -1230,6 +1271,173 @@ fn detect_collisions_and_repath(
     }
 }
 
+fn handle_infantry_progressive_death(
+    mut commands: Commands,
+    time: Res<Time>,
+    asset_server: Res<AssetServer>,
+    mut animation_graphs: ResMut<Assets<AnimationGraph>>,
+    mut infantry_query: Query<(Entity, &UnitClass, &Health, &mut InfantryDeaths, &mut AnimationGraphHandle)>,
+    children_query: Query<&Children>,
+    model_query: Query<&InfantryModelIndex>,
+    mut players_query: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
+) {
+    let current_time = time.elapsed_secs();
+
+    for (unit_entity, unit_class, health, mut deaths, graph_handle) in &mut infantry_query {
+        if *unit_class != UnitClass::Infantry {
+            continue;
+        }
+
+        let health_percentage = (health.current / health.max).max(0.0).min(1.0);
+
+        // Check if we should trigger death animation at 66%
+        if health_percentage <= 0.66 && !deaths.died_at_66 {
+            deaths.died_at_66 = true;
+
+            // Add death animation to graph if not already added
+            let model_path = unit_class.model_path();
+            let graph = animation_graphs.get_mut(&graph_handle.0).unwrap();
+            let death_index = graph.add_clip(
+                asset_server.load(GltfAssetLabel::Animation(0).from_asset(model_path)),
+                1.0,
+                graph.root,
+            );
+
+            // Find the first model (index 0) and play death animation
+            if let Ok(children) = children_query.get(unit_entity) {
+                for child in children.iter() {
+                    if let Ok(model_index) = model_query.get(child) {
+                        if model_index.index == 0 {
+                            deaths.model_index_for_66 = Some(0);
+
+                            // Add dying component to track fade timing
+                            commands.entity(child).insert(InfantryModelDying {
+                                death_started_at: current_time,
+                                animation_duration: 2.0, // Approximate death animation duration
+                                fade_delay: 0.0,
+                                fade_duration: 0.1,
+                                materials_cloned: false,
+                            });
+
+                            // Find AnimationPlayer in descendants and play death animation
+                            for descendant in children_query.iter_descendants(child) {
+                                if let Ok((mut player, mut transitions)) = players_query.get_mut(descendant) {
+                                    // Play death animation (index 0 in GLB) - don't repeat
+                                    transitions
+                                        .play(&mut player, death_index, Duration::from_secs_f32(0.2))
+                                        .set_repeat(bevy::animation::RepeatAnimation::Never);
+                                    println!("Playing death animation for infantry model 0 at 66% health");
+                                    break;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check if we should trigger death animation at 33%
+        if health_percentage <= 0.33 && !deaths.died_at_33 {
+            deaths.died_at_33 = true;
+
+            // Get death animation index from graph (should already be added at 66%)
+            let graph = animation_graphs.get_mut(&graph_handle.0).unwrap();
+            let model_path = unit_class.model_path();
+            let death_index = graph.add_clip(
+                asset_server.load(GltfAssetLabel::Animation(0).from_asset(model_path)),
+                1.0,
+                graph.root,
+            );
+
+            // Find the second model (index 1) and play death animation
+            if let Ok(children) = children_query.get(unit_entity) {
+                for child in children.iter() {
+                    if let Ok(model_index) = model_query.get(child) {
+                        if model_index.index == 1 {
+                            deaths.model_index_for_33 = Some(1);
+
+                            // Add dying component to track fade timing
+                            commands.entity(child).insert(InfantryModelDying {
+                                death_started_at: current_time,
+                                animation_duration: 2.0, // Approximate death animation duration
+                                fade_delay: 0.0,
+                                fade_duration: 0.1,
+                                materials_cloned: false,
+                            });
+
+                            // Find AnimationPlayer in descendants and play death animation
+                            for descendant in children_query.iter_descendants(child) {
+                                if let Ok((mut player, mut transitions)) = players_query.get_mut(descendant) {
+                                    // Play death animation (index 0 in GLB) - don't repeat
+                                    transitions
+                                        .play(&mut player, death_index, Duration::from_secs_f32(0.2))
+                                        .set_repeat(bevy::animation::RepeatAnimation::Never);
+                                    println!("Playing death animation for infantry model 1 at 33% health");
+                                    break;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn fade_out_dead_infantry(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut dying_query: Query<(Entity, &mut InfantryModelDying, &mut Visibility)>,
+    children_query: Query<&Children>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut material_query: Query<&mut MeshMaterial3d<StandardMaterial>>,
+) {
+    let current_time = time.elapsed_secs();
+
+    for (entity, mut dying, mut visibility) in &mut dying_query {
+        let time_since_death = current_time - dying.death_started_at;
+        let fade_start_time = dying.animation_duration + dying.fade_delay;
+
+        if time_since_death >= fade_start_time {
+            // Clone materials once when fade starts to make them independent
+            if !dying.materials_cloned {
+                for descendant in children_query.iter_descendants(entity) {
+                    if let Ok(mut material_handle) = material_query.get_mut(descendant) {
+                        // Clone the material so this model has its own instance
+                        if let Some(material) = materials.get(&material_handle.0) {
+                            let cloned_material = material.clone();
+                            let new_handle = materials.add(cloned_material);
+                            material_handle.0 = new_handle;
+                        }
+                    }
+                }
+                dying.materials_cloned = true;
+            }
+
+            let fade_progress = ((time_since_death - fade_start_time) / dying.fade_duration).min(1.0);
+            let alpha = 1.0 - fade_progress;
+
+            // Fade out all materials in descendants
+            for descendant in children_query.iter_descendants(entity) {
+                if let Ok(material_handle) = material_query.get(descendant) {
+                    if let Some(material) = materials.get_mut(&material_handle.0) {
+                        material.alpha_mode = bevy::prelude::AlphaMode::Blend;
+                        material.base_color = material.base_color.with_alpha(alpha);
+                    }
+                }
+            }
+
+            // After fade completes, hide the entity
+            if fade_progress >= 1.0 {
+                *visibility = Visibility::Hidden;
+                commands.entity(entity).remove::<InfantryModelDying>();
+            }
+        }
+    }
+}
+
 fn update_unit_animations(
     _commands: Commands,
     mut units_query: Query<
@@ -1243,7 +1451,8 @@ fn update_unit_animations(
         With<Unit>,
     >,
     children_query: Query<&Children>,
-    mut players_query: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
+    dying_query: Query<(), With<InfantryModelDying>>,
+    mut players_query: Query<(&mut AnimationPlayer, &mut AnimationTransitions, Option<&AnimationOffset>)>,
 ) {
     for (unit_entity, anim_graphs, mut anim_state, _graph_handle, movement) in
         units_query.iter_mut()
@@ -1262,12 +1471,25 @@ fn update_unit_animations(
             // Check if idle and moving animations are the same (e.g., Infantry with only one animation)
             let same_animation = anim_graphs.idle_index == anim_graphs.moving_index;
 
-            for descendant in children_query.iter_descendants(unit_entity) {
-                if let Ok((mut player, mut transitions)) = players_query.get_mut(descendant) {
+            // For infantry units, check each model separately to skip dying ones
+            if let Ok(children) = children_query.get(unit_entity) {
+                for child in children.iter() {
+                    // Skip this model if it's dying
+                    if dying_query.get(child).is_ok() {
+                        continue;
+                    }
+
+                    // Process animations for this model's descendants
+                    for descendant in children_query.iter_descendants(child) {
+                        if let Ok((mut player, mut transitions, offset)) = players_query.get_mut(descendant) {
                     if same_animation {
                         // Same animation for idle and moving - pause when idle, play when moving
                         if is_moving {
                             player.resume_all();
+                            // Reapply offset after resume to maintain desynchronization
+                            if let Some(anim_offset) = offset {
+                                player.seek_all_by(anim_offset.offset);
+                            }
                         } else {
                             player.pause_all();
                         }
@@ -1276,6 +1498,13 @@ fn update_unit_animations(
                         transitions
                             .play(&mut player, new_index, Duration::from_secs_f32(0.2))
                             .repeat();
+
+                        // Reapply stagger offset to maintain desynchronization
+                        if let Some(anim_offset) = offset {
+                            player.seek_all_by(anim_offset.offset);
+                        }
+                    }
+                }
                     }
                 }
             }
@@ -1318,6 +1547,7 @@ fn play_animation_when_loaded(
                     .insert((
                         graph_handle.clone(),
                         transitions,
+                        AnimationOffset { offset: offset_secs },
                     ));
 
                 break;
@@ -1737,6 +1967,11 @@ fn spawn_unit_from_request(
                 });
             }
 
+            // Add InfantryDeaths component for infantry units
+            if spawn_request.unit_class == UnitClass::Infantry {
+                unit_entity_commands.insert(InfantryDeaths::default());
+            }
+
             // Add child models based on unit type
             let unit_entity = unit_entity_commands.id();
             unit_entity_commands.with_children(|unit_parent| {
@@ -1750,11 +1985,12 @@ fn spawn_unit_from_request(
                         Vec3::new(-spacing, 0.0, -spacing),
                         Vec3::new(spacing, 0.0, -spacing),
                     ];
-                    for offset in offsets.iter() {
+                    for (index, offset) in offsets.iter().enumerate() {
                         unit_parent.spawn((
                             SceneRoot(scene.clone()),
                             Transform::from_translation(*offset)
                                 .with_scale(Vec3::splat(spawn_request.unit_class.scale())),
+                            InfantryModelIndex { index },
                         ));
                     }
                 } else {
@@ -2144,6 +2380,8 @@ impl Plugin for UnitsPlugin {
                     handle_explosion_effects,
                     animate_explosion_visuals,
                     animate_smoke_clouds,
+                    handle_infantry_progressive_death,
+                    fade_out_dead_infantry,
                     remove_dead_units,
                     update_occupancy_intent,
                     update_occupancy,
