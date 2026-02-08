@@ -76,10 +76,10 @@ pub fn create_ring_arc_mesh(inner_radius: f32, outer_radius: f32, start_angle: f
     }
 
     for i in 0..segments {
-        let outer_current = (i * 2) as u32;
-        let inner_current = (i * 2 + 1) as u32;
-        let outer_next = ((i + 1) * 2) as u32;
-        let inner_next = ((i + 1) * 2 + 1) as u32;
+        let outer_current = i * 2 ;
+        let inner_current = i * 2 + 1 ;
+        let outer_next = (i + 1) * 2 ;
+        let inner_next = (i + 1) * 2 + 1 ;
 
         indices.push(outer_current);
         indices.push(inner_current);
@@ -122,10 +122,10 @@ pub fn create_ring_mesh_with_segments(inner_radius: f32, outer_radius: f32, segm
     }
 
     for i in 0..segments {
-        let outer_current = (i * 2) as u32;
-        let inner_current = (i * 2 + 1) as u32;
-        let outer_next = ((i * 2 + 2) % (segments as u32 * 2)) as u32;
-        let inner_next = ((i * 2 + 3) % (segments as u32 * 2)) as u32;
+        let outer_current = i * 2 ;
+        let inner_current = i * 2 + 1 ;
+        let outer_next = ((i * 2 + 2) % (segments * 2));
+        let inner_next = ((i * 2 + 3) % (segments * 2));
 
         indices.push(outer_current);
         indices.push(inner_current);
@@ -375,7 +375,7 @@ pub fn spawn_destination_ring(
     let hex_mesh = meshes.add(create_filled_hexagon_mesh(63.0));
     let hex_material = materials.add(StandardMaterial {
         base_color: color,
-        emissive: LinearRgba::new(1.0, 1.0, 1.0, 0.5).into(),
+        emissive: LinearRgba::new(1.0, 1.0, 1.0, 0.5),
         unlit: true,
         double_sided: true,
         cull_mode: None,
@@ -493,7 +493,7 @@ fn create_path_line_mesh(
             let direction_to_dest = (curr_pos - prev_pos).normalize();
             let full_distance = prev_pos.distance(curr_pos);
             if full_distance > destination_ring_outer_radius {
-                curr_pos = curr_pos - direction_to_dest * destination_ring_outer_radius;
+                curr_pos -= direction_to_dest * destination_ring_outer_radius;
             }
         }
 
@@ -730,8 +730,8 @@ fn handle_unit_selection(
         // Check if a unit was clicked directly (prioritize direct clicks)
         if let Some(clicked_entity) = clicked_unit.entity {
             // Check if the clicked unit is from the Red army (player controlled)
-            if let Ok((_entity, unit, _)) = unit_query.get(clicked_entity) {
-                if unit.army == Army::Red {
+            if let Ok((_entity, unit, _)) = unit_query.get(clicked_entity)
+                && unit.army == Army::Red {
                     // Select this unit
                     for (entity, _, _, _, _) in &selected_query {
                         commands.entity(entity).remove::<Selected>();
@@ -739,11 +739,10 @@ fn handle_unit_selection(
                     commands.entity(clicked_entity).insert(Selected);
                     return;
                 }
-            }
 
             // If clicked unit is an enemy and we have a unit selected, target it
-            if let Ok((_, enemy_unit, _)) = unit_query.get(clicked_entity) {
-                if enemy_unit.army != Army::Red {
+            if let Ok((_, enemy_unit, _)) = unit_query.get(clicked_entity)
+                && enemy_unit.army != Army::Red {
                     if let Ok((selected_entity, selected_unit, stats, existing_movement, _)) = selected_query.single() {
                         let enemy_pos = (enemy_unit.q, enemy_unit.r);
 
@@ -991,13 +990,12 @@ fn handle_unit_selection(
                     }
                     return;
                 }
-            }
         }
 
         // Handle movement to empty cells (only if no unit was clicked directly via hitbox)
-        if clicked_unit.entity.is_none() {
-            if hovered_hex.entity.is_some() {
-                if let Ok((selected_entity, selected_unit, stats, existing_movement, _unit_transform)) =
+        if clicked_unit.entity.is_none()
+            && hovered_hex.entity.is_some()
+                && let Ok((selected_entity, selected_unit, stats, existing_movement, _unit_transform)) =
                     selected_query.single()
                 {
                     // Remove targeting when issuing normal movement command
@@ -1159,39 +1157,37 @@ fn handle_unit_selection(
                                             selected_unit.army,
                                         );
                                     }
-                                } else {
-                                    if let Some(path) =
-                                        find_path(next_cell, goal, config.map_radius, &blocking_cells)
-                                    {
-                                        let mut new_full_path = vec![next_cell];
-                                        if path.len() > 1 {
-                                            new_full_path.extend_from_slice(&path[1..]);
+                                } else if let Some(path) =
+                                    find_path(next_cell, goal, config.map_radius, &blocking_cells)
+                                {
+                                    let mut new_full_path = vec![next_cell];
+                                    if path.len() > 1 {
+                                        new_full_path.extend_from_slice(&path[1..]);
+                                    }
+
+                                    if new_full_path.len() > 1 {
+                                        // Keep current segment_start to maintain visual position
+                                        commands.entity(selected_entity).insert(UnitMovement {
+                                            path: new_full_path.clone(),
+                                            current_waypoint: 0,
+                                            progress: movement.progress,
+                                            speed: stats.speed,
+                                            segment_start: movement.segment_start,
+                                        });
+
+                                        // Mark all cells in path as claimed
+                                        for &cell in &new_full_path {
+                                            claimed_cells.cells.insert(cell);
                                         }
 
-                                        if new_full_path.len() > 1 {
-                                            // Keep current segment_start to maintain visual position
-                                            commands.entity(selected_entity).insert(UnitMovement {
-                                                path: new_full_path.clone(),
-                                                current_waypoint: 0,
-                                                progress: movement.progress,
-                                                speed: stats.speed,
-                                                segment_start: movement.segment_start,
-                                            });
-
-                                            // Mark all cells in path as claimed
-                                            for &cell in &new_full_path {
-                                                claimed_cells.cells.insert(cell);
-                                            }
-
-                                            spawn_destination_ring(
-                                                &mut commands,
-                                                &mut meshes,
-                                                &mut materials,
-                                                selected_entity,
-                                                goal,
-                                                selected_unit.army,
-                                            );
-                                        }
+                                        spawn_destination_ring(
+                                            &mut commands,
+                                            &mut meshes,
+                                            &mut materials,
+                                            selected_entity,
+                                            goal,
+                                            selected_unit.army,
+                                        );
                                     }
                                 }
                             }
@@ -1236,8 +1232,6 @@ fn handle_unit_selection(
                             }
                         }
                     }
-                }
-            }
     }
 }
 
@@ -1251,11 +1245,10 @@ fn update_selected_visual(
 ) {
     // Add outlines to newly selected units' mesh children (if they don't already have them)
     for (_unit_entity, children_opt) in &selected_query {
-        if let Some(children) = children_opt {
-            if !has_outline_in_children(children, &children_query, &outline_query) {
+        if let Some(children) = children_opt
+            && !has_outline_in_children(children, &children_query, &outline_query) {
                 add_outline_to_children(children, &children_query, &mesh_query, &mut commands);
             }
-        }
     }
 
     // Remove outlines from unselected units' mesh children
@@ -1277,11 +1270,10 @@ fn has_outline_in_children(
         }
 
         // Check grandchildren recursively
-        if let Ok(grandchildren) = children_query.get(child) {
-            if has_outline_in_children(grandchildren, children_query, outline_query) {
+        if let Ok(grandchildren) = children_query.get(child)
+            && has_outline_in_children(grandchildren, children_query, outline_query) {
                 return true;
             }
-        }
     }
     false
 }
@@ -1294,15 +1286,14 @@ fn add_outline_to_children(
 ) {
     for child in children.iter() {
         // If this child has a mesh, try to add outline (may fail if entity was despawned)
-        if mesh_query.contains(child) {
-            if let Ok(mut entity_commands) = commands.get_entity(child) {
+        if mesh_query.contains(child)
+            && let Ok(mut entity_commands) = commands.get_entity(child) {
                 entity_commands.insert(OutlineVolume {
                     visible: true,
                     width: 2.0,
                     colour: Color::srgb(1.0, 1.0, 1.0), // White
                 });
             }
-        }
 
         // Recursively process grandchildren
         if let Ok(grandchildren) = children_query.get(child) {
@@ -1318,11 +1309,10 @@ fn remove_outline_from_children(
     commands: &mut Commands,
 ) {
     for child in children.iter() {
-        if mesh_query.contains(child) {
-            if let Ok(mut entity_commands) = commands.get_entity(child) {
+        if mesh_query.contains(child)
+            && let Ok(mut entity_commands) = commands.get_entity(child) {
                 entity_commands.remove::<OutlineVolume>();
             }
-        }
 
         if let Ok(grandchildren) = children_query.get(child) {
             remove_outline_from_children(grandchildren, children_query, mesh_query, commands);
@@ -1751,8 +1741,8 @@ fn visualize_hover_ring(
     if let Some(hovered_entity) = should_have_ring {
         let already_exists = existing_hover_rings.iter().any(|(_, ring)| ring.hovered_entity == hovered_entity);
 
-        if !already_exists {
-            if let Ok((_, transform)) = unit_query.get(hovered_entity) {
+        if !already_exists
+            && let Ok((_, transform)) = unit_query.get(hovered_entity) {
                 // Spawn red square outline on hovered enemy (same style as target ring)
                 let ring_mesh = meshes.add(create_ring_mesh_with_segments(50.0, 58.0, 4));
                 let ring_material = materials.add(StandardMaterial {
@@ -1773,7 +1763,6 @@ fn visualize_hover_ring(
                     },
                 ));
             }
-        }
     }
 }
 
