@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy::input::mouse::MouseWheel;
 
-use crate::launch_pads::{GameState, GameTimer};
+use crate::launch_pads::{GameState, GameTimer, GAME_DURATION};
 use crate::economy::Economy;
 use crate::units::{Army, Unit, UnitClass, UnitSpawnRequest, UnitSpawnQueue, SpawnCooldowns};
 use crate::loading::LoadingState;
@@ -321,6 +321,20 @@ fn setup_ui(mut commands: Commands) {
                         BackgroundColor(Color::srgb(0.2, 0.8, 0.2)),
                         TimerBar,
                     ));
+
+                    // White marker line at 10 seconds remaining
+                    // Position = (1.0 - (10.0 / GAME_DURATION)) * 100%
+                    let marker_position = (1.0 - (10.0 / GAME_DURATION)) * 100.0;
+                    parent.spawn((
+                        Node {
+                            width: Val::Px(4.0),
+                            height: Val::Percent(100.0),
+                            position_type: PositionType::Absolute,
+                            left: Val::Percent(marker_position),
+                            ..default()
+                        },
+                        BackgroundColor(Color::WHITE),
+                    ));
                 });
 
             parent.spawn((
@@ -363,8 +377,8 @@ fn update_timer_ui(
     mut text_query: Query<&mut Text, With<TimerText>>,
 ) {
     if let Ok((mut node, mut bg_color)) = bar_query.single_mut() {
-        // Always show progress bar based on time remaining
-        let progress = game_timer.time_remaining / 20.0;
+        // Progress bar fills up as timer counts down to 0
+        let progress = 1.0 - (game_timer.time_remaining / GAME_DURATION);
         node.width = Val::Percent(progress * 100.0);
 
         // Change color based on winning army (yellow when no owner)
@@ -376,8 +390,12 @@ fn update_timer_ui(
     }
 
     if let Ok(mut text) = text_query.single_mut() {
-        // Always show the time remaining
-        **text = format!("{:.1}s", game_timer.time_remaining);
+        // Only show time remaining when 10 seconds or less
+        if game_timer.time_remaining <= 10.0 {
+            **text = format!("{:.1}s", game_timer.time_remaining);
+        } else {
+            **text = String::new();
+        }
     }
 }
 
@@ -651,7 +669,7 @@ fn handle_restart(
         game_state.game_over = false;
         game_state.winner = None;
 
-        game_timer.time_remaining = 20.0;
+        game_timer.time_remaining = GAME_DURATION;
         game_timer.is_active = false;
         game_timer.winning_army = None;
 

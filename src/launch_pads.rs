@@ -3,6 +3,9 @@ use bevy::prelude::*;
 use crate::units::{Army, Unit};
 use crate::loading::LoadingState;
 
+// Constants
+pub const GAME_DURATION: f32 = 50.0;
+
 // Enums
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum LaunchPadOwner {
@@ -28,7 +31,7 @@ pub struct GameTimer {
 impl Default for GameTimer {
     fn default() -> Self {
         Self {
-            time_remaining: 20.0,
+            time_remaining: GAME_DURATION,
             is_active: false,
             winning_army: None,
         }
@@ -147,9 +150,19 @@ fn check_launch_pad_ownership(
             game_timer.is_active = false;
         }
     } else {
+        // Launch pads are tied/neutral
+        if game_timer.time_remaining < 10.0 {
+            // When under 10 seconds, timer counts back up (at same rate it counts down)
+            game_timer.time_remaining += time.delta_secs();
+            // Clamp to not exceed 10 seconds
+            if game_timer.time_remaining > 10.0 {
+                game_timer.time_remaining = 10.0;
+            }
+        }
+
         if game_timer.is_active {
             println!(
-                "Launch pads tied. Timer paused at {:.1}s.",
+                "Launch pads tied. Timer at {:.1}s.",
                 game_timer.time_remaining
             );
         }

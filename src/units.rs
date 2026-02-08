@@ -10,7 +10,7 @@ use rand::Rng;
 use crate::economy::{Economy, Harvester, HarvesterState};
 use crate::map::{axial_to_world_pos, HexMapConfig, Obstacles};
 use crate::selection::{create_selection_ring_mesh, create_ring_arc_mesh, InnerQuarterCircle};
-use crate::launch_pads::{GameState, GameTimer};
+use crate::launch_pads::{GameState, GameTimer, GAME_DURATION};
 use crate::loading::LoadingState;
 
 // Resource for selection ring assets
@@ -1057,7 +1057,7 @@ fn reset_game(
         game_state.winner = None;
 
         // Reset game timer
-        game_timer.time_remaining = 20.0;
+        game_timer.time_remaining = GAME_DURATION;
         game_timer.is_active = false;
         game_timer.winning_army = None;
 
@@ -1300,10 +1300,18 @@ fn play_animation_when_loaded(
             }
 
             if is_descendant {
+                // Stagger animation start time based on entity ID to desynchronize infantry models
+                // Use entity bits to generate a pseudo-random offset between 0-2 seconds
+                let entity_bits = player_entity.index() as u32;
+                let offset_secs = ((entity_bits % 100) as f32) / 50.0; // 0.0 to 2.0 seconds
+
                 let mut transitions = AnimationTransitions::new();
                 transitions
                     .play(&mut player, anim_graphs.idle_index, Duration::from_secs_f32(0.0))
                     .repeat();
+
+                // Seek animation to offset position to desynchronize
+                player.seek_all_by(offset_secs);
 
                 commands
                     .entity(player_entity)
