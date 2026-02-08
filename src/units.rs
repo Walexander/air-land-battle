@@ -1551,6 +1551,13 @@ fn spawn_unit_from_request(
             continue;
         }
 
+        // Check if spawn cooldown is ready
+        let army_cooldowns = spawn_cooldowns.get_army_cooldowns(spawn_request.army);
+        if !army_cooldowns.is_ready(spawn_request.unit_class, total_units) {
+            println!("{:?} army: Spawn cooldown not ready for {:?}", spawn_request.army, spawn_request.unit_class);
+            continue;
+        }
+
         // Find available spawn location based on army
         // Harvesters prefer (-4, 0) and (4, 0) positions
         let spawn_candidates = match spawn_request.army {
