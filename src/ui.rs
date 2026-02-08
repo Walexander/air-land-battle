@@ -352,7 +352,7 @@ fn setup_ui(mut commands: Commands) {
             ));
         });
 
-    // Hex coordinate display (bottom left of screen, above white bar)
+    // Hex coordinate display (bottom left of screen, above UI bar)
     commands.spawn((
         Text::new(""),
         TextFont {
@@ -362,7 +362,7 @@ fn setup_ui(mut commands: Commands) {
         TextColor(Color::srgb(0.0, 0.0, 0.0)),
         Node {
             position_type: PositionType::Absolute,
-            bottom: Val::Px(70.0),
+            bottom: Val::Px(150.0),
             left: Val::Px(10.0),
             ..default()
         },

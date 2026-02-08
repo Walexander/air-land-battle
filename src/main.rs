@@ -26,7 +26,7 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_plugins(FrameTimeDiagnosticsPlugin::default())
         .add_plugins(EguiPlugin::default())
-        .add_plugins(WorldInspectorPlugin::new())
+        .add_plugins(WorldInspectorPlugin::default().run_if(inspector_enabled))
         .add_plugins(bevy_mod_outline::OutlinePlugin)
         .add_plugins(LoadingPlugin)
         .add_plugins(LaunchPadsPlugin)
@@ -36,8 +36,9 @@ fn main() {
         .add_plugins(AIPlugin)
         .add_plugins(SelectionPlugin)
         .add_plugins(UIPlugin)
+        .insert_resource(InspectorEnabled(false))
         .add_systems(Startup, (setup_fps_counter, setup_game_speed))
-        .add_systems(Update, update_fps_text)
+        .add_systems(Update, (update_fps_text, toggle_inspector))
         .run();
 }
 
@@ -48,6 +49,23 @@ fn setup_game_speed(mut time: ResMut<Time<Virtual>>) {
 
 #[derive(Component)]
 struct FpsText;
+
+#[derive(Resource)]
+struct InspectorEnabled(bool);
+
+fn inspector_enabled(inspector: Res<InspectorEnabled>) -> bool {
+    inspector.0
+}
+
+fn toggle_inspector(
+    mut inspector: ResMut<InspectorEnabled>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+) {
+    if keyboard.just_pressed(KeyCode::KeyH) {
+        inspector.0 = !inspector.0;
+        println!("Inspector {}", if inspector.0 { "enabled" } else { "disabled" });
+    }
+}
 
 fn setup_fps_counter(mut commands: Commands) {
     // Spawn FPS text in top-left corner

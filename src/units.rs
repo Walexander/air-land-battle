@@ -1310,6 +1310,9 @@ fn handle_infantry_progressive_death(
                         if model_index.index == 0 {
                             deaths.model_index_for_66 = Some(0);
 
+                            // Remove from parent hierarchy so it stays in place when unit moves
+                            commands.entity(child).remove_parent_in_place();
+
                             // Add dying component to track fade timing
                             commands.entity(child).insert(InfantryModelDying {
                                 death_started_at: current_time,
@@ -1356,6 +1359,9 @@ fn handle_infantry_progressive_death(
                     if let Ok(model_index) = model_query.get(child) {
                         if model_index.index == 1 {
                             deaths.model_index_for_33 = Some(1);
+
+                            // Remove from parent hierarchy so it stays in place when unit moves
+                            commands.entity(child).remove_parent_in_place();
 
                             // Add dying component to track fade timing
                             commands.entity(child).insert(InfantryModelDying {
@@ -1824,31 +1830,36 @@ fn spawn_unit_from_request(
         }
 
         // Find available spawn location based on army
-        // Harvesters prefer (-4, 0) and (4, 0) positions
+        // Red spawns to the right of HQ at (-5, 2): (-4, 2), (-3, 2), (-2, 2)
+        // Blue spawns to the left of HQ at (3, 2): (2, 2), (1, 2), (0, 2)
         let spawn_candidates = match spawn_request.army {
             Army::Red => {
                 if spawn_request.unit_class == UnitClass::Harvester {
                     vec![
-                        (-4, 0), (-3, 1), (-4, 1), (-4, 2), (-5, 1), (-5, 2),
-                        (-2, 1), (-3, 0), (-3, 2), (-2, 2),
+                        (-4, 2), (-3, 2), (-2, 2),
+                        (-4, 0), (-3, 1), (-4, 1), (-5, 1),
+                        (-2, 1), (-3, 0), (-2, 0),
                     ]
                 } else {
                     vec![
-                        (-3, 1), (-4, 1), (-4, 2), (-5, 1), (-5, 2),
-                        (-2, 1), (-3, 0), (-3, 2), (-2, 2), (-4, 0),
+                        (-4, 2), (-3, 2), (-2, 2),
+                        (-3, 1), (-4, 1), (-5, 1),
+                        (-2, 1), (-3, 0), (-4, 0),
                     ]
                 }
             },
             Army::Blue => {
                 if spawn_request.unit_class == UnitClass::Harvester {
                     vec![
-                        (4, 0), (3, 1), (4, 1), (4, 2), (5, 1), (5, 2),
-                        (2, 1), (3, 0), (3, 2), (2, 2),
+                        (2, 2), (1, 2), (0, 2),
+                        (4, 0), (3, 1), (4, 1), (5, 1),
+                        (2, 1), (3, 0), (2, 0),
                     ]
                 } else {
                     vec![
-                        (3, 1), (4, 1), (4, 2), (5, 1), (5, 2),
-                        (2, 1), (3, 0), (3, 2), (2, 2), (4, 0),
+                        (2, 2), (1, 2), (0, 2),
+                        (3, 1), (4, 1), (5, 1),
+                        (2, 1), (3, 0), (4, 0),
                     ]
                 }
             },

@@ -31,6 +31,13 @@ pub struct HexOutline {}
 pub struct ObstacleSprite;
 
 #[derive(Component)]
+pub struct HQ {
+    pub army: crate::units::Army,
+    pub q: i32,
+    pub r: i32,
+}
+
+#[derive(Component)]
 pub struct LaunchPadOutline {
     pub pad_index: usize,
 }
@@ -97,6 +104,10 @@ impl Plugin for MapPlugin {
 
         // Add center obstacle
         obstacles.positions.insert((-1, 2));
+
+        // Add HQ positions (also obstacles)
+        obstacles.positions.insert((-5, 2)); // Red HQ
+        obstacles.positions.insert((3, 2));  // Blue HQ
 
         app.insert_resource(HexMapConfig { map_radius: 5 })
             .insert_resource(HoveredHex::default())
@@ -555,20 +566,50 @@ fn setup_hex_map(
                 let outline_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
 
                 if is_obstacle {
-                    // Spawn 3D mountain model for obstacles
-                    // Mountain is 4x4 in Blender, scale to fill hex cell
-                    let mountain_scale = 21.25; // 25.0 * 0.85
-                    // Raise the mountain so its base sits above the tile, offset slightly in tile
-                    let mountain_pos = world_pos + Vec3::new(0.0, 10.0, 12.0);
-                    // Rotate to align with hex grid
-                    let mountain_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
+                    // Check if this is an HQ position
+                    let red_hq_pos = (-5, 2);
+                    let blue_hq_pos = (3, 2);
+                    let is_hq = (q, r) == red_hq_pos || (q, r) == blue_hq_pos;
 
-                    parent.spawn((
-                        SceneRoot(mountain_model.clone()),
-                        Transform::from_translation(mountain_pos)
-                            .with_rotation(mountain_rotation)
-                            .with_scale(Vec3::splat(mountain_scale)),
-                    ));
+                    if is_hq {
+                        // Spawn HQ building using HexBase from JustBuildings.glb
+                        let hq_model: Handle<Scene> = asset_server.load("JustBuildings.glb#Scene0");
+                        let hq_scale = 24.0; // 20% larger than original 20.0
+                        let hq_pos = world_pos + Vec3::new(0.0, 10.0, 0.0);
+                        let hq_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
+
+                        let army = if (q, r) == red_hq_pos {
+                            crate::units::Army::Red
+                        } else {
+                            crate::units::Army::Blue
+                        };
+
+                        parent.spawn((
+                            SceneRoot(hq_model),
+                            Transform::from_translation(hq_pos)
+                                .with_rotation(hq_rotation)
+                                .with_scale(Vec3::splat(hq_scale)),
+                            HQ { army, q, r },
+                            Name::new(format!("{:?} HQ", army)),
+                        ));
+
+                        println!("Creating {:?} HQ at ({}, {})", army, q, r);
+                    } else {
+                        // Spawn 3D mountain model for regular obstacles
+                        // Mountain is 4x4 in Blender, scale to fill hex cell
+                        let mountain_scale = 21.25; // 25.0 * 0.85
+                        // Raise the mountain so its base sits above the tile, offset slightly in tile
+                        let mountain_pos = world_pos + Vec3::new(0.0, 10.0, 12.0);
+                        // Rotate to align with hex grid
+                        let mountain_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
+
+                        parent.spawn((
+                            SceneRoot(mountain_model.clone()),
+                            Transform::from_translation(mountain_pos)
+                                .with_rotation(mountain_rotation)
+                                .with_scale(Vec3::splat(mountain_scale)),
+                        ));
+                    }
                 } else if is_launch_pad {
                     // Only process this once per pad (only for the first hex in the pad)
                     let pad_idx = pad_index.unwrap();
@@ -657,8 +698,8 @@ fn setup_hex_map(
 
                 // Always spawn hover highlight for all tiles (not obstacles)
                 if !is_obstacle {
-                    // Hover highlight positioned higher to avoid z-fighting
-                    let hover_pos = world_pos + Vec3::new(0.0, 2.5, 0.0);
+                    // Hover highlight positioned higher to be visible above UI
+                    let hover_pos = world_pos + Vec3::new(0.0, 8.0, 0.0);
                     let hover_color = Color::srgb(0.7, 0.7, 0.7); // Light grey to match destination ring
                     parent.spawn((
                         Mesh3d(hover_outline_mesh.clone()),
@@ -917,13 +958,14 @@ fn billboard_sprites(
 
 fn update_fog_of_war(
     unit_query: Query<(Entity, &Unit)>,
+    hq_query: Query<&HQ>,
     mut visibility_query: Query<&mut Visibility>,
     fog_query: Query<(Entity, &FogOfWar)>,
     health_bar_query: Query<(&crate::units::HealthBar, Entity)>,
 ) {
     use std::collections::HashSet;
 
-    // Collect all visible hex positions (within 2 hexes of any Red unit)
+    // Collect all visible hex positions (within 2 hexes of any Red unit, 3 hexes of Red HQs)
     let mut visible_hexes: HashSet<(i32, i32)> = HashSet::new();
 
     for (_, unit) in &unit_query {
@@ -942,6 +984,27 @@ fn update_fog_of_war(
                 // For hex distance <= 2: max(|dq|, |dr|, |ds|) <= 2
                 if dq.abs().max(dr.abs()).max(ds.abs()) <= 2 {
                     visible_hexes.insert((unit_pos.0 + dq, unit_pos.1 + dr));
+                }
+            }
+        }
+    }
+
+    // Add visibility from Red HQs (3-hex radius)
+    for hq in &hq_query {
+        // Only Red (player) HQs reveal fog
+        if hq.army != crate::units::Army::Red {
+            continue;
+        }
+
+        let hq_pos = (hq.q, hq.r);
+
+        // Add all hexes within 3-hex radius
+        for dq in -3i32..=3i32 {
+            for dr in -3i32..=3i32 {
+                let ds = -dq - dr;
+                // For hex distance <= 3: max(|dq|, |dr|, |ds|) <= 3
+                if dq.abs().max(dr.abs()).max(ds.abs()) <= 3 {
+                    visible_hexes.insert((hq_pos.0 + dq, hq_pos.1 + dr));
                 }
             }
         }
