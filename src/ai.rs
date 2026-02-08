@@ -1,11 +1,12 @@
 use bevy::prelude::*;
 use std::collections::HashSet;
 
+use crate::economy::Economy;
 use crate::loading::LoadingState;
 use crate::launch_pads::{GameTimer, LaunchPadOwner, LaunchPadOwnership, LaunchPads};
 use crate::map::{HexMapConfig, Obstacles};
 use crate::units::{
-    find_path, hex_distance, Army, ClaimedCellsThisFrame, Economy, Occupancy,
+    find_path, hex_distance, Army, ClaimedCellsThisFrame, Occupancy,
     OccupancyIntent, Unit, UnitClass, UnitMovement, UnitSpawnQueue, UnitSpawnRequest, UnitStats, SpawnCooldowns,
 };
 

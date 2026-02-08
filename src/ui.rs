@@ -2,7 +2,8 @@ use bevy::prelude::*;
 use bevy::input::mouse::MouseWheel;
 
 use crate::launch_pads::{GameState, GameTimer};
-use crate::units::{Army, Economy, Unit, UnitClass, UnitSpawnRequest, UnitSpawnQueue, SpawnCooldowns};
+use crate::economy::Economy;
+use crate::units::{Army, Unit, UnitClass, UnitSpawnRequest, UnitSpawnQueue, SpawnCooldowns};
 use crate::loading::LoadingState;
 
 // Components

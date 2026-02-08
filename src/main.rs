@@ -10,6 +10,7 @@ mod launch_pads;
 mod ui;
 mod loading;
 mod ai;
+mod economy;
 
 use map::MapPlugin;
 use units::UnitsPlugin;
@@ -18,6 +19,7 @@ use launch_pads::LaunchPadsPlugin;
 use ui::UIPlugin;
 use loading::LoadingPlugin;
 use ai::AIPlugin;
+use economy::EconomyPlugin;
 
 // #[derive(Component)]
 // struct Position {
@@ -77,6 +79,7 @@ fn main() {
         .add_plugins(LoadingPlugin)
         .add_plugins(LaunchPadsPlugin)
         .add_plugins(MapPlugin)
+        .add_plugins(EconomyPlugin)
         .add_plugins(UnitsPlugin)
         .add_plugins(AIPlugin)
         .add_plugins(SelectionPlugin)
