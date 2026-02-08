@@ -1252,14 +1252,13 @@ fn remove_outline_from_children(
 
 fn animate_selection_rings(
     time: Res<Time>,
-    mut meshes: ResMut<Assets<Mesh>>,
     unit_query: Query<(Entity, &Transform, Has<Selected>), With<Unit>>,
     mut ring_query: Query<
-        (&mut SelectionRing, &mut Transform, &mut Visibility, &mut Mesh3d),
+        (&mut SelectionRing, &mut Transform, &mut Visibility),
         Without<Unit>,
     >,
 ) {
-    for (mut ring, mut ring_transform, mut visibility, mut mesh_handle) in &mut ring_query {
+    for (mut ring, mut ring_transform, mut visibility) in &mut ring_query {
         if let Ok((_, unit_transform, is_selected)) = unit_query.get(ring.unit_entity) {
             let was_visible = *visibility == Visibility::Visible;
             *visibility = if is_selected {
@@ -1295,13 +1294,9 @@ fn animate_selection_rings(
                         let min_scale = 0.5;
                         let max_scale = 0.9;  // 10% smaller starting size (was 1.0)
 
-                        // Calculate line width (lerp from thick to thin)
-                        let min_line_width = 10.0;  // Final line width
-                        let max_line_width = 16.0; // Initial line width
-
-                        let (current_scale, current_line_width) = if cycle_progress < 0.25 {
-                            // Hold at max scale and max line width for first quarter of animation
-                            (max_scale, max_line_width)
+                        let current_scale = if cycle_progress < 0.25 {
+                            // Hold at max scale for first quarter of animation
+                            max_scale
                         } else {
                             // Spring bounce effect: oscillate around target with decreasing amplitude
                             let ease_progress = (cycle_progress - 0.25) / 0.75; // Map 0.25-1.0 to 0.0-1.0
@@ -1318,24 +1313,12 @@ fn animate_selection_rings(
                             // Map spring oscillation to scale range
                             // When spring = 1.0 (start), we want max_scale
                             // When spring = 0.0 (settled), we want min_scale
-                            let scale = min_scale + (max_scale - min_scale) * spring;
-                            let line_width = min_line_width + (max_line_width - min_line_width) * spring;
-
-                            (scale, line_width)
+                            min_scale + (max_scale - min_scale) * spring
                         };
 
                         ring_transform.scale = Vec3::splat(current_scale);
-
-                        // Update mesh with new line width
-                        let outer_radius = 100.0;
-                        let inner_radius = outer_radius - current_line_width;
-                        let new_mesh = create_selection_ring_mesh(inner_radius, outer_radius);
-                        mesh_handle.0 = meshes.add(new_mesh);
                     } else {
                         ring_transform.scale = Vec3::splat(0.5);
-                        // Set final mesh with 10-unit line width
-                        let new_mesh = create_selection_ring_mesh(90.0, 100.0);
-                        mesh_handle.0 = meshes.add(new_mesh);
                     }
                 } else {
                     ring_transform.scale = Vec3::splat(0.5);
