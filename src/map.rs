@@ -64,6 +64,7 @@ struct CrystalMaterialApplied;
 struct CrystalVisual {
     rotation_speed: f32,
     pulse_offset: f32,
+    index: usize, // Index of this crystal visual (0, 1, 2, ...)
 }
 
 // Resources
@@ -109,7 +110,7 @@ impl Plugin for MapPlugin {
             .insert_resource(obstacles)
             .insert_resource(ClearColor(Color::srgb(0.53, 0.81, 0.92))) // Light sky blue
             .add_systems(OnEnter(LoadingState::Playing), setup_hex_map)
-            .add_systems(Update, (hex_hover_system, update_outline_colors, update_launch_pad_colors, billboard_sprites, apply_crystal_materials, animate_crystal_sparkle, update_fog_of_war).run_if(in_state(LoadingState::Playing)));
+            .add_systems(Update, (hex_hover_system, update_outline_colors, update_launch_pad_colors, billboard_sprites, apply_crystal_materials, animate_crystal_sparkle, update_fog_of_war, update_crystal_visuals).run_if(in_state(LoadingState::Playing)));
     }
 }
 
@@ -909,8 +910,8 @@ fn setup_hex_map(
                 },
                 Name::new(format!("Crystal Field ({}, {})", q, r)),
             )).with_children(|field_parent| {
-                // Spawn 2-3 crystal models randomly positioned within the cell
-                let num_crystals = 2 + (((q * 7 + r * 11) % 2).abs() as usize); // 2 or 3 crystals
+                // Spawn crystal models - number based on max_crystals (1 visual per 10 crystals)
+                let num_crystals = ((crystals as f32 / 10.0).ceil() as usize).max(1).min(8);
 
                 for i in 0..num_crystals {
                     let i_i32 = i as i32;
@@ -935,6 +936,7 @@ fn setup_hex_map(
                         CrystalVisual {
                             rotation_speed,
                             pulse_offset,
+                            index: i,
                         },
                         Name::new(format!("Crystal {}", i)),
                     ));
@@ -1249,6 +1251,28 @@ fn animate_crystal_sparkle(
             if let Ok(entity_children) = children_query.get(entity) {
                 for &child in entity_children {
                     entities_to_check.push(child);
+                }
+            }
+        }
+    }
+}
+
+fn update_crystal_visuals(
+    mut commands: Commands,
+    crystal_field_query: Query<(&CrystalField, &Children), Changed<CrystalField>>,
+    crystal_visual_query: Query<(Entity, &CrystalVisual)>,
+) {
+    for (field, children) in &crystal_field_query {
+        // Calculate how many crystals should be visible based on remaining/max ratio
+        let ratio = field.crystals_remaining as f32 / field.max_crystals as f32;
+        let total_visuals = ((field.max_crystals as f32 / 10.0).ceil() as usize).max(1).min(8);
+        let visible_count = (ratio * total_visuals as f32).ceil() as usize;
+
+        // Find all crystal visual children and despawn those beyond visible_count
+        for &child in children {
+            if let Ok((entity, visual)) = crystal_visual_query.get(child) {
+                if visual.index >= visible_count {
+                    commands.entity(entity).despawn();
                 }
             }
         }
