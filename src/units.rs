@@ -1727,135 +1727,94 @@ fn spawn_unit_from_request(
 
         // Spawn unit as child of appropriate army
         commands.entity(army_entity).with_children(|parent| {
-            let unit_entity = if spawn_request.unit_class == UnitClass::Infantry {
-                // Infantry with 3 models
-                let spacing = 20.0;
-                let offsets = [
-                    Vec3::new(0.0, 0.0, spacing),
-                    Vec3::new(-spacing, 0.0, -spacing),
-                    Vec3::new(spacing, 0.0, -spacing),
-                ];
+            // Create animation graph (shared by all unit types)
+            let mut animation_graph = AnimationGraph::new();
+            let idle_index = animation_graph.add_clip(
+                asset_server.load(GltfAssetLabel::Animation(spawn_request.unit_class.idle_animation_index()).from_asset(model_path)),
+                1.0,
+                animation_graph.root,
+            );
+            let moving_index = animation_graph.add_clip(
+                asset_server.load(GltfAssetLabel::Animation(spawn_request.unit_class.moving_animation_index()).from_asset(model_path)),
+                1.0,
+                animation_graph.root,
+            );
+            let graph_handle = animation_graphs.add(animation_graph);
 
-                let mut animation_graph = AnimationGraph::new();
-                let idle_index = animation_graph.add_clip(
-                    asset_server.load(GltfAssetLabel::Animation(spawn_request.unit_class.idle_animation_index()).from_asset(model_path)),
-                    1.0,
-                    animation_graph.root,
-                );
-                let moving_index = animation_graph.add_clip(
-                    asset_server.load(GltfAssetLabel::Animation(spawn_request.unit_class.moving_animation_index()).from_asset(model_path)),
-                    1.0,
-                    animation_graph.root,
-                );
-                let graph_handle = animation_graphs.add(animation_graph);
+            // Spawn parent entity with all components (shared by all unit types)
+            let mut unit_entity_commands = parent.spawn((
+                Transform::from_translation(unit_pos),
+                Visibility::Visible,
+                Unit {
+                    q,
+                    r,
+                    _sprite_index: 999,
+                    army: spawn_request.army,
+                },
+                spawn_request.army,
+                spawn_request.unit_class,
+                stats.clone(),
+                AnimationGraphHandle(graph_handle.clone()),
+                AnimationGraphs {
+                    idle_index,
+                    moving_index,
+                },
+                CurrentAnimationState { is_moving: false },
+                Combat {
+                    last_attack_time: 0.0,
+                    attack_cooldown: spawn_request.unit_class.base_cooldown(),
+                    last_movement_time: 0.0,
+                    movement_cooldown: 0.5,
+                },
+                Health {
+                    current: stats.max_health,
+                    max: stats.max_health,
+                },
+                Name::new(format!("{:?} {:?} ({}, {})", spawn_request.army, spawn_request.unit_class, q, r)),
+            ));
 
-                parent
-                    .spawn((
-                        Transform::from_translation(unit_pos),
-                        Visibility::Visible,
-                        Unit {
-                            q,
-                            r,
-                            _sprite_index: 999,
-                            army: spawn_request.army,
-                        },
-                        spawn_request.army,
-                        spawn_request.unit_class,
-                        stats.clone(),
-                        AnimationGraphHandle(graph_handle.clone()),
-                        AnimationGraphs {
-                            idle_index,
-                            moving_index,
-                        },
-                        CurrentAnimationState { is_moving: false },
-                        Combat {
-                            last_attack_time: 0.0,
-                            attack_cooldown: spawn_request.unit_class.base_cooldown(),
-                            last_movement_time: 0.0,
-                            movement_cooldown: 0.5,
-                        },
-                        Health {
-                            current: stats.max_health,
-                            max: stats.max_health,
-                        },
-                        Name::new(format!("{:?} {:?} ({}, {})", spawn_request.army, spawn_request.unit_class, q, r)),
-                    ))
-                    .with_children(|unit_parent| {
-                        for offset in offsets.iter() {
-                            let scene: Handle<Scene> = asset_server.load(format!("{}#Scene0", model_path));
-                            unit_parent.spawn((
-                                SceneRoot(scene),
-                                Transform::from_translation(*offset)
-                                    .with_scale(Vec3::splat(spawn_request.unit_class.scale())),
-                            ));
-                        }
-                    })
-                    .id()
-            } else {
-                // Single model for Cavalry and Artillery
+            // Add Harvester component for harvester units
+            if spawn_request.unit_class == UnitClass::Harvester {
+                unit_entity_commands.insert(Harvester {
+                    state: HarvesterState::Idle,
+                    harvest_timer: 0.0,
+                    harvest_duration: 10.0,
+                    crystals_carried: 0,
+                    crystal_accumulator: 0.0,
+                    spawn_point: (q, r),
+                    target_field: None,
+                });
+            }
+
+            // Add child models based on unit type
+            let unit_entity = unit_entity_commands.id();
+            unit_entity_commands.with_children(|unit_parent| {
                 let scene: Handle<Scene> = asset_server.load(format!("{}#Scene0", model_path));
 
-                let mut animation_graph = AnimationGraph::new();
-                let idle_index = animation_graph.add_clip(
-                    asset_server.load(GltfAssetLabel::Animation(spawn_request.unit_class.idle_animation_index()).from_asset(model_path)),
-                    1.0,
-                    animation_graph.root,
-                );
-                let moving_index = animation_graph.add_clip(
-                    asset_server.load(GltfAssetLabel::Animation(spawn_request.unit_class.moving_animation_index()).from_asset(model_path)),
-                    1.0,
-                    animation_graph.root,
-                );
-                let graph_handle = animation_graphs.add(animation_graph);
-
-                let mut entity_commands = parent.spawn((
-                    SceneRoot(scene),
-                    Transform::from_translation(unit_pos)
-                        .with_scale(Vec3::splat(spawn_request.unit_class.scale())),
-                    Visibility::Visible,
-                    Unit {
-                        q,
-                        r,
-                        _sprite_index: 999,
-                        army: spawn_request.army,
-                    },
-                    spawn_request.army,
-                    spawn_request.unit_class,
-                    stats.clone(),
-                    AnimationGraphHandle(graph_handle.clone()),
-                    AnimationGraphs {
-                        idle_index,
-                        moving_index,
-                    },
-                    CurrentAnimationState { is_moving: false },
-                    Combat {
-                        last_attack_time: 0.0,
-                        attack_cooldown: spawn_request.unit_class.base_cooldown(),
-                        last_movement_time: 0.0,
-                        movement_cooldown: 0.5,
-                    },
-                    Health {
-                        current: stats.max_health,
-                        max: stats.max_health,
-                    },
-                    Name::new(format!("{:?} {:?} ({}, {})", spawn_request.army, spawn_request.unit_class, q, r)),
-                ));
-
-                // Add Harvester component for harvester units
-                if spawn_request.unit_class == UnitClass::Harvester {
-                    entity_commands.insert(Harvester {
-                        state: HarvesterState::Idle,
-                        harvest_timer: 0.0,
-                        harvest_duration: 10.0,
-                        crystals_carried: 0,
-                        crystal_accumulator: 0.0,
-                        spawn_point: (q, r),
-                        target_field: None,
-                    });
+                if spawn_request.unit_class == UnitClass::Infantry {
+                    // Infantry: spawn 3 models in triangle formation
+                    let spacing = 20.0;
+                    let offsets = [
+                        Vec3::new(0.0, 0.0, spacing),
+                        Vec3::new(-spacing, 0.0, -spacing),
+                        Vec3::new(spacing, 0.0, -spacing),
+                    ];
+                    for offset in offsets.iter() {
+                        unit_parent.spawn((
+                            SceneRoot(scene.clone()),
+                            Transform::from_translation(*offset)
+                                .with_scale(Vec3::splat(spawn_request.unit_class.scale())),
+                        ));
+                    }
+                } else {
+                    // Other units: spawn single model at origin
+                    unit_parent.spawn((
+                        SceneRoot(scene),
+                        Transform::default()
+                            .with_scale(Vec3::splat(spawn_request.unit_class.scale())),
+                    ));
                 }
-
-                entity_commands.id()
-            };
+            });
 
             // Spawn health bars (matching original setup)
             let bar_pos_world = world_pos + Vec3::new(0.0, 70.0, 0.0);

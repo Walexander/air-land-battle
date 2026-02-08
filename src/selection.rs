@@ -1657,7 +1657,7 @@ fn visualize_hover_ring(
         if !already_exists
             && let Ok((_, transform)) = unit_query.get(hovered_entity) {
                 // Spawn red square outline on hovered enemy (same style as target ring)
-                let ring_mesh = meshes.add(create_ring_mesh_with_segments(50.0, 58.0, 4));
+                let ring_mesh = meshes.add(create_ring_mesh_with_segments(50.0, 58.0, 6));
                 let ring_material = materials.add(StandardMaterial {
                     base_color: Color::srgb(0.9, 0.2, 0.2), // Red
                     emissive: Color::srgb(0.9, 0.2, 0.2).into(),
