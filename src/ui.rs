@@ -533,7 +533,7 @@ fn update_spawn_button_visuals(
         };
 
         let can_afford = economy.red_money >= unit_class.cost();
-        let is_ready = red_cooldowns.is_ready(unit_class, red_unit_count);
+        let _is_ready = red_cooldowns.is_ready(unit_class, red_unit_count);
 
         // Set fill bar color based on affordability (regardless of cooldown status)
         if !can_afford {
@@ -887,7 +887,7 @@ fn handle_camera_slider_input(
         let panel_right = window_width - 10.0;
         let panel_left = panel_right - 300.0;
         let slider_left = panel_left + 10.0; // 10px padding
-        let slider_right = slider_left + 280.0;
+        let _slider_right = slider_left + 280.0;
 
         // Calculate cursor position relative to this slider
         let relative_x = (cursor_pos.x - slider_left).max(0.0);

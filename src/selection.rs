@@ -3,7 +3,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy_mod_outline::OutlineVolume;
 
-use crate::map::{axial_to_world_pos, HexMapConfig, HexTile, HoveredHex, Obstacles};
+use crate::map::{axial_to_world_pos, HexMapConfig, HoveredHex, Obstacles};
 use crate::units::{find_path, Occupancy, OccupancyIntent, ClaimedCellsThisFrame, Unit, UnitMovement, Army, UnitStats};
 use crate::loading::LoadingState;
 
@@ -363,7 +363,7 @@ pub fn spawn_destination_ring(
     materials: &mut ResMut<Assets<StandardMaterial>>,
     unit_entity: Entity,
     destination: (i32, i32),
-    army: Army,
+    _army: Army,
 ) {
     let dest_pos = axial_to_world_pos(destination.0, destination.1);
     let hex_pos = dest_pos + Vec3::new(0.0, 2.5, 0.0);
@@ -730,7 +730,7 @@ fn handle_unit_selection(
         // Check if a unit was clicked directly (prioritize direct clicks)
         if let Some(clicked_entity) = clicked_unit.entity {
             // Check if the clicked unit is from the Red army (player controlled)
-            if let Ok((entity, unit, _)) = unit_query.get(clicked_entity) {
+            if let Ok((_entity, unit, _)) = unit_query.get(clicked_entity) {
                 if unit.army == Army::Red {
                     // Select this unit
                     for (entity, _, _, _, _) in &selected_query {

@@ -1116,9 +1116,9 @@ fn reset_game(
     mut commands: Commands,
     army_query: Query<Entity, Or<(With<RedArmy>, With<BlueArmy>)>>,
     children_query: Query<&Children>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut animation_graphs: ResMut<Assets<AnimationGraph>>,
+    meshes: ResMut<Assets<Mesh>>,
+    materials: ResMut<Assets<StandardMaterial>>,
+    animation_graphs: ResMut<Assets<AnimationGraph>>,
     asset_server: Res<AssetServer>,
     mut occupancy: ResMut<Occupancy>,
     mut occupancy_intent: ResMut<OccupancyIntent>,
@@ -1335,7 +1335,7 @@ fn detect_collisions_and_repath(
 }
 
 fn update_unit_animations(
-    mut commands: Commands,
+    _commands: Commands,
     mut units_query: Query<
         (
             Entity,
@@ -1349,7 +1349,7 @@ fn update_unit_animations(
     children_query: Query<&Children>,
     mut players_query: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
 ) {
-    for (unit_entity, anim_graphs, mut anim_state, mut graph_handle, movement) in
+    for (unit_entity, anim_graphs, mut anim_state, _graph_handle, movement) in
         units_query.iter_mut()
     {
         let is_moving = movement.is_some();
@@ -2159,7 +2159,7 @@ fn evaluate_strategy(
     unit_query: &Query<(&Unit, &UnitClass)>,
     economy: &Economy,
     pad_ownership: &LaunchPadOwnership,
-    launch_pads: &LaunchPads,
+    _launch_pads: &LaunchPads,
     game_timer: &GameTimer,
 ) -> AIStrategy {
     let mut blue_units = 0;
@@ -2358,7 +2358,7 @@ fn ai_command_units(
     occupancy: Res<Occupancy>,
     occupancy_intent: Res<OccupancyIntent>,
     mut claimed_cells: ResMut<ClaimedCellsThisFrame>,
-    mut unit_query: Query<(Entity, &Unit, &UnitStats, &UnitClass, Option<&UnitMovement>)>,
+    unit_query: Query<(Entity, &Unit, &UnitStats, &UnitClass, Option<&UnitMovement>)>,
 ) {
     ai_controller.command_timer += time.delta_secs();
 
@@ -2967,7 +2967,7 @@ fn setup_units(
             let stats = unit_class.default_stats();
 
             // Health bar color based on army
-            let health_bar_color = match army {
+            let _health_bar_color = match army {
                 Army::Red => Color::srgb(0.9, 0.2, 0.2),
                 Army::Blue => Color::srgb(0.2, 0.4, 0.9),
             };
@@ -3463,7 +3463,7 @@ fn detect_unit_clicks(
     camera_query: Query<(&Camera, &GlobalTransform), With<crate::ui::GameCamera>>,
     windows: Query<&Window>,
     collider_query: Query<(&UnitClickCollider, &GlobalTransform, &Mesh3d)>,
-    meshes: Res<Assets<Mesh>>,
+    _meshes: Res<Assets<Mesh>>,
     mut clicked_unit: ResMut<ClickedUnit>,
     mut hovered_unit: ResMut<HoveredUnit>,
 ) {

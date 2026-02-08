@@ -710,13 +710,13 @@ fn setup_hex_map(
 
                 // Spawn hex outline (skip for obstacles since they use sprites)
                 let base_outline_height = 1.0;
-                let outline_pos = if is_launch_pad {
+                let _outline_pos = if is_launch_pad {
                     world_pos + Vec3::new(0.0, base_outline_height + 0.2, 0.0)
                 } else {
                     world_pos + Vec3::new(0.0, base_outline_height, 0.0)
                 };
 
-                let outline_color = Color::srgb(1.0, 1.0, 1.0); // White
+                let _outline_color = Color::srgb(1.0, 1.0, 1.0); // White
                 let outline_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
 
                 if is_obstacle {
@@ -951,7 +951,7 @@ fn hex_hover_system(
     mut hovered_hex: ResMut<HoveredHex>,
     hex_query: Query<(Entity, &HexTile)>,
     windows: Query<&Window>,
-    obstacles: Res<Obstacles>,
+    _obstacles: Res<Obstacles>,
 ) {
     let Ok((camera, camera_transform)) = camera_query.single() else {
         return;
@@ -1016,10 +1016,10 @@ fn update_outline_colors(
     >,
     unit_query: Query<(&Unit, Has<Selected>)>,
     hex_query: Query<&HexTile>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    _materials: ResMut<Assets<StandardMaterial>>,
 ) {
     // Find if there's an unselected unit at the hovered position
-    let hovered_unit_info = if let Some(hovered_entity) = hovered_hex.entity {
+    let _hovered_unit_info = if let Some(hovered_entity) = hovered_hex.entity {
         if let Ok(hex_tile) = hex_query.get(hovered_entity) {
             let (hovered_q, hovered_r) = (hex_tile.q, hex_tile.r);
             unit_query.iter()
@@ -1034,7 +1034,7 @@ fn update_outline_colors(
         None
     };
 
-    for (outline, mut visibility, _material_handle) in &mut outline_query {
+    for (_outline, mut visibility, _material_handle) in &mut outline_query {
         // Disabled: hover ring on units provides all feedback needed
         *visibility = Visibility::Hidden;
     }
@@ -1173,7 +1173,7 @@ fn apply_crystal_materials(
     children_query: Query<&Children>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    for (crystal_entity, children) in &crystal_query {
+    for (_crystal_entity, children) in &crystal_query {
         // Recursively find all mesh entities in descendants
         let mut entities_to_check = Vec::new();
         for &child in children {
