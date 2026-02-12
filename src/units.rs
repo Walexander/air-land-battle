@@ -13,6 +13,7 @@ use crate::map::{axial_to_world_pos, HexMapConfig, Obstacles};
 use crate::selection::{create_selection_ring_mesh, create_ring_arc_mesh, InnerQuarterCircle};
 use crate::launch_pads::{GameState, GameTimer, GAME_DURATION};
 use crate::loading::LoadingState;
+use crate::Paused;
 
 // Unit definition structures loaded from RON files
 #[derive(Debug, Clone, Deserialize, Serialize, Resource)]
@@ -2433,6 +2434,10 @@ fn setup_selection_ring_assets(
     });
 }
 
+fn not_paused(paused: Res<Paused>) -> bool {
+    !paused.0
+}
+
 pub struct UnitsPlugin;
 
 impl Plugin for UnitsPlugin {
@@ -2450,6 +2455,11 @@ impl Plugin for UnitsPlugin {
                 (
                     hot_reload_unit_definitions,
                     detect_unit_clicks,
+                ).run_if(in_state(LoadingState::Playing)),
+            )
+            .add_systems(
+                Update,
+                (
                     clear_claimed_cells,
                     reset_game,
                     update_spawn_cooldowns,
@@ -2459,7 +2469,7 @@ impl Plugin for UnitsPlugin {
                     rotate_units_toward_enemies,
                     combat_system,
                     handle_flash_effects,
-                ).run_if(in_state(LoadingState::Playing)),
+                ).run_if(in_state(LoadingState::Playing).and(not_paused)),
             )
             .add_systems(
                 Update,

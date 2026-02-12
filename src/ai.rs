@@ -9,6 +9,7 @@ use crate::units::{
     find_path, hex_distance, Army, ClaimedCellsThisFrame, Occupancy,
     OccupancyIntent, Unit, UnitClass, UnitMovement, UnitSpawnQueue, UnitSpawnRequest, UnitStats, SpawnCooldowns, UnitDefinitions,
 };
+use crate::Paused;
 
 // AI Strategy types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -644,7 +645,11 @@ impl Plugin for AIPlugin {
         app.init_resource::<AIController>()
             .add_systems(
                 Update,
-                (ai_spawn_units, ai_command_units).run_if(in_state(LoadingState::Playing)),
+                (ai_spawn_units, ai_command_units).run_if(in_state(LoadingState::Playing).and(not_paused)),
             );
     }
+}
+
+fn not_paused(paused: Res<Paused>) -> bool {
+    !paused.0
 }

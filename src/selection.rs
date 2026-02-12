@@ -6,6 +6,7 @@ use bevy_mod_outline::OutlineVolume;
 use crate::map::{axial_to_world_pos, HexMapConfig, HoveredHex, Obstacles};
 use crate::units::{find_path, Occupancy, OccupancyIntent, ClaimedCellsThisFrame, Unit, UnitMovement, Army, UnitStats};
 use crate::loading::LoadingState;
+use crate::Paused;
 
 // Components
 #[derive(Component)]
@@ -1783,6 +1784,10 @@ fn animate_inner_quarter_circles(
     }
 }
 
+fn not_paused(paused: Res<Paused>) -> bool {
+    !paused.0
+}
+
 impl Plugin for SelectionPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
@@ -1812,7 +1817,7 @@ impl Plugin for SelectionPlugin {
         );
         app.add_systems(
             Update,
-            handle_unit_selection
+            handle_unit_selection.run_if(not_paused)
         );
     }
 }

@@ -17,6 +17,13 @@ pub struct TimerText;
 pub struct GameOverScreen;
 
 #[derive(Component)]
+struct DelayedSound {
+    timer: f32,
+    delay: f32,
+    sound_path: String,
+}
+
+#[derive(Component)]
 pub struct CameraControlsPanel;
 
 #[derive(Component)]
@@ -574,8 +581,33 @@ fn show_game_over_screen(
     mut commands: Commands,
     game_state: Res<GameState>,
     game_over_query: Query<Entity, With<GameOverScreen>>,
+    mut paused: ResMut<crate::Paused>,
+    asset_server: Res<AssetServer>,
 ) {
     if game_state.game_over && game_over_query.is_empty() {
+        paused.0 = true;
+        println!("⏸️  Game PAUSED (Game Over)");
+
+        // Play first sound immediately, then second sound after delay
+        let (first_sound, second_sound) = match game_state.winner {
+            Some(Army::Red) => ("sounds/announcer/dominating.ogg", "sounds/announcer/youwin.ogg"),
+            Some(Army::Blue) => ("sounds/announcer/fragged.ogg", "sounds/announcer/youlose.ogg"),
+            None => ("sounds/announcer/fragged.ogg", "sounds/announcer/youlose.ogg"), // Draw counts as lose
+        };
+
+        // Play first sound immediately
+        commands.spawn((
+            AudioPlayer::<AudioSource>(asset_server.load(first_sound)),
+            PlaybackSettings::ONCE.with_volume(bevy::audio::Volume::Linear(0.5)),
+        ));
+
+        // Queue second sound to play after 1.5 second delay
+        commands.spawn(DelayedSound {
+            timer: 0.0,
+            delay: 1.5,
+            sound_path: second_sound.to_string(),
+        });
+
         let winner_name = match game_state.winner {
             Some(Army::Red) => "RED ARMY",
             Some(Army::Blue) => "BLUE ARMY",
@@ -586,6 +618,12 @@ fn show_game_over_screen(
             Some(Army::Red) => Color::srgb(0.9, 0.2, 0.2),
             Some(Army::Blue) => Color::srgb(0.2, 0.4, 0.9),
             None => Color::srgb(0.5, 0.5, 0.5),
+        };
+
+        let result_text = match game_state.winner {
+            Some(Army::Red) => "VICTORY!",
+            Some(Army::Blue) => "DEFEAT!",
+            None => "DRAW!",
         };
 
         commands
@@ -617,7 +655,7 @@ fn show_game_over_screen(
                     ))
                     .with_children(|parent| {
                         parent.spawn((
-                            Text::new("VICTORY!"),
+                            Text::new(result_text),
                             TextFont {
                                 font_size: 80.0,
                                 ..default()
@@ -664,12 +702,15 @@ fn handle_restart(
     mut game_timer: ResMut<GameTimer>,
     game_over_query: Query<Entity, With<GameOverScreen>>,
     children_query: Query<&Children>,
+    mut paused: ResMut<crate::Paused>,
 ) {
     if game_state.game_over && keyboard.just_pressed(KeyCode::Space) {
         println!("Restarting game...");
 
         game_state.game_over = false;
         game_state.winner = None;
+        paused.0 = false;
+        println!("⏸️  Game RESUMED");
 
         game_timer.time_remaining = GAME_DURATION;
         game_timer.is_active = false;
@@ -980,6 +1021,28 @@ fn update_camera_controls_panel_visibility(
     }
 }
 
+fn handle_delayed_sound(
+    time: Res<Time<Real>>,
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    mut delayed_query: Query<(Entity, &mut DelayedSound)>,
+) {
+    for (entity, mut delayed) in delayed_query.iter_mut() {
+        delayed.timer += time.delta_secs();
+
+        if delayed.timer >= delayed.delay {
+            // Time to play the sound
+            commands.spawn((
+                AudioPlayer::<AudioSource>(asset_server.load(delayed.sound_path.clone())),
+                PlaybackSettings::ONCE.with_volume(bevy::audio::Volume::Linear(0.5)),
+            ));
+
+            // Remove the delayed sound component
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
 pub struct UIPlugin;
 
 impl Plugin for UIPlugin {
@@ -1007,6 +1070,7 @@ impl Plugin for UIPlugin {
                 update_spawn_button_visuals,
                 show_game_over_screen,
                 handle_restart,
+                handle_delayed_sound,
             ).run_if(in_state(LoadingState::Playing)),
         )
         .add_systems(

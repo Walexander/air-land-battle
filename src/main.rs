@@ -11,6 +11,7 @@ mod ui;
 mod loading;
 mod ai;
 mod economy;
+mod music;
 
 use map::MapPlugin;
 use units::UnitsPlugin;
@@ -20,6 +21,7 @@ use ui::UIPlugin;
 use loading::LoadingPlugin;
 use ai::AIPlugin;
 use economy::EconomyPlugin;
+use music::MusicPlugin;
 
 fn main() {
     App::new()
@@ -36,9 +38,11 @@ fn main() {
         .add_plugins(AIPlugin)
         .add_plugins(SelectionPlugin)
         .add_plugins(UIPlugin)
+        .add_plugins(MusicPlugin)
         .insert_resource(InspectorEnabled(false))
+        .insert_resource(Paused(false))
         .add_systems(Startup, (setup_fps_counter, setup_game_speed))
-        .add_systems(Update, (update_fps_text, toggle_inspector))
+        .add_systems(Update, (update_fps_text, toggle_inspector, toggle_pause, handle_pause_time, show_pause_overlay))
         .run();
 }
 
@@ -52,6 +56,9 @@ struct FpsText;
 
 #[derive(Resource)]
 struct InspectorEnabled(bool);
+
+#[derive(Resource)]
+pub struct Paused(pub bool);
 
 fn inspector_enabled(inspector: Res<InspectorEnabled>) -> bool {
     inspector.0
@@ -95,5 +102,87 @@ fn update_fps_text(
             && let Some(value) = fps.smoothed() {
                 text.0 = format!("FPS: {:.0}", value);
             }
+    }
+}
+
+fn toggle_pause(
+    mut paused: ResMut<Paused>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+) {
+    if keyboard.just_pressed(KeyCode::Space) {
+        paused.0 = !paused.0;
+        println!("⏸️  Game {}", if paused.0 { "PAUSED" } else { "RESUMED" });
+    }
+}
+
+fn handle_pause_time(
+    paused: Res<Paused>,
+    mut time: ResMut<Time<Virtual>>,
+) {
+    if paused.is_changed() {
+        if paused.0 {
+            time.set_relative_speed(0.0);
+        } else {
+            time.set_relative_speed(0.8); // Restore the game speed from setup
+        }
+    }
+}
+
+#[derive(Component)]
+struct PauseOverlay;
+
+fn show_pause_overlay(
+    mut commands: Commands,
+    paused: Res<Paused>,
+    overlay_query: Query<Entity, With<PauseOverlay>>,
+    children_query: Query<&Children>,
+) {
+    if paused.is_changed() {
+        if paused.0 {
+            // Show pause overlay
+            if overlay_query.is_empty() {
+                commands.spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        width: Val::Percent(100.0),
+                        height: Val::Percent(100.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5)),
+                    ZIndex(-1),
+                    PauseOverlay,
+                )).with_children(|parent| {
+                    parent.spawn((
+                        Text::new("PAUSED"),
+                        TextFont {
+                            font_size: 120.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(1.0, 1.0, 1.0)),
+                    ));
+                });
+            }
+        } else {
+            // Hide pause overlay and all children
+            for entity in overlay_query.iter() {
+                let mut to_despawn = vec![entity];
+
+                let mut i = 0;
+                while i < to_despawn.len() {
+                    if let Ok(children) = children_query.get(to_despawn[i]) {
+                        for child in children.iter() {
+                            to_despawn.push(child);
+                        }
+                    }
+                    i += 1;
+                }
+
+                for entity_to_remove in to_despawn {
+                    commands.entity(entity_to_remove).despawn();
+                }
+            }
+        }
     }
 }

@@ -193,6 +193,10 @@ impl Plugin for LaunchPadsPlugin {
             .insert_resource(GameTimer::default())
             .insert_resource(GameState::default())
             .insert_resource(LaunchPadOwnership::default())
-            .add_systems(Update, check_launch_pad_ownership.run_if(in_state(LoadingState::Playing)));
+            .add_systems(Update, check_launch_pad_ownership.run_if(in_state(LoadingState::Playing).and(not_paused)));
     }
+}
+
+fn not_paused(paused: Res<crate::Paused>) -> bool {
+    !paused.0
 }

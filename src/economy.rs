@@ -312,7 +312,11 @@ impl Plugin for EconomyPlugin {
                     harvester_return_to_base,
                     harvester_deposit_crystals,
                 )
-                    .run_if(in_state(LoadingState::Playing)),
+                    .run_if(in_state(LoadingState::Playing).and(not_paused)),
             );
     }
+}
+
+fn not_paused(paused: Res<crate::Paused>) -> bool {
+    !paused.0
 }
