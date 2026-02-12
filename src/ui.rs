@@ -3,7 +3,7 @@ use bevy::input::mouse::MouseWheel;
 
 use crate::launch_pads::{GameState, GameTimer, GAME_DURATION};
 use crate::economy::Economy;
-use crate::units::{Army, Unit, UnitClass, UnitSpawnRequest, UnitSpawnQueue, SpawnCooldowns};
+use crate::units::{Army, Unit, UnitClass, UnitSpawnRequest, UnitSpawnQueue, SpawnCooldowns, UnitDefinitions};
 use crate::loading::LoadingState;
 
 // Components
@@ -436,6 +436,7 @@ fn handle_unit_spawn_buttons(
     unit_query: Query<&Unit>,
     mut spawn_queue: ResMut<UnitSpawnQueue>,
     mut ui_clicked: ResMut<UIClicked>,
+    unit_definitions: Res<UnitDefinitions>,
 ) {
     for (interaction, button, mut border_color, mut node) in &mut interaction_query {
         // Mark that UI was clicked
@@ -457,7 +458,7 @@ fn handle_unit_spawn_buttons(
 
         match *interaction {
             Interaction::Pressed => {
-                let cost = unit_class.cost();
+                let cost = unit_class.cost(&unit_definitions);
                 let can_afford = economy.red_money >= cost;
                 let red_cooldowns = spawn_cooldowns.get_army_cooldowns(Army::Red);
                 // Check cooldown for the count AFTER spawning (current + 1)
@@ -514,6 +515,7 @@ fn update_spawn_button_visuals(
     unit_query: Query<&Unit>,
     mut button_query: Query<(&UnitSpawnButton, &mut BackgroundColor), Without<SpawnButtonFill>>,
     mut fill_query: Query<(&SpawnButtonFill, &mut Node, &mut BackgroundColor), Without<UnitSpawnButton>>,
+    unit_definitions: Res<UnitDefinitions>,
 ) {
     let red_cooldowns = spawn_cooldowns.get_army_cooldowns(Army::Red);
 
@@ -531,7 +533,7 @@ fn update_spawn_button_visuals(
             UnitSpawnButton::Harvester => UnitClass::Harvester,
         };
 
-        let can_afford = economy.red_money >= unit_class.cost();
+        let can_afford = economy.red_money >= unit_class.cost(&unit_definitions);
         let is_ready = red_cooldowns.is_ready(unit_class, red_unit_count + 1);
 
         if is_ready && !can_afford {
@@ -552,7 +554,7 @@ fn update_spawn_button_visuals(
             UnitSpawnButton::Harvester => UnitClass::Harvester,
         };
 
-        let can_afford = economy.red_money >= unit_class.cost();
+        let can_afford = economy.red_money >= unit_class.cost(&unit_definitions);
         let _is_ready = red_cooldowns.is_ready(unit_class, red_unit_count + 1);
 
         // Set fill bar color based on affordability (regardless of cooldown status)

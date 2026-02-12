@@ -6,12 +6,85 @@ use std::time::Duration;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::cmp::Ordering;
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 
 use crate::economy::{Economy, Harvester, HarvesterState};
 use crate::map::{axial_to_world_pos, HexMapConfig, Obstacles};
 use crate::selection::{create_selection_ring_mesh, create_ring_arc_mesh, InnerQuarterCircle};
 use crate::launch_pads::{GameState, GameTimer, GAME_DURATION};
 use crate::loading::LoadingState;
+
+// Unit definition structures loaded from RON files
+#[derive(Debug, Clone, Deserialize, Serialize, Resource)]
+pub struct UnitDefinitions {
+    pub units: Vec<UnitDefinition>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UnitDefinition {
+    pub unit_type: String,
+    pub stats: UnitStatsDefinition,
+    pub combat: CombatDefinition,
+    pub rendering: RenderingDefinition,
+    pub animation: AnimationDefinition,
+    pub economy: EconomyDefinition,
+    #[serde(default)]
+    pub infantry_behavior: Option<InfantryBehavior>,
+    #[serde(default)]
+    pub harvester_behavior: Option<HarvesterBehavior>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UnitStatsDefinition {
+    pub max_health: f32,
+    pub speed: f32,
+    pub armor: f32,
+    pub attack: f32,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CombatDefinition {
+    pub base_cooldown: f32,
+    pub movement_cooldown: f32,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RenderingDefinition {
+    pub model_path: String,
+    pub scale: f32,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AnimationDefinition {
+    pub idle_animation_index: usize,
+    pub moving_animation_index: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct EconomyDefinition {
+    pub cost: i32,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct InfantryBehavior {
+    pub model_count: usize,
+    pub formation_spacing: f32,
+    pub formation_pattern: FormationPattern,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct HarvesterBehavior {
+    pub harvest_duration: f32,
+    pub crystals_per_second: f32,
+    pub max_crystals: i32,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub enum FormationPattern {
+    Triangle,
+    Line,
+    Square,
+}
 
 // Resource for selection ring assets
 #[derive(Resource)]
@@ -151,87 +224,50 @@ pub struct UnitStats {
 }
 
 impl UnitClass {
-    pub fn default_stats(&self) -> UnitStats {
-        match self {
-            UnitClass::Infantry => UnitStats {
-                max_health: 100.0,
-                speed: 100.0,
-                armor: 50.0,
-                attack: 15.0,
-            },
-            UnitClass::Cavalry => UnitStats {
-                max_health: 80.0,
-                speed: 150.0,
-                armor: 30.0,
-                attack: 12.0,
-            },
-            UnitClass::Artillery => UnitStats {
-                max_health: 120.0,
-                speed: 50.0,
-                armor: 70.0,
-                attack: 25.0,
-            },
-            UnitClass::Harvester => UnitStats {
-                max_health: 90.0,
-                speed: 40.0,
-                armor: 40.0,
-                attack: 5.0, // Low attack - not a combat unit
-            },
+    pub fn definition<'a>(&self, definitions: &'a UnitDefinitions) -> &'a UnitDefinition {
+        definitions.units.iter()
+            .find(|def| def.unit_type == format!("{:?}", self))
+            .unwrap_or_else(|| panic!("No definition found for {:?}", self))
+    }
+
+    pub fn default_stats(&self, definitions: &UnitDefinitions) -> UnitStats {
+        let def = self.definition(definitions);
+        UnitStats {
+            max_health: def.stats.max_health,
+            speed: def.stats.speed,
+            armor: def.stats.armor,
+            attack: def.stats.attack,
         }
     }
 
-    pub fn base_cooldown(&self) -> f32 {
-        match self {
-            UnitClass::Infantry => 2.0,
-            UnitClass::Cavalry => 1.5,
-            UnitClass::Artillery => 3.0,
-            UnitClass::Harvester => 2.5,
-        }
+    pub fn base_cooldown(&self, definitions: &UnitDefinitions) -> f32 {
+        let def = self.definition(definitions);
+        def.combat.base_cooldown
     }
 
-    pub fn cost(&self) -> i32 {
-        match self {
-            UnitClass::Infantry => 40,
-            UnitClass::Cavalry => 50,
-            UnitClass::Artillery => 60,
-            UnitClass::Harvester => 50,
-        }
+    pub fn cost(&self, definitions: &UnitDefinitions) -> i32 {
+        let def = self.definition(definitions);
+        def.economy.cost
     }
 
-    pub fn model_path(&self) -> &'static str {
-        match self {
-            UnitClass::Infantry => "walking-rifle.glb",
-            UnitClass::Cavalry => "Fox.glb",
-            UnitClass::Artillery => "CesiumMan.glb",
-            UnitClass::Harvester => "Tractor.glb",
-        }
+    pub fn model_path(&self, definitions: &UnitDefinitions) -> String {
+        let def = self.definition(definitions);
+        def.rendering.model_path.clone()
     }
 
-    pub fn scale(&self) -> f32 {
-        match self {
-            UnitClass::Infantry => 12.0,
-            UnitClass::Cavalry => 0.4,  // 20% smaller (was 0.5)
-            UnitClass::Artillery => 36.0,  // 20% bigger (was 30.0)
-            UnitClass::Harvester => 16.0,
-        }
+    pub fn scale(&self, definitions: &UnitDefinitions) -> f32 {
+        let def = self.definition(definitions);
+        def.rendering.scale
     }
 
-    pub fn idle_animation_index(&self) -> usize {
-        match self {
-            UnitClass::Infantry => 2,  // Idle animation at index 2
-            UnitClass::Cavalry => 0,
-            UnitClass::Artillery => 0, // CesiumMan has walking animation at index 0
-            UnitClass::Harvester => 0,
-        }
+    pub fn idle_animation_index(&self, definitions: &UnitDefinitions) -> usize {
+        let def = self.definition(definitions);
+        def.animation.idle_animation_index
     }
 
-    pub fn moving_animation_index(&self) -> usize {
-        match self {
-            UnitClass::Infantry => 1,  // Walking animation at index 1
-            UnitClass::Cavalry => 2,
-            UnitClass::Artillery => 0, // CesiumMan only has one animation at index 0
-            UnitClass::Harvester => 0,
-        }
+    pub fn moving_animation_index(&self, definitions: &UnitDefinitions) -> usize {
+        let def = self.definition(definitions);
+        def.animation.moving_animation_index
     }
 }
 
@@ -1280,6 +1316,7 @@ fn handle_infantry_progressive_death(
     children_query: Query<&Children>,
     model_query: Query<&InfantryModelIndex>,
     mut players_query: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
+    unit_definitions: Res<UnitDefinitions>,
 ) {
     let current_time = time.elapsed_secs();
 
@@ -1295,7 +1332,7 @@ fn handle_infantry_progressive_death(
             deaths.died_at_66 = true;
 
             // Add death animation to graph if not already added
-            let model_path = unit_class.model_path();
+            let model_path = unit_class.model_path(&unit_definitions);
             let graph = animation_graphs.get_mut(&graph_handle.0).unwrap();
             let death_index = graph.add_clip(
                 asset_server.load(GltfAssetLabel::Animation(0).from_asset(model_path)),
@@ -1346,7 +1383,7 @@ fn handle_infantry_progressive_death(
 
             // Get death animation index from graph (should already be added at 66%)
             let graph = animation_graphs.get_mut(&graph_handle.0).unwrap();
-            let model_path = unit_class.model_path();
+            let model_path = unit_class.model_path(&unit_definitions);
             let death_index = graph.add_clip(
                 asset_server.load(GltfAssetLabel::Animation(0).from_asset(model_path)),
                 1.0,
@@ -1795,10 +1832,11 @@ fn spawn_unit_from_request(
     unit_query: Query<(&Unit, &UnitClass)>,
     mut spawn_cooldowns: ResMut<SpawnCooldowns>,
     ring_assets: Res<SelectionRingAssets>,
+    unit_definitions: Res<UnitDefinitions>,
 ) {
     let requests: Vec<_> = spawn_queue.requests.drain(..).collect();
     for spawn_request in requests.iter() {
-        let cost = spawn_request.unit_class.cost();
+        let cost = spawn_request.unit_class.cost(&unit_definitions);
 
         // Check if army can afford the unit
         let can_afford = match spawn_request.army {
@@ -1890,8 +1928,8 @@ fn spawn_unit_from_request(
         let world_pos = axial_to_world_pos(q, r);
         let unit_pos = world_pos + Vec3::new(0.0, 5.0, 0.0);
 
-        let model_path = spawn_request.unit_class.model_path();
-        let stats = spawn_request.unit_class.default_stats();
+        let model_path = spawn_request.unit_class.model_path(&unit_definitions);
+        let stats = spawn_request.unit_class.default_stats(&unit_definitions);
 
         // Find the appropriate army parent entity
         let army_entity = match spawn_request.army {
@@ -1922,12 +1960,12 @@ fn spawn_unit_from_request(
             // Create animation graph (shared by all unit types)
             let mut animation_graph = AnimationGraph::new();
             let idle_index = animation_graph.add_clip(
-                asset_server.load(GltfAssetLabel::Animation(spawn_request.unit_class.idle_animation_index()).from_asset(model_path)),
+                asset_server.load(GltfAssetLabel::Animation(spawn_request.unit_class.idle_animation_index(&unit_definitions)).from_asset(model_path.clone())),
                 1.0,
                 animation_graph.root,
             );
             let moving_index = animation_graph.add_clip(
-                asset_server.load(GltfAssetLabel::Animation(spawn_request.unit_class.moving_animation_index()).from_asset(model_path)),
+                asset_server.load(GltfAssetLabel::Animation(spawn_request.unit_class.moving_animation_index(&unit_definitions)).from_asset(model_path.clone())),
                 1.0,
                 animation_graph.root,
             );
@@ -1954,7 +1992,7 @@ fn spawn_unit_from_request(
                 CurrentAnimationState { is_moving: false },
                 Combat {
                     last_attack_time: 0.0,
-                    attack_cooldown: spawn_request.unit_class.base_cooldown(),
+                    attack_cooldown: spawn_request.unit_class.base_cooldown(&unit_definitions),
                     last_movement_time: 0.0,
                     movement_cooldown: 0.5,
                 },
@@ -1965,12 +2003,13 @@ fn spawn_unit_from_request(
                 Name::new(format!("{:?} {:?} ({}, {})", spawn_request.army, spawn_request.unit_class, q, r)),
             ));
 
-            // Add Harvester component for harvester units
-            if spawn_request.unit_class == UnitClass::Harvester {
+            // Add Harvester component if unit has harvester behavior
+            let unit_def = spawn_request.unit_class.definition(&unit_definitions);
+            if let Some(harvester_behavior) = &unit_def.harvester_behavior {
                 unit_entity_commands.insert(Harvester {
                     state: HarvesterState::Idle,
                     harvest_timer: 0.0,
-                    harvest_duration: 10.0,
+                    harvest_duration: harvester_behavior.harvest_duration,
                     crystals_carried: 0,
                     crystal_accumulator: 0.0,
                     spawn_point: (q, r),
@@ -1988,19 +2027,43 @@ fn spawn_unit_from_request(
             unit_entity_commands.with_children(|unit_parent| {
                 let scene: Handle<Scene> = asset_server.load(format!("{}#Scene0", model_path));
 
-                if spawn_request.unit_class == UnitClass::Infantry {
-                    // Infantry: spawn 3 models in triangle formation
-                    let spacing = 20.0;
-                    let offsets = [
-                        Vec3::new(0.0, 0.0, spacing),
-                        Vec3::new(-spacing, 0.0, -spacing),
-                        Vec3::new(spacing, 0.0, -spacing),
-                    ];
+                // Check if this unit has infantry behavior defined
+                let unit_def = spawn_request.unit_class.definition(&unit_definitions);
+                if let Some(infantry_behavior) = &unit_def.infantry_behavior {
+                    // Infantry: spawn multiple models in formation
+                    let spacing = infantry_behavior.formation_spacing;
+                    let offsets = match infantry_behavior.formation_pattern {
+                        FormationPattern::Triangle => vec![
+                            Vec3::new(0.0, 0.0, spacing),
+                            Vec3::new(-spacing, 0.0, -spacing),
+                            Vec3::new(spacing, 0.0, -spacing),
+                        ],
+                        FormationPattern::Line => {
+                            let mut offsets = Vec::new();
+                            for i in 0..infantry_behavior.model_count {
+                                let offset = (i as f32 - (infantry_behavior.model_count as f32 - 1.0) / 2.0) * spacing;
+                                offsets.push(Vec3::new(offset, 0.0, 0.0));
+                            }
+                            offsets
+                        }
+                        FormationPattern::Square => {
+                            let mut offsets = Vec::new();
+                            let side_length = (infantry_behavior.model_count as f32).sqrt().ceil() as usize;
+                            for i in 0..infantry_behavior.model_count {
+                                let row = i / side_length;
+                                let col = i % side_length;
+                                let x = (col as f32 - (side_length as f32 - 1.0) / 2.0) * spacing;
+                                let z = (row as f32 - (side_length as f32 - 1.0) / 2.0) * spacing;
+                                offsets.push(Vec3::new(x, 0.0, z));
+                            }
+                            offsets
+                        }
+                    };
                     for (index, offset) in offsets.iter().enumerate() {
                         unit_parent.spawn((
                             SceneRoot(scene.clone()),
                             Transform::from_translation(*offset)
-                                .with_scale(Vec3::splat(spawn_request.unit_class.scale())),
+                                .with_scale(Vec3::splat(spawn_request.unit_class.scale(&unit_definitions))),
                             InfantryModelIndex { index },
                         ));
                     }
@@ -2009,7 +2072,7 @@ fn spawn_unit_from_request(
                     unit_parent.spawn((
                         SceneRoot(scene),
                         Transform::default()
-                            .with_scale(Vec3::splat(spawn_request.unit_class.scale())),
+                            .with_scale(Vec3::splat(spawn_request.unit_class.scale(&unit_definitions))),
                     ));
                 }
             });
@@ -2379,7 +2442,7 @@ impl Plugin for UnitsPlugin {
             .insert_resource(SpawnCooldowns::default())
             .insert_resource(ClickedUnit::default())
             .insert_resource(HoveredUnit::default())
-            .add_systems(OnEnter(LoadingState::Playing), (setup_selection_ring_assets, setup_units).chain())
+            .add_systems(OnEnter(LoadingState::Playing), (load_unit_definitions, setup_selection_ring_assets, setup_units).chain())
             .add_systems(
                 Update,
                 (
@@ -2415,4 +2478,87 @@ impl Plugin for UnitsPlugin {
                 ).run_if(in_state(LoadingState::Playing)),
             );
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_load_unit_definitions() {
+        let ron_str = std::fs::read_to_string("assets/units.ron")
+            .expect("Failed to read units.ron");
+        let definitions: UnitDefinitions = ron::from_str(&ron_str)
+            .expect("Failed to parse units.ron");
+        assert_eq!(definitions.units.len(), 4);
+        
+        // Verify all unit types are present
+        let unit_types: Vec<&str> = definitions.units.iter()
+            .map(|d| d.unit_type.as_str())
+            .collect();
+        assert!(unit_types.contains(&"Infantry"));
+        assert!(unit_types.contains(&"Cavalry"));
+        assert!(unit_types.contains(&"Artillery"));
+        assert!(unit_types.contains(&"Harvester"));
+    }
+}
+
+// Load unit definitions from RON file
+fn load_unit_definitions(mut commands: Commands) {
+    // Load and parse RON file synchronously
+    let ron_str = std::fs::read_to_string("assets/units.ron")
+        .expect("Failed to read assets/units.ron - make sure the file exists");
+    
+    let definitions: UnitDefinitions = ron::from_str(&ron_str)
+        .expect("Failed to parse assets/units.ron - check RON syntax");
+    
+    // Validate definitions
+    validate_unit_definitions(&definitions)
+        .expect("Unit definitions validation failed");
+    
+    commands.insert_resource(definitions.clone());
+    
+    println!("✓ Loaded {} unit definitions from assets/units.ron", definitions.units.len());
+}
+
+// Validate unit definitions
+fn validate_unit_definitions(definitions: &UnitDefinitions) -> Result<(), String> {
+    // Check all required UnitClass variants have definitions
+    let required_units = ["Infantry", "Cavalry", "Artillery", "Harvester"];
+    for unit_type in required_units {
+        if !definitions.units.iter().any(|def| def.unit_type == unit_type) {
+            return Err(format!("Missing definition for {}", unit_type));
+        }
+    }
+    
+    // Validate value ranges
+    for def in &definitions.units {
+        if def.stats.max_health <= 0.0 {
+            return Err(format!("{} has invalid max_health: {}", def.unit_type, def.stats.max_health));
+        }
+        if def.stats.speed < 0.0 {
+            return Err(format!("{} has invalid speed: {}", def.unit_type, def.stats.speed));
+        }
+        if def.economy.cost < 0 {
+            return Err(format!("{} has invalid cost: {}", def.unit_type, def.economy.cost));
+        }
+        if def.combat.base_cooldown <= 0.0 {
+            return Err(format!("{} has invalid base_cooldown: {}", def.unit_type, def.combat.base_cooldown));
+        }
+        if def.rendering.scale <= 0.0 {
+            return Err(format!("{} has invalid scale: {}", def.unit_type, def.rendering.scale));
+        }
+        
+        // Validate Infantry has infantry_behavior
+        if def.unit_type == "Infantry" && def.infantry_behavior.is_none() {
+            return Err(format!("{} is missing required infantry_behavior", def.unit_type));
+        }
+        
+        // Validate Harvester has harvester_behavior
+        if def.unit_type == "Harvester" && def.harvester_behavior.is_none() {
+            return Err(format!("{} is missing required harvester_behavior", def.unit_type));
+        }
+    }
+    
+    Ok(())
 }

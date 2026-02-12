@@ -1,0 +1,110 @@
+(
+    units: [
+        (
+            unit_type: "Infantry",
+            stats: (
+                max_health: 100.0,
+                speed: 100.0,
+                armor: 50.0,
+                attack: 15.0,
+            ),
+            combat: (
+                base_cooldown: 2.0,
+                movement_cooldown: 0.5,
+            ),
+            rendering: (
+                model_path: "walking-rifle.glb",
+                scale: 12.0,
+            ),
+            animation: (
+                idle_animation_index: 2,
+                moving_animation_index: 1,
+            ),
+            economy: (
+                cost: 40,
+            ),
+            infantry_behavior: Some((
+                model_count: 3,
+                formation_spacing: 20.0,
+                formation_pattern: Triangle,
+            )),
+        ),
+        (
+            unit_type: "Cavalry",
+            stats: (
+                max_health: 80.0,
+                speed: 150.0,
+                armor: 30.0,
+                attack: 12.0,
+            ),
+            combat: (
+                base_cooldown: 1.5,
+                movement_cooldown: 0.5,
+            ),
+            rendering: (
+                model_path: "Fox.glb",
+                scale: 0.4,
+            ),
+            animation: (
+                idle_animation_index: 0,
+                moving_animation_index: 2,
+            ),
+            economy: (
+                cost: 50,
+            ),
+        ),
+        (
+            unit_type: "Artillery",
+            stats: (
+                max_health: 120.0,
+                speed: 50.0,
+                armor: 70.0,
+                attack: 25.0,
+            ),
+            combat: (
+                base_cooldown: 3.0,
+                movement_cooldown: 0.5,
+            ),
+            rendering: (
+                model_path: "CesiumMan.glb",
+                scale: 36.0,
+            ),
+            animation: (
+                idle_animation_index: 0,
+                moving_animation_index: 0,
+            ),
+            economy: (
+                cost: 60,
+            ),
+        ),
+        (
+            unit_type: "Harvester",
+            stats: (
+                max_health: 90.0,
+                speed: 40.0,
+                armor: 40.0,
+                attack: 5.0,
+            ),
+            combat: (
+                base_cooldown: 2.5,
+                movement_cooldown: 0.5,
+            ),
+            rendering: (
+                model_path: "Tractor.glb",
+                scale: 16.0,
+            ),
+            animation: (
+                idle_animation_index: 0,
+                moving_animation_index: 0,
+            ),
+            economy: (
+                cost: 50,
+            ),
+            harvester_behavior: Some((
+                harvest_duration: 10.0,
+                crystals_per_second: 5.0,
+                max_crystals: 50,
+            )),
+        ),
+    ],
+)

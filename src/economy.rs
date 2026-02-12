@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::loading::LoadingState;
 use crate::map::{CrystalField, HexMapConfig, Obstacles};
-use crate::units::{find_path, Army, Occupancy, Unit, UnitMovement, UnitStats};
+use crate::units::{find_path, Army, Occupancy, Unit, UnitClass, UnitMovement, UnitStats, UnitDefinitions};
 
 // Economy Resources
 #[derive(Resource)]
@@ -171,18 +171,23 @@ fn passive_income_system(
 fn harvester_collect_crystals(
     time: Res<Time>,
     mut economy: ResMut<Economy>,
-    mut harvester_query: Query<(&Unit, &Army, &mut Harvester)>,
+    mut harvester_query: Query<(&Unit, &Army, &UnitClass, &mut Harvester)>,
     mut crystal_query: Query<&mut CrystalField>,
+    unit_definitions: Res<UnitDefinitions>,
 ) {
-    for (unit, army, mut harvester) in &mut harvester_query {
+    for (unit, army, unit_class, mut harvester) in &mut harvester_query {
         if harvester.state != HarvesterState::Harvesting {
             continue;
         }
 
         harvester.harvest_timer += time.delta_secs();
 
-        // Collect crystals over time (5 crystals per second = 50 total in 10 seconds)
-        let crystals_per_second = 5.0;
+        // Get harvester behavior from unit definition
+        let unit_def = unit_class.definition(&unit_definitions);
+        let harvester_behavior = unit_def.harvester_behavior.as_ref()
+            .expect("Harvester unit should have harvester_behavior");
+
+        let crystals_per_second = harvester_behavior.crystals_per_second;
         harvester.crystal_accumulator += crystals_per_second * time.delta_secs();
 
         // Extract integer crystals from accumulator
@@ -209,8 +214,8 @@ fn harvester_collect_crystals(
             }
         }
 
-        // Check if full (10 seconds passed or carried 50 crystals)
-        if harvester.harvest_timer >= harvester.harvest_duration || harvester.crystals_carried >= 50 {
+        // Check if full (harvest duration passed or carried max crystals)
+        if harvester.harvest_timer >= harvester.harvest_duration || harvester.crystals_carried >= harvester_behavior.max_crystals {
             harvester.state = HarvesterState::MovingToBase;
             println!("Harvester full with {} crystals, returning to base at ({}, {})",
                 harvester.crystals_carried, harvester.spawn_point.0, harvester.spawn_point.1);

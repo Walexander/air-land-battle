@@ -7,7 +7,7 @@ use crate::launch_pads::{GameTimer, LaunchPadOwner, LaunchPadOwnership, LaunchPa
 use crate::map::{HexMapConfig, Obstacles};
 use crate::units::{
     find_path, hex_distance, Army, ClaimedCellsThisFrame, Occupancy,
-    OccupancyIntent, Unit, UnitClass, UnitMovement, UnitSpawnQueue, UnitSpawnRequest, UnitStats, SpawnCooldowns,
+    OccupancyIntent, Unit, UnitClass, UnitMovement, UnitSpawnQueue, UnitSpawnRequest, UnitStats, SpawnCooldowns, UnitDefinitions,
 };
 
 // AI Strategy types
@@ -57,6 +57,7 @@ fn ai_spawn_units(
     pad_ownership: Res<LaunchPadOwnership>,
     launch_pads: Res<LaunchPads>,
     game_timer: Res<GameTimer>,
+    unit_definitions: Res<UnitDefinitions>,
 ) {
     ai_controller.spawn_timer += time.delta_secs();
     ai_controller.strategy_timer += time.delta_secs();
@@ -122,11 +123,11 @@ fn ai_spawn_units(
     let unit_to_spawn = match ai_controller.strategy {
         AIStrategy::Economic => {
             // Build only 1 harvester initially for economy
-            if blue_harvesters < 1 && blue_money >= UnitClass::Harvester.cost() {
+            if blue_harvesters < 1 && blue_money >= UnitClass::Harvester.cost(&unit_definitions) {
                 Some(UnitClass::Harvester)
             }
             // Then build cheap infantry for defense
-            else if blue_money >= UnitClass::Infantry.cost() {
+            else if blue_money >= UnitClass::Infantry.cost(&unit_definitions) {
                 Some(UnitClass::Infantry)
             } else {
                 None
@@ -134,11 +135,11 @@ fn ai_spawn_units(
         }
         AIStrategy::Aggressive => {
             // Build a mix of combat units, prioritizing artillery if we can afford it
-            if blue_money >= UnitClass::Artillery.cost() && blue_artillery < blue_combat_units / 3 {
+            if blue_money >= UnitClass::Artillery.cost(&unit_definitions) && blue_artillery < blue_combat_units / 3 {
                 Some(UnitClass::Artillery)
-            } else if blue_money >= UnitClass::Cavalry.cost() && blue_cavalry < blue_combat_units / 3 {
+            } else if blue_money >= UnitClass::Cavalry.cost(&unit_definitions) && blue_cavalry < blue_combat_units / 3 {
                 Some(UnitClass::Cavalry)
-            } else if blue_money >= UnitClass::Infantry.cost() {
+            } else if blue_money >= UnitClass::Infantry.cost(&unit_definitions) {
                 Some(UnitClass::Infantry)
             } else {
                 None
@@ -146,9 +147,9 @@ fn ai_spawn_units(
         }
         AIStrategy::Expansionist => {
             // Build fast cavalry for capturing pads
-            if blue_money >= UnitClass::Cavalry.cost() && blue_cavalry < blue_combat_units / 2 {
+            if blue_money >= UnitClass::Cavalry.cost(&unit_definitions) && blue_cavalry < blue_combat_units / 2 {
                 Some(UnitClass::Cavalry)
-            } else if blue_money >= UnitClass::Infantry.cost() {
+            } else if blue_money >= UnitClass::Infantry.cost(&unit_definitions) {
                 Some(UnitClass::Infantry)
             } else {
                 None
@@ -156,11 +157,11 @@ fn ai_spawn_units(
         }
         AIStrategy::Defensive => {
             // Build infantry quickly for defense, then artillery
-            if blue_money >= UnitClass::Infantry.cost() && blue_combat_units < 3 {
+            if blue_money >= UnitClass::Infantry.cost(&unit_definitions) && blue_combat_units < 3 {
                 Some(UnitClass::Infantry) // Get 3 infantry out quickly
-            } else if blue_money >= UnitClass::Artillery.cost() && blue_artillery < 1 {
+            } else if blue_money >= UnitClass::Artillery.cost(&unit_definitions) && blue_artillery < 1 {
                 Some(UnitClass::Artillery) // Then add artillery
-            } else if blue_money >= UnitClass::Infantry.cost() {
+            } else if blue_money >= UnitClass::Infantry.cost(&unit_definitions) {
                 Some(UnitClass::Infantry) // Back to infantry
             } else {
                 None
