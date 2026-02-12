@@ -2238,6 +2238,7 @@ fn detect_unit_clicks(
     camera_query: Query<(&Camera, &GlobalTransform), With<crate::ui::GameCamera>>,
     windows: Query<&Window>,
     collider_query: Query<(&UnitClickCollider, &GlobalTransform, &Mesh3d)>,
+    unit_query: Query<&InheritedVisibility, With<Unit>>,
     _meshes: Res<Assets<Mesh>>,
     mut clicked_unit: ResMut<ClickedUnit>,
     mut hovered_unit: ResMut<HoveredUnit>,
@@ -2270,6 +2271,16 @@ fn detect_unit_clicks(
 
     // Check each unit collider for intersection using sphere test
     for (collider, collider_transform, _mesh_handle) in &collider_query {
+        // Check if this unit is visible (not in fog of war)
+        let Ok(visibility) = unit_query.get(collider.unit_entity) else {
+            continue;
+        };
+
+        // Skip units that are hidden in fog of war
+        if !visibility.get() {
+            continue;
+        }
+
         let collider_pos = collider_transform.translation();
         let sphere_radius = 50.0; // Radius matching the collision sphere mesh
 

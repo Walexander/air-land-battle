@@ -642,7 +642,7 @@ fn handle_unit_selection(
     occupancy: Res<Occupancy>,
     occupancy_intent: Res<OccupancyIntent>,
     mut claimed_cells: ResMut<ClaimedCellsThisFrame>,
-    unit_query: Query<(Entity, &Unit, Option<&UnitMovement>), Without<Selected>>,
+    unit_query: Query<(Entity, &Unit, Option<&UnitMovement>, &InheritedVisibility), Without<Selected>>,
     selected_query: Query<(Entity, &Unit, &UnitStats, Option<&UnitMovement>, &Transform), With<Selected>>,
     path_viz_query: Query<(Entity, &PathVisualization)>,
     dest_ring_query: Query<(Entity, &DestinationRing)>,
@@ -660,7 +660,7 @@ fn handle_unit_selection(
         // Check if a unit was clicked directly (prioritize direct clicks)
         if let Some(clicked_entity) = clicked_unit.entity {
             // Check if the clicked unit is from the Red army (player controlled)
-            if let Ok((_entity, unit, _)) = unit_query.get(clicked_entity)
+            if let Ok((_entity, unit, _, _)) = unit_query.get(clicked_entity)
                 && unit.army == Army::Red {
                     // Select this unit
                     for (entity, _, _, _, _) in &selected_query {
@@ -671,7 +671,7 @@ fn handle_unit_selection(
                 }
 
             // If clicked unit is an enemy and we have a unit selected, target it
-            if let Ok((_, enemy_unit, _)) = unit_query.get(clicked_entity)
+            if let Ok((_, enemy_unit, _, _)) = unit_query.get(clicked_entity)
                 && enemy_unit.army != Army::Red {
                     if let Ok((selected_entity, selected_unit, stats, existing_movement, _)) = selected_query.single() {
                         let enemy_pos = (enemy_unit.q, enemy_unit.r);
@@ -701,12 +701,27 @@ fn handle_unit_selection(
                                 let mut blocking_cells = obstacles.positions.clone();
                                 for &occupied_pos in &occupancy.positions {
                                     if occupied_pos != current_cell && occupied_pos != next_cell {
-                                        blocking_cells.insert(occupied_pos);
+                                        // Check if this position has a visible unit
+                                        if let Some(&occupying_entity) = occupancy.position_to_entity.get(&occupied_pos) {
+                                            if let Ok((_, _, _, visibility)) = unit_query.get(occupying_entity) {
+                                                if visibility.get() {
+                                                    blocking_cells.insert(occupied_pos);
+                                                }
+                                            }
+                                        } else {
+                                            blocking_cells.insert(occupied_pos);
+                                        }
                                     }
                                 }
                                 for (entity, &intent_pos) in &occupancy_intent.intentions {
                                     if *entity != selected_entity {
-                                        blocking_cells.insert(intent_pos);
+                                        if let Ok((_, _, _, visibility)) = unit_query.get(*entity) {
+                                            if visibility.get() {
+                                                blocking_cells.insert(intent_pos);
+                                            }
+                                        } else {
+                                            blocking_cells.insert(intent_pos);
+                                        }
                                     }
                                 }
 
@@ -819,12 +834,26 @@ fn handle_unit_selection(
                                 let mut blocking_cells = obstacles.positions.clone();
                                 for &occupied_pos in &occupancy.positions {
                                     if occupied_pos != start_pos {
-                                        blocking_cells.insert(occupied_pos);
+                                        if let Some(&occupying_entity) = occupancy.position_to_entity.get(&occupied_pos) {
+                                            if let Ok((_, _, _, visibility)) = unit_query.get(occupying_entity) {
+                                                if visibility.get() {
+                                                    blocking_cells.insert(occupied_pos);
+                                                }
+                                            }
+                                        } else {
+                                            blocking_cells.insert(occupied_pos);
+                                        }
                                     }
                                 }
                                 for (entity, &intent_pos) in &occupancy_intent.intentions {
                                     if *entity != selected_entity {
-                                        blocking_cells.insert(intent_pos);
+                                        if let Ok((_, _, _, visibility)) = unit_query.get(*entity) {
+                                            if visibility.get() {
+                                                blocking_cells.insert(intent_pos);
+                                            }
+                                        } else {
+                                            blocking_cells.insert(intent_pos);
+                                        }
                                     }
                                 }
 
@@ -871,12 +900,26 @@ fn handle_unit_selection(
                             let mut blocking_cells = obstacles.positions.clone();
                             for &occupied_pos in &occupancy.positions {
                                 if occupied_pos != start_pos {
-                                    blocking_cells.insert(occupied_pos);
+                                    if let Some(&occupying_entity) = occupancy.position_to_entity.get(&occupied_pos) {
+                                        if let Ok((_, _, _, visibility)) = unit_query.get(occupying_entity) {
+                                            if visibility.get() {
+                                                blocking_cells.insert(occupied_pos);
+                                            }
+                                        }
+                                    } else {
+                                        blocking_cells.insert(occupied_pos);
+                                    }
                                 }
                             }
                             for (entity, &intent_pos) in &occupancy_intent.intentions {
                                 if *entity != selected_entity {
-                                    blocking_cells.insert(intent_pos);
+                                    if let Ok((_, _, _, visibility)) = unit_query.get(*entity) {
+                                        if visibility.get() {
+                                            blocking_cells.insert(intent_pos);
+                                        }
+                                    } else {
+                                        blocking_cells.insert(intent_pos);
+                                    }
                                 }
                             }
 
@@ -937,15 +980,30 @@ fn handle_unit_selection(
                             return;
                         }
 
-                        // Check if goal is occupied by ANY unit
-                        if occupancy.positions.contains(&goal) {
-                            return; // Cannot move to occupied cell
+                        // Check if goal is occupied by a VISIBLE unit
+                        if let Some(&occupying_entity) = occupancy.position_to_entity.get(&goal) {
+                            // Only block if the occupying unit is visible
+                            if let Ok((_, _, _, visibility)) = unit_query.get(occupying_entity) {
+                                if visibility.get() {
+                                    return; // Cannot move to cell occupied by visible unit
+                                }
+                            } else {
+                                // If we can't get visibility, assume visible and block
+                                return;
+                            }
                         }
 
-                        // Check if another unit is already moving to this goal
+                        // Check if another unit is already moving to this goal (only if visible)
                         for (entity, &intent_pos) in &occupancy_intent.intentions {
                             if *entity != selected_entity && intent_pos == goal {
-                                return; // Cannot move to cell already targeted by another unit
+                                // Only block if the entity with intent is visible
+                                if let Ok((_, _, _, visibility)) = unit_query.get(*entity) {
+                                    if visibility.get() {
+                                        return; // Cannot move to cell already targeted by visible unit
+                                    }
+                                } else {
+                                    return; // If we can't get visibility, assume visible and block
+                                }
                             }
                         }
 
@@ -956,14 +1014,35 @@ fn handle_unit_selection(
 
                         let mut blocking_cells = obstacles.positions.clone();
                         let unit_current_pos = (selected_unit.q, selected_unit.r);
+                        // Only add occupied positions if the occupying unit is visible
                         for &occupied_pos in &occupancy.positions {
                             if occupied_pos != unit_current_pos {
-                                blocking_cells.insert(occupied_pos);
+                                // Check if this position has a visible unit
+                                if let Some(&occupying_entity) = occupancy.position_to_entity.get(&occupied_pos) {
+                                    // Check visibility - only block if visible
+                                    if let Ok((_, _, _, visibility)) = unit_query.get(occupying_entity) {
+                                        if visibility.get() {
+                                            blocking_cells.insert(occupied_pos);
+                                        }
+                                        // If not visible (in fog), don't add to blocking_cells
+                                    }
+                                } else {
+                                    // No entity at this position, still block it
+                                    blocking_cells.insert(occupied_pos);
+                                }
                             }
                         }
                         for (entity, &intent_pos) in &occupancy_intent.intentions {
                             if *entity != selected_entity && intent_pos != unit_current_pos {
-                                blocking_cells.insert(intent_pos);
+                                // Check visibility for intent positions too
+                                if let Ok((_, _, _, visibility)) = unit_query.get(*entity) {
+                                    if visibility.get() {
+                                        blocking_cells.insert(intent_pos);
+                                    }
+                                } else {
+                                    // If we can't get visibility, assume visible and block
+                                    blocking_cells.insert(intent_pos);
+                                }
                             }
                         }
 
