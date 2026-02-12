@@ -1930,6 +1930,8 @@ fn spawn_unit_from_request(
 
         let model_path = spawn_request.unit_class.model_path(&unit_definitions);
         let stats = spawn_request.unit_class.default_stats(&unit_definitions);
+        println!("Spawning {:?} with stats: health={}, speed={}, armor={}, attack={}",
+            spawn_request.unit_class, stats.max_health, stats.speed, stats.armor, stats.attack);
 
         // Find the appropriate army parent entity
         let army_entity = match spawn_request.army {
@@ -2446,6 +2448,7 @@ impl Plugin for UnitsPlugin {
             .add_systems(
                 Update,
                 (
+                    hot_reload_unit_definitions,
                     detect_unit_clicks,
                     clear_claimed_cells,
                     reset_game,
@@ -2503,22 +2506,99 @@ mod tests {
     }
 }
 
+// Resource to track RON file modification time for hot-reloading
+#[derive(Resource)]
+struct UnitDefinitionsFileWatcher {
+    last_modified: std::time::SystemTime,
+    check_timer: f32,
+}
+
+impl Default for UnitDefinitionsFileWatcher {
+    fn default() -> Self {
+        let metadata = std::fs::metadata("assets/units.ron")
+            .expect("Failed to get metadata for assets/units.ron");
+        let last_modified = metadata.modified()
+            .expect("Failed to get modification time");
+
+        Self {
+            last_modified,
+            check_timer: 0.0,
+        }
+    }
+}
+
 // Load unit definitions from RON file
 fn load_unit_definitions(mut commands: Commands) {
     // Load and parse RON file synchronously
     let ron_str = std::fs::read_to_string("assets/units.ron")
         .expect("Failed to read assets/units.ron - make sure the file exists");
-    
+
     let definitions: UnitDefinitions = ron::from_str(&ron_str)
         .expect("Failed to parse assets/units.ron - check RON syntax");
-    
+
     // Validate definitions
     validate_unit_definitions(&definitions)
         .expect("Unit definitions validation failed");
-    
+
     commands.insert_resource(definitions.clone());
-    
+    commands.insert_resource(UnitDefinitionsFileWatcher::default());
+
     println!("✓ Loaded {} unit definitions from assets/units.ron", definitions.units.len());
+}
+
+// Hot-reload system: checks for file changes and reloads definitions
+fn hot_reload_unit_definitions(
+    time: Res<Time>,
+    mut watcher: ResMut<UnitDefinitionsFileWatcher>,
+    mut definitions: ResMut<UnitDefinitions>,
+) {
+    // Check every 0.5 seconds
+    watcher.check_timer += time.delta_secs();
+    if watcher.check_timer < 0.5 {
+        return;
+    }
+    watcher.check_timer = 0.0;
+
+    // Check if file has been modified
+    let Ok(metadata) = std::fs::metadata("assets/units.ron") else {
+        return;
+    };
+
+    let Ok(modified) = metadata.modified() else {
+        return;
+    };
+
+    if modified <= watcher.last_modified {
+        return; // No changes
+    }
+
+    // File has changed, try to reload
+    println!("🔄 Detected changes in assets/units.ron, reloading...");
+
+    match std::fs::read_to_string("assets/units.ron") {
+        Ok(ron_str) => {
+            match ron::from_str::<UnitDefinitions>(&ron_str) {
+                Ok(new_definitions) => {
+                    match validate_unit_definitions(&new_definitions) {
+                        Ok(_) => {
+                            *definitions = new_definitions;
+                            watcher.last_modified = modified;
+                            println!("✓ Hot-reloaded {} unit definitions (newly spawned units will use new values)", definitions.units.len());
+                        }
+                        Err(e) => {
+                            eprintln!("❌ Validation failed, keeping old definitions: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("❌ Parse error, keeping old definitions: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to read file, keeping old definitions: {}", e);
+        }
+    }
 }
 
 // Validate unit definitions
