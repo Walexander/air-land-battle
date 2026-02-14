@@ -64,12 +64,12 @@ fn setup_music(mut commands: Commands, asset_server: Res<AssetServer>) {
         PlaybackSettings::LOOP.with_volume(Volume::Linear(0.0)),
         MusicTrack {
             track_type: TrackType::Calm,
-            target_volume: 0.2,
+            target_volume: 0.025,
         },
         FadingIn {
             elapsed: 0.0,
             duration: 5.0,
-            target_volume: 0.2,
+            target_volume: 0.025,
         },
     ));
 
@@ -102,7 +102,7 @@ fn check_music_switch(
                 PlaybackSettings::LOOP.with_volume(Volume::Linear(0.0)),
                 MusicTrack {
                     track_type: TrackType::Intense,
-                    target_volume: 0.2,
+                    target_volume: 0.025,
                 },
             ));
         }
@@ -124,7 +124,7 @@ fn check_music_switch(
                 PlaybackSettings::LOOP.with_volume(Volume::Linear(0.0)),
                 MusicTrack {
                     track_type: TrackType::Calm,
-                    target_volume: 0.2,
+                    target_volume: 0.025,
                 },
             ));
         }

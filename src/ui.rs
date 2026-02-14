@@ -598,7 +598,7 @@ fn show_game_over_screen(
         // Play first sound immediately
         commands.spawn((
             AudioPlayer::<AudioSource>(asset_server.load(first_sound)),
-            PlaybackSettings::ONCE.with_volume(bevy::audio::Volume::Linear(0.5)),
+            PlaybackSettings::ONCE.with_volume(bevy::audio::Volume::Linear(0.025)),
         ));
 
         // Queue second sound to play after 1.5 second delay
@@ -1034,7 +1034,7 @@ fn handle_delayed_sound(
             // Time to play the sound
             commands.spawn((
                 AudioPlayer::<AudioSource>(asset_server.load(delayed.sound_path.clone())),
-                PlaybackSettings::ONCE.with_volume(bevy::audio::Volume::Linear(0.5)),
+                PlaybackSettings::ONCE.with_volume(bevy::audio::Volume::Linear(0.025)),
             ));
 
             // Remove the delayed sound component

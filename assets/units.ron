@@ -4,7 +4,7 @@
             unit_type: "Infantry",
             stats: (
                 max_health: 100.0,
-                speed: 100.0,
+                speed: 80.0,
                 armor: 50.0,
                 attack: 15.0,
             ),
@@ -57,7 +57,7 @@
             unit_type: "Artillery",
             stats: (
                 max_health: 120.0,
-                speed: 50.0,
+                speed: 60.0,
                 armor: 70.0,
                 attack: 25.0,
             ),
