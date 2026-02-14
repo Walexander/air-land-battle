@@ -83,7 +83,7 @@ fn check_music_switch(
     mut music_state: ResMut<MusicState>,
     music_query: Query<&MusicTrack>,
 ) {
-    let in_danger_zone = game_timer.time_remaining < 10.0;
+    let in_danger_zone = game_timer.time_remaining < 5.0;
 
     // Check if we're entering the danger zone
     if in_danger_zone && !music_state.in_danger_zone && music_state.crossfade_progress.is_none() {

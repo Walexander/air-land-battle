@@ -58,18 +58,41 @@ struct HarvesterDepositing;
 fn harvester_ai_find_target(
     mut harvester_query: Query<(Entity, &Unit, &mut Harvester), Without<UnitMovement>>,
     crystal_query: Query<&CrystalField>,
+    occupancy: Res<Occupancy>,
 ) {
+    // First pass: collect all currently targeted fields (immutable access)
+    let mut targeted_fields = std::collections::HashSet::new();
+    for (_, _, harvester) in harvester_query.iter() {
+        if let Some(target) = harvester.target_field {
+            targeted_fields.insert(target);
+        }
+    }
+
+    // Second pass: find targets for idle harvesters (mutable access)
     for (_entity, unit, mut harvester) in &mut harvester_query {
         // Only process idle harvesters
         if harvester.state != HarvesterState::Idle {
             continue;
         }
 
-        // Find closest crystal field with crystals remaining
+        // Find closest crystal field with crystals remaining that is unoccupied and not already targeted
         let mut closest_field: Option<(i32, i32, f32)> = None;
 
         for crystal_field in &crystal_query {
+            let field_pos = (crystal_field.q, crystal_field.r);
+
+            // Skip if field is depleted
             if crystal_field.crystals_remaining <= 0 {
+                continue;
+            }
+
+            // Skip if field is occupied (unless it's our current position)
+            if occupancy.positions.contains(&field_pos) && field_pos != (unit.q, unit.r) {
+                continue;
+            }
+
+            // Skip if another harvester is already targeting this field
+            if targeted_fields.contains(&field_pos) {
                 continue;
             }
 
@@ -89,6 +112,8 @@ fn harvester_ai_find_target(
         if let Some((target_q, target_r, _)) = closest_field {
             harvester.target_field = Some((target_q, target_r));
             harvester.state = HarvesterState::MovingToField;
+            // Add this new target to the set so subsequent harvesters don't also target it
+            targeted_fields.insert((target_q, target_r));
             println!("Harvester at ({}, {}) targeting crystal field at ({}, {})",
                 unit.q, unit.r, target_q, target_r);
         }

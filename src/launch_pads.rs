@@ -151,12 +151,12 @@ fn check_launch_pad_ownership(
         }
     } else {
         // Launch pads are tied/neutral
-        if game_timer.time_remaining < 10.0 {
-            // When under 10 seconds, timer counts back up (at same rate it counts down)
+        if game_timer.time_remaining < 5.0 {
+            // When under 5 seconds, timer counts back up (at same rate it counts down)
             game_timer.time_remaining += time.delta_secs();
-            // Clamp to not exceed 10 seconds
-            if game_timer.time_remaining > 10.0 {
-                game_timer.time_remaining = 10.0;
+            // Clamp to not exceed 5 seconds
+            if game_timer.time_remaining > 5.0 {
+                game_timer.time_remaining = 5.0;
             }
         }
 
