@@ -552,14 +552,19 @@ fn move_units(
     time: Res<Time>,
     mut commands: Commands,
     occupancy: Res<Occupancy>,
-    mut query: Query<(Entity, &mut Transform, &mut Unit, &mut UnitMovement, &UnitStats, Option<&mut Combat>)>,
+    mut query: Query<(Entity, &Children, &mut Transform, &mut Unit, &mut UnitMovement, &UnitStats, Option<&mut Combat>), Without<InfantryModelIndex>>,
+    infantry_marker_query: Query<(), With<InfantryModelIndex>>,
+    mut transform_query: ParamSet<(
+        Query<&mut Transform, With<InfantryModelIndex>>,
+        Query<&mut Transform, (Without<InfantryModelIndex>, Without<Unit>)>,
+    )>,
 ) {
     let current_time = time.elapsed_secs();
 
     // Track cells claimed THIS FRAME to prevent race conditions
     let mut cells_claimed_this_frame: HashMap<(i32, i32), Entity> = HashMap::new();
 
-    for (entity, mut transform, mut unit, mut movement, stats, combat_opt) in &mut query {
+    for (entity, children, mut transform, mut unit, mut movement, stats, combat_opt) in &mut query {
         if movement.current_waypoint >= movement.path.len() {
             // Update last_movement_time when movement ends
             if let Some(mut combat) = combat_opt {
@@ -576,18 +581,40 @@ fn move_units(
         let target_pos = axial_to_world_pos(target_hex.0, target_hex.1);
         let distance = start_pos.distance(target_pos);
 
-        let target_rotation = if distance > 0.0 {
+        if distance > 0.0 {
             let direction = (target_pos - start_pos).normalize();
             let angle = direction.z.atan2(direction.x);
-            Quat::from_rotation_y(-angle + std::f32::consts::PI / 2.0)
-        } else {
-            transform.rotation
-        };
+            let target_rotation = Quat::from_rotation_y(-angle + std::f32::consts::PI / 2.0);
+            let rotation_speed = 8.0;
 
-        let rotation_speed = 8.0;
-        transform.rotation = transform
-            .rotation
-            .slerp(target_rotation, time.delta_secs() * rotation_speed);
+            // Check if any children are infantry models
+            let mut has_infantry_models = false;
+            for child in children.iter() {
+                if infantry_marker_query.get(child).is_ok() {
+                    has_infantry_models = true;
+                    break;
+                }
+            }
+
+            if has_infantry_models {
+                // Infantry: rotate each model individually
+                let mut infantry_transforms = transform_query.p0();
+                for child in children.iter() {
+                    if let Ok(mut child_transform) = infantry_transforms.get_mut(child) {
+                        child_transform.rotation = child_transform.rotation.slerp(target_rotation, time.delta_secs() * rotation_speed);
+                    }
+                }
+            } else {
+                // Non-infantry: rotate the first scene child (the model)
+                let mut non_infantry_transforms = transform_query.p1();
+                for child in children.iter() {
+                    if let Ok(mut child_transform) = non_infantry_transforms.get_mut(child) {
+                        child_transform.rotation = child_transform.rotation.slerp(target_rotation, time.delta_secs() * rotation_speed);
+                        break; // Only rotate the first child (the model)
+                    }
+                }
+            }
+        }
 
         if distance > 0.0 {
             movement.progress += (time.delta_secs() * stats.speed) / distance;
@@ -669,14 +696,20 @@ fn move_units(
 
 fn rotate_units_toward_enemies(
     time: Res<Time>,
-    mut unit_query: Query<(Entity, &Unit, &Army, &Health, &mut Transform), Without<UnitMovement>>,
+    unit_query: Query<(Entity, &Unit, &Army, &Health, &Children, &Transform), (Without<UnitMovement>, Without<InfantryModelIndex>)>,
+    infantry_marker_query: Query<(), With<InfantryModelIndex>>,
+    mut transform_query: ParamSet<(
+        Query<&mut Transform, With<InfantryModelIndex>>,
+        Query<&mut Transform, (Without<InfantryModelIndex>, Without<Unit>)>,
+    )>,
 ) {
-    // Collect all unit positions first to avoid borrowing issues
-    let units: Vec<_> = unit_query.iter().map(|(e, u, a, h, t)| {
-        (e, u.q, u.r, *a, h.current, t.translation)
+    // Collect all unit data including children to avoid borrowing issues
+    let units: Vec<_> = unit_query.iter().map(|(e, u, a, h, children, t)| {
+        let children_vec: Vec<Entity> = children.iter().collect();
+        (e, u.q, u.r, *a, h.current, t.translation, children_vec)
     }).collect();
 
-    for (entity, q, r, army, health, pos) in &units {
+    for (entity, q, r, army, health, pos, children) in &units {
         // Skip dead units
         if *health <= 0.0 {
             continue;
@@ -694,7 +727,7 @@ fn rotate_units_toward_enemies(
 
         // Find nearest enemy in adjacent hexes
         let mut nearest_enemy_pos: Option<Vec3> = None;
-        for (other_entity, other_q, other_r, other_army, other_health, other_pos) in &units {
+        for (other_entity, other_q, other_r, other_army, other_health, other_pos, _) in &units {
             if other_entity == entity || *other_health <= 0.0 || other_army == army {
                 continue;
             }
@@ -706,20 +739,44 @@ fn rotate_units_toward_enemies(
         }
 
         // Rotate toward nearest enemy if found
-        if let Some(enemy_pos) = nearest_enemy_pos
-            && let Ok((_, _, _, _, mut transform)) = unit_query.get_mut(*entity) {
-                let direction = (enemy_pos - *pos).normalize();
-                let distance = pos.distance(enemy_pos);
+        if let Some(enemy_pos) = nearest_enemy_pos {
+            let direction = (enemy_pos - *pos).normalize();
+            let distance = pos.distance(enemy_pos);
 
-                if distance > 0.0 {
-                    let angle = direction.z.atan2(direction.x);
-                    let target_rotation = Quat::from_rotation_y(-angle + std::f32::consts::PI / 2.0);
+            if distance > 0.0 {
+                let angle = direction.z.atan2(direction.x);
+                let target_rotation = Quat::from_rotation_y(-angle + std::f32::consts::PI / 2.0);
+                let rotation_speed = 8.0;
 
-                    // Smooth rotation over time
-                    let rotation_speed = 8.0;
-                    transform.rotation = transform.rotation.slerp(target_rotation, time.delta_secs() * rotation_speed);
+                // Check if any children are infantry models
+                let mut has_infantry_models = false;
+                for &child in children {
+                    if infantry_marker_query.get(child).is_ok() {
+                        has_infantry_models = true;
+                        break;
+                    }
+                }
+
+                if has_infantry_models {
+                    // Infantry: rotate each model individually around its own position
+                    let mut infantry_transforms = transform_query.p0();
+                    for &child in children {
+                        if let Ok(mut transform) = infantry_transforms.get_mut(child) {
+                            transform.rotation = transform.rotation.slerp(target_rotation, time.delta_secs() * rotation_speed);
+                        }
+                    }
+                } else {
+                    // Non-infantry: rotate the first scene child (the model)
+                    let mut non_infantry_transforms = transform_query.p1();
+                    for &child in children {
+                        if let Ok(mut transform) = non_infantry_transforms.get_mut(child) {
+                            transform.rotation = transform.rotation.slerp(target_rotation, time.delta_secs() * rotation_speed);
+                            break; // Only rotate the first child (the model)
+                        }
+                    }
                 }
             }
+        }
     }
 }
 
