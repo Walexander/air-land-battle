@@ -30,7 +30,7 @@ pub struct UnitDefinition {
     pub animation: AnimationDefinition,
     pub economy: EconomyDefinition,
     #[serde(default)]
-    pub infantry_behavior: Option<InfantryBehavior>,
+    pub squad_behavior: Option<SquadBehavior>,
     #[serde(default)]
     pub harvester_behavior: Option<HarvesterBehavior>,
 }
@@ -67,7 +67,7 @@ pub struct EconomyDefinition {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct InfantryBehavior {
+pub struct SquadBehavior {
     pub model_count: usize,
     pub formation_spacing: f32,
     pub formation_pattern: FormationPattern,
@@ -165,9 +165,9 @@ impl Default for InfantryDeaths {
     }
 }
 
-// Marker to identify which infantry model this is (0, 1, or 2)
+// Marker to identify which squad member this is (0, 1, 2, etc.)
 #[derive(Component)]
-pub struct InfantryModelIndex {
+pub struct SquadMemberIndex {
     pub index: usize,
 }
 
@@ -552,11 +552,11 @@ fn move_units(
     time: Res<Time>,
     mut commands: Commands,
     occupancy: Res<Occupancy>,
-    mut query: Query<(Entity, &Children, &mut Transform, &mut Unit, &mut UnitMovement, &UnitStats, Option<&mut Combat>), Without<InfantryModelIndex>>,
-    infantry_marker_query: Query<(), With<InfantryModelIndex>>,
+    mut query: Query<(Entity, &Children, &mut Transform, &mut Unit, &mut UnitMovement, &UnitStats, Option<&mut Combat>), Without<SquadMemberIndex>>,
+    squad_marker_query: Query<(), With<SquadMemberIndex>>,
     mut transform_query: ParamSet<(
-        Query<&mut Transform, With<InfantryModelIndex>>,
-        Query<&mut Transform, (Without<InfantryModelIndex>, Without<Unit>)>,
+        Query<&mut Transform, With<SquadMemberIndex>>,
+        Query<&mut Transform, (Without<SquadMemberIndex>, Without<Unit>)>,
     )>,
 ) {
     let current_time = time.elapsed_secs();
@@ -588,27 +588,27 @@ fn move_units(
             let rotation_speed = 8.0;
 
             // Check if any children are infantry models
-            let mut has_infantry_models = false;
+            let mut is_squad = false;
             for child in children.iter() {
-                if infantry_marker_query.get(child).is_ok() {
-                    has_infantry_models = true;
+                if squad_marker_query.get(child).is_ok() {
+                    is_squad = true;
                     break;
                 }
             }
 
-            if has_infantry_models {
-                // Infantry: rotate each model individually
-                let mut infantry_transforms = transform_query.p0();
+            if is_squad {
+                // Squad: rotate each model individually
+                let mut squad_transforms = transform_query.p0();
                 for child in children.iter() {
-                    if let Ok(mut child_transform) = infantry_transforms.get_mut(child) {
+                    if let Ok(mut child_transform) = squad_transforms.get_mut(child) {
                         child_transform.rotation = child_transform.rotation.slerp(target_rotation, time.delta_secs() * rotation_speed);
                     }
                 }
             } else {
-                // Non-infantry: rotate the first scene child (the model)
-                let mut non_infantry_transforms = transform_query.p1();
+                // Non-squad: rotate the first scene child (the model)
+                let mut non_squad_transforms = transform_query.p1();
                 for child in children.iter() {
-                    if let Ok(mut child_transform) = non_infantry_transforms.get_mut(child) {
+                    if let Ok(mut child_transform) = non_squad_transforms.get_mut(child) {
                         child_transform.rotation = child_transform.rotation.slerp(target_rotation, time.delta_secs() * rotation_speed);
                         break; // Only rotate the first child (the model)
                     }
@@ -696,11 +696,11 @@ fn move_units(
 
 fn rotate_units_toward_enemies(
     time: Res<Time>,
-    unit_query: Query<(Entity, &Unit, &Army, &Health, &Children, &Transform), (Without<UnitMovement>, Without<InfantryModelIndex>)>,
-    infantry_marker_query: Query<(), With<InfantryModelIndex>>,
+    unit_query: Query<(Entity, &Unit, &Army, &Health, &Children, &Transform), (Without<UnitMovement>, Without<SquadMemberIndex>)>,
+    squad_marker_query: Query<(), With<SquadMemberIndex>>,
     mut transform_query: ParamSet<(
-        Query<&mut Transform, With<InfantryModelIndex>>,
-        Query<&mut Transform, (Without<InfantryModelIndex>, Without<Unit>)>,
+        Query<&mut Transform, With<SquadMemberIndex>>,
+        Query<&mut Transform, (Without<SquadMemberIndex>, Without<Unit>)>,
     )>,
 ) {
     // Collect all unit data including children to avoid borrowing issues
@@ -749,27 +749,27 @@ fn rotate_units_toward_enemies(
                 let rotation_speed = 8.0;
 
                 // Check if any children are infantry models
-                let mut has_infantry_models = false;
+                let mut is_squad = false;
                 for &child in children {
-                    if infantry_marker_query.get(child).is_ok() {
-                        has_infantry_models = true;
+                    if squad_marker_query.get(child).is_ok() {
+                        is_squad = true;
                         break;
                     }
                 }
 
-                if has_infantry_models {
-                    // Infantry: rotate each model individually around its own position
-                    let mut infantry_transforms = transform_query.p0();
+                if is_squad {
+                    // Squad: rotate each model individually around its own position
+                    let mut squad_transforms = transform_query.p0();
                     for &child in children {
-                        if let Ok(mut transform) = infantry_transforms.get_mut(child) {
+                        if let Ok(mut transform) = squad_transforms.get_mut(child) {
                             transform.rotation = transform.rotation.slerp(target_rotation, time.delta_secs() * rotation_speed);
                         }
                     }
                 } else {
-                    // Non-infantry: rotate the first scene child (the model)
-                    let mut non_infantry_transforms = transform_query.p1();
+                    // Non-squad: rotate the first scene child (the model)
+                    let mut non_squad_transforms = transform_query.p1();
                     for &child in children {
-                        if let Ok(mut transform) = non_infantry_transforms.get_mut(child) {
+                        if let Ok(mut transform) = non_squad_transforms.get_mut(child) {
                             transform.rotation = transform.rotation.slerp(target_rotation, time.delta_secs() * rotation_speed);
                             break; // Only rotate the first child (the model)
                         }
@@ -1372,7 +1372,7 @@ fn handle_infantry_progressive_death(
     mut animation_graphs: ResMut<Assets<AnimationGraph>>,
     mut infantry_query: Query<(Entity, &UnitClass, &Health, &mut InfantryDeaths, &mut AnimationGraphHandle)>,
     children_query: Query<&Children>,
-    model_query: Query<&InfantryModelIndex>,
+    model_query: Query<&SquadMemberIndex>,
     mut players_query: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
     unit_definitions: Res<UnitDefinitions>,
 ) {
@@ -2087,12 +2087,12 @@ fn spawn_unit_from_request(
             unit_entity_commands.with_children(|unit_parent| {
                 let scene: Handle<Scene> = asset_server.load(format!("{}#Scene0", model_path));
 
-                // Check if this unit has infantry behavior defined
+                // Check if this unit has squad behavior defined
                 let unit_def = spawn_request.unit_class.definition(&unit_definitions);
-                if let Some(infantry_behavior) = &unit_def.infantry_behavior {
-                    // Infantry: spawn multiple models in formation
-                    let spacing = infantry_behavior.formation_spacing;
-                    let offsets = match infantry_behavior.formation_pattern {
+                if let Some(squad_behavior) = &unit_def.squad_behavior {
+                    // Squad: spawn multiple models in formation
+                    let spacing = squad_behavior.formation_spacing;
+                    let offsets = match squad_behavior.formation_pattern {
                         FormationPattern::Triangle => vec![
                             Vec3::new(0.0, 0.0, spacing),
                             Vec3::new(-spacing, 0.0, -spacing),
@@ -2100,16 +2100,16 @@ fn spawn_unit_from_request(
                         ],
                         FormationPattern::Line => {
                             let mut offsets = Vec::new();
-                            for i in 0..infantry_behavior.model_count {
-                                let offset = (i as f32 - (infantry_behavior.model_count as f32 - 1.0) / 2.0) * spacing;
+                            for i in 0..squad_behavior.model_count {
+                                let offset = (i as f32 - (squad_behavior.model_count as f32 - 1.0) / 2.0) * spacing;
                                 offsets.push(Vec3::new(offset, 0.0, 0.0));
                             }
                             offsets
                         }
                         FormationPattern::Square => {
                             let mut offsets = Vec::new();
-                            let side_length = (infantry_behavior.model_count as f32).sqrt().ceil() as usize;
-                            for i in 0..infantry_behavior.model_count {
+                            let side_length = (squad_behavior.model_count as f32).sqrt().ceil() as usize;
+                            for i in 0..squad_behavior.model_count {
                                 let row = i / side_length;
                                 let col = i % side_length;
                                 let x = (col as f32 - (side_length as f32 - 1.0) / 2.0) * spacing;
@@ -2124,7 +2124,7 @@ fn spawn_unit_from_request(
                             SceneRoot(scene.clone()),
                             Transform::from_translation(*offset)
                                 .with_scale(Vec3::splat(spawn_request.unit_class.scale(&unit_definitions))),
-                            InfantryModelIndex { index },
+                            SquadMemberIndex { index },
                         ));
                     }
                 } else {
@@ -2696,9 +2696,9 @@ fn validate_unit_definitions(definitions: &UnitDefinitions) -> Result<(), String
             return Err(format!("{} has invalid scale: {}", def.unit_type, def.rendering.scale));
         }
         
-        // Validate Infantry has infantry_behavior
-        if def.unit_type == "Infantry" && def.infantry_behavior.is_none() {
-            return Err(format!("{} is missing required infantry_behavior", def.unit_type));
+        // Validate Infantry has squad_behavior
+        if def.unit_type == "Infantry" && def.squad_behavior.is_none() {
+            return Err(format!("{} is missing required squad_behavior", def.unit_type));
         }
         
         // Validate Harvester has harvester_behavior

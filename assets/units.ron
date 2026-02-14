@@ -23,7 +23,7 @@
             economy: (
                 cost: 40,
             ),
-            infantry_behavior: Some((
+            squad_behavior: Some((
                 model_count: 3,
                 formation_spacing: 20.0,
                 formation_pattern: Triangle,
