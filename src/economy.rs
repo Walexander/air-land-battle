@@ -214,11 +214,16 @@ fn harvester_collect_crystals(
             }
         }
 
-        // Check if full (harvest duration passed or carried max crystals)
-        if harvester.harvest_timer >= harvester.harvest_duration || harvester.crystals_carried >= harvester_behavior.max_crystals {
-            harvester.state = HarvesterState::MovingToBase;
-            println!("Harvester full with {} crystals, returning to base at ({}, {})",
-                harvester.crystals_carried, harvester.spawn_point.0, harvester.spawn_point.1);
+        // Check if current field is depleted
+        let field_depleted = crystal_query.iter().any(|field| {
+            field.q == unit.q && field.r == unit.r && field.crystals_remaining <= 0
+        });
+
+        if field_depleted {
+            harvester.state = HarvesterState::Idle;
+            harvester.target_field = None;
+            harvester.crystals_carried = 0;
+            println!("Crystal field at ({}, {}) depleted, harvester searching for new field", unit.q, unit.r);
         }
     }
 }
@@ -309,8 +314,6 @@ impl Plugin for EconomyPlugin {
                     harvester_ai_find_target,
                     harvester_move_to_field,
                     harvester_collect_crystals,
-                    harvester_return_to_base,
-                    harvester_deposit_crystals,
                 )
                     .run_if(in_state(LoadingState::Playing).and(not_paused)),
             );
