@@ -3,7 +3,7 @@ use bevy::gltf::GltfAssetLabel;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::asset::RenderAssetUsages;
 use std::time::Duration;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::cmp::Ordering;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -433,25 +433,6 @@ impl SpawnCooldowns {
     }
 }
 
-// Pathfinding structures
-#[derive(Copy, Clone, Eq, PartialEq)]
-struct PathNode {
-    pos: (i32, i32),
-    f_score: i32,
-}
-
-impl Ord for PathNode {
-    fn cmp(&self, other: &Self) -> Ordering {
-        other.f_score.cmp(&self.f_score)
-    }
-}
-
-impl PartialOrd for PathNode {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
 // Helper functions
 pub fn hex_distance(a: (i32, i32), b: (i32, i32)) -> i32 {
     let (q1, r1) = a;
@@ -471,62 +452,159 @@ fn hex_neighbors(pos: (i32, i32)) -> [(i32, i32); 6] {
     ]
 }
 
+// Draw a line between two hex cells, returning all cells the line touches
+fn hex_line(start: (i32, i32), goal: (i32, i32)) -> Vec<(i32, i32)> {
+    let (q0, r0) = start;
+    let (q1, r1) = goal;
+
+    // Convert to cube coordinates (q, r, s where q + r + s = 0)
+    let s0 = -q0 - r0;
+    let s1 = -q1 - r1;
+
+    // Calculate distance
+    let n = hex_distance(start, goal) as usize;
+
+    if n == 0 {
+        return vec![start];
+    }
+
+    let mut results = Vec::new();
+
+    // Linear interpolation in cube coordinates
+    for i in 0..=n {
+        let t = i as f32 / n as f32;
+
+        // Interpolate cube coordinates
+        let q_f = q0 as f32 * (1.0 - t) + q1 as f32 * t;
+        let r_f = r0 as f32 * (1.0 - t) + r1 as f32 * t;
+        let s_f = s0 as f32 * (1.0 - t) + s1 as f32 * t;
+
+        // Round to nearest hex using cube rounding
+        let mut q = q_f.round();
+        let mut r = r_f.round();
+        let mut s = s_f.round();
+
+        let q_diff = (q - q_f).abs();
+        let r_diff = (r - r_f).abs();
+        let s_diff = (s - s_f).abs();
+
+        // Fix rounding to maintain q + r + s = 0
+        if q_diff > r_diff && q_diff > s_diff {
+            q = -r - s;
+        } else if r_diff > s_diff {
+            r = -q - s;
+        } else {
+            s = -q - r;
+        }
+
+        results.push((q as i32, r as i32));
+    }
+
+    results
+}
+
 pub fn find_path(
     start: (i32, i32),
     goal: (i32, i32),
     map_radius: i32,
     obstacles: &HashSet<(i32, i32)>,
 ) -> Option<Vec<(i32, i32)>> {
-    let mut open_set = BinaryHeap::new();
-    let mut came_from: HashMap<(i32, i32), (i32, i32)> = HashMap::new();
-    let mut g_score: HashMap<(i32, i32), i32> = HashMap::new();
+    // Line-based pathfinding: draw straight line, path around obstacles
+    let mut path = vec![start];
+    let mut current = start;
+    let mut visited = HashSet::new();
+    visited.insert(start);
 
-    g_score.insert(start, 0);
-    open_set.push(PathNode {
-        pos: start,
-        f_score: hex_distance(start, goal),
-    });
+    let max_iterations = 100; // Prevent infinite loops
+    let mut iterations = 0;
 
-    while let Some(PathNode { pos: current, .. }) = open_set.pop() {
-        if current == goal {
-            let mut path = vec![current];
-            let mut current = current;
-            while let Some(&prev) = came_from.get(&current) {
-                path.push(prev);
-                current = prev;
+    while current != goal && iterations < max_iterations {
+        iterations += 1;
+
+        // Get straight line from current to goal
+        let line = hex_line(current, goal);
+
+        // Find first blocked cell along the line (skip current position)
+        let mut next_pos = None;
+        let mut blocked_at = None;
+
+        for (i, &cell) in line.iter().enumerate().skip(1) {
+            // Check if cell is out of bounds
+            let (q, r) = cell;
+            if q.abs() > map_radius || r.abs() > map_radius || (q + r).abs() > map_radius {
+                blocked_at = Some(cell);
+                break;
             }
-            path.reverse();
-            return Some(path);
+
+            // Check if blocked (unless it's the goal)
+            if obstacles.contains(&cell) && cell != goal {
+                blocked_at = Some(cell);
+                break;
+            }
+
+            // This cell is clear, consider it as next position
+            next_pos = Some(cell);
         }
 
-        let current_g = *g_score.get(&current).unwrap_or(&i32::MAX);
+        // If we found a clear cell along the line, move there
+        if let Some(pos) = next_pos {
+            if visited.contains(&pos) {
+                // We're going in circles, try to find alternative
+                break;
+            }
+            path.push(pos);
+            visited.insert(pos);
+            current = pos;
+            continue;
+        }
 
-        for neighbor in hex_neighbors(current) {
-            let (q, r) = neighbor;
-            if q.abs() > map_radius || r.abs() > map_radius || (q + r).abs() > map_radius {
-                continue;
+        // Line is blocked, find a way around
+        if blocked_at.is_some() {
+            // Get all valid neighbors
+            let neighbors = hex_neighbors(current);
+            let mut best_neighbor = None;
+            let mut best_distance = i32::MAX;
+
+            for neighbor in neighbors {
+                let (q, r) = neighbor;
+
+                // Check bounds
+                if q.abs() > map_radius || r.abs() > map_radius || (q + r).abs() > map_radius {
+                    continue;
+                }
+
+                // Skip if blocked or already visited
+                if obstacles.contains(&neighbor) || visited.contains(&neighbor) {
+                    continue;
+                }
+
+                // Pick neighbor closest to goal
+                let dist = hex_distance(neighbor, goal);
+                if dist < best_distance {
+                    best_distance = dist;
+                    best_neighbor = Some(neighbor);
+                }
             }
 
-            if obstacles.contains(&neighbor) && neighbor != goal {
-                continue;
+            if let Some(neighbor) = best_neighbor {
+                path.push(neighbor);
+                visited.insert(neighbor);
+                current = neighbor;
+            } else {
+                // No valid neighbors, path is blocked
+                return None;
             }
-
-            let tentative_g = current_g + 1;
-            let neighbor_g = *g_score.get(&neighbor).unwrap_or(&i32::MAX);
-
-            if tentative_g < neighbor_g {
-                came_from.insert(neighbor, current);
-                g_score.insert(neighbor, tentative_g);
-                let f_score = tentative_g + hex_distance(neighbor, goal);
-                open_set.push(PathNode {
-                    pos: neighbor,
-                    f_score,
-                });
-            }
+        } else {
+            // No clear path and no blocked cell found - shouldn't happen
+            return None;
         }
     }
 
-    None
+    if current == goal {
+        Some(path)
+    } else {
+        None
+    }
 }
 
 pub fn get_adjacent_hexes(pos: (i32, i32)) -> Vec<(i32, i32)> {
