@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::loading::LoadingState;
 use crate::map::{CrystalField, HexMapConfig, Obstacles};
-use crate::units::{find_path, Army, Occupancy, Unit, UnitClass, UnitMovement, UnitStats, UnitDefinitions};
+use crate::units::{find_path_waypoints, Army, Occupancy, Unit, UnitClass, UnitMovement, UnitStats, UnitDefinitions};
 
 // Economy Resources
 #[derive(Resource)]
@@ -127,6 +127,7 @@ fn harvester_move_to_field(
     occupancy: Res<Occupancy>,
     obstacles: Res<Obstacles>,
     config: Res<HexMapConfig>,
+    hex_grid: Res<crate::hex_pathfinding::HexPathfindingGrid>,
 ) {
     for (entity, unit, stats, mut harvester) in &mut harvester_query {
         if harvester.state != HarvesterState::MovingToField {
@@ -151,21 +152,16 @@ fn harvester_move_to_field(
                 }
             }
 
-            // Use proper A* pathfinding
-            if let Some(path) = find_path((unit.q, unit.r), (target_q, target_r), config.map_radius, &blocking_cells) {
-                let path_to_follow: Vec<(i32, i32)> = if path.len() > 1 {
-                    path[1..].to_vec()
-                } else {
-                    vec![]
-                };
-
-                if !path_to_follow.is_empty() {
+            // Use world-space waypoint pathfinding
+            if let Some(waypoints) = find_path_waypoints((unit.q, unit.r), (target_q, target_r), config.map_radius, &blocking_cells, &hex_grid) {
+                if waypoints.len() > 1 {
                     commands.entity(entity).insert(UnitMovement {
-                        path: path_to_follow,
-                        current_waypoint: 0,
+                        waypoints,
+                        current_waypoint: 1,
                         progress: 0.0,
                         speed: stats.speed,
-                        segment_start: (unit.q, unit.r),
+                        segment_distance: 0.0,
+                        segment_start: Vec3::ZERO,
                     });
                 }
             }
@@ -260,6 +256,7 @@ fn harvester_return_to_base(
     occupancy: Res<Occupancy>,
     obstacles: Res<Obstacles>,
     config: Res<HexMapConfig>,
+    hex_grid: Res<crate::hex_pathfinding::HexPathfindingGrid>,
 ) {
     for (entity, unit, stats, harvester) in &mut harvester_query {
         if harvester.state != HarvesterState::MovingToBase {
@@ -284,21 +281,16 @@ fn harvester_return_to_base(
             }
         }
 
-        // Use proper A* pathfinding
-        if let Some(path) = find_path((unit.q, unit.r), (base_q, base_r), config.map_radius, &blocking_cells) {
-            let path_to_follow: Vec<(i32, i32)> = if path.len() > 1 {
-                path[1..].to_vec()
-            } else {
-                vec![]
-            };
-
-            if !path_to_follow.is_empty() {
+        // Use world-space waypoint pathfinding
+        if let Some(waypoints) = find_path_waypoints((unit.q, unit.r), (base_q, base_r), config.map_radius, &blocking_cells, &hex_grid) {
+            if waypoints.len() > 1 {
                 commands.entity(entity).insert(UnitMovement {
-                    path: path_to_follow,
-                    current_waypoint: 0,
+                    waypoints,
+                    current_waypoint: 1,
                     progress: 0.0,
                     speed: stats.speed,
-                    segment_start: (unit.q, unit.r),
+                    segment_distance: 0.0,
+                    segment_start: Vec3::ZERO,
                 });
             }
         }

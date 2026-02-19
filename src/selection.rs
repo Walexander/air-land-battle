@@ -4,7 +4,7 @@ use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy_mod_outline::OutlineVolume;
 
 use crate::map::{axial_to_world_pos, HexMapConfig, HoveredHex, Obstacles};
-use crate::units::{find_path, Occupancy, OccupancyIntent, ClaimedCellsThisFrame, Unit, UnitMovement, Army, UnitStats};
+use crate::units::{find_path_waypoints, Occupancy, OccupancyIntent, ClaimedCellsThisFrame, Unit, UnitMovement, Army, UnitStats};
 use crate::loading::LoadingState;
 use crate::Paused;
 
@@ -27,7 +27,7 @@ pub struct PathVisualization {
     pub unit_entity: Entity,
     pub animation_progress: f32,
     pub loop_count: u32,
-    pub cached_path: Vec<(i32, i32)>,
+    pub cached_path: Vec<Vec3>,
     pub cached_target_pos: Option<Vec3>,
     pub last_mesh_update: f32, // Track when we last updated the mesh
 }
@@ -350,7 +350,7 @@ pub fn spawn_destination_ring(
 }
 
 fn create_path_line_mesh(
-    waypoints: &[(i32, i32)],
+    waypoints: &[Vec3],
     current_pos: Vec3,
     animation_progress: f32,
     army: Army,
@@ -415,9 +415,8 @@ fn create_path_line_mesh(
         indices.push(next_vertex);
     }
 
-    for (idx, &(q, r)) in waypoints.iter().enumerate() {
-        let waypoint_pos = axial_to_world_pos(q, r);
-        let mut curr_pos = Vec3::new(waypoint_pos.x, line_height, waypoint_pos.z);
+    for (idx, &waypoint) in waypoints.iter().enumerate() {
+        let mut curr_pos = Vec3::new(waypoint.x, line_height, waypoint.z);
 
         let is_last = idx == waypoints.len() - 1;
         if is_last {
@@ -642,22 +641,17 @@ fn handle_unit_selection(
     obstacles: Res<Obstacles>,
     occupancy: Res<Occupancy>,
     occupancy_intent: Res<OccupancyIntent>,
+    hex_grid: Res<crate::hex_pathfinding::HexPathfindingGrid>,
     mut claimed_cells: ResMut<ClaimedCellsThisFrame>,
     unit_query: Query<(Entity, &Unit, Option<&UnitMovement>, &InheritedVisibility), Without<Selected>>,
     selected_query: Query<(Entity, &Unit, &UnitStats, Option<&UnitMovement>, &Transform), With<Selected>>,
     path_viz_query: Query<(Entity, &PathVisualization)>,
     dest_ring_query: Query<(Entity, &DestinationRing)>,
-    ui_clicked: Res<crate::ui::UIClicked>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut commands: Commands,
 ) {
     if mouse_button.just_pressed(MouseButton::Left) {
-        // Don't process game clicks if clicking on UI
-        if ui_clicked.0 {
-            return;
-        }
-
         // Check if a unit was clicked directly (prioritize direct clicks)
         if let Some(clicked_entity) = clicked_unit.entity {
             // Check if the clicked unit is from the Red army (player controlled)
@@ -693,10 +687,11 @@ fn handle_unit_selection(
 
                         // Handle based on whether unit is currently moving
                         if let Some(movement) = existing_movement {
-                            if movement.current_waypoint < movement.path.len() {
+                            if movement.current_waypoint < movement.waypoints.len() {
                                 // Unit is actively moving
                                 let current_cell = (selected_unit.q, selected_unit.r);
-                                let next_cell = movement.path[movement.current_waypoint];
+                                let next_waypoint = movement.waypoints[movement.current_waypoint];
+                                let next_cell = crate::map::world_pos_to_axial(next_waypoint.x, next_waypoint.z);
 
                                 // Build blocking cells
                                 let mut blocking_cells = obstacles.positions.clone();
@@ -730,15 +725,15 @@ fn handle_unit_selection(
                                 let goal_from_current = crate::units::find_closest_adjacent_cell(enemy_pos, current_cell, &blocking_cells);
                                 let goal_from_next = crate::units::find_closest_adjacent_cell(enemy_pos, next_cell, &blocking_cells);
 
-                                let path_from_current = goal_from_current.and_then(|goal|
-                                    crate::units::find_path(current_cell, goal, config.map_radius, &blocking_cells)
+                                let waypoints_from_current = goal_from_current.and_then(|goal|
+                                    crate::units::find_path_waypoints(current_cell, goal, config.map_radius, &blocking_cells, &hex_grid)
                                 );
-                                let path_from_next = goal_from_next.and_then(|goal|
-                                    crate::units::find_path(next_cell, goal, config.map_radius, &blocking_cells)
+                                let waypoints_from_next = goal_from_next.and_then(|goal|
+                                    crate::units::find_path_waypoints(next_cell, goal, config.map_radius, &blocking_cells, &hex_grid)
                                 );
 
-                                let should_reverse = match (&path_from_current, &path_from_next) {
-                                    (Some(p1), Some(p2)) => p1.len() < p2.len(),
+                                let should_reverse = match (&waypoints_from_current, &waypoints_from_next) {
+                                    (Some(w1), Some(w2)) => w1.len() < w2.len(),
                                     (Some(_), None) => true,
                                     (None, Some(_)) => false,
                                     (None, None) => false,
@@ -746,7 +741,7 @@ fn handle_unit_selection(
 
                                 if should_reverse {
                                     // Reverse and path from current cell
-                                    if let (Some(goal), Some(path)) = (goal_from_current, path_from_current) {
+                                    if let (Some(goal), Some(waypoints)) = (goal_from_current, waypoints_from_current) {
                                         // Check if already adjacent
                                         if goal == current_cell {
                                             // Already adjacent, just set targeting without new movement
@@ -757,13 +752,7 @@ fn handle_unit_selection(
                                                 last_repath_time: 0.0,
                                             });
                                         } else {
-                                            // Build path including current_cell as first element to maintain visual position
-                                            let mut new_path = vec![current_cell];
-                                            if path.len() > 1 {
-                                                new_path.extend_from_slice(&path[1..]);
-                                            }
-
-                                            if new_path.len() > 1 {
+                                            if waypoints.len() > 1 {
                                                 let unit_position = if movement.progress >= 0.5 { next_cell } else { current_cell };
 
                                                 commands.entity(selected_entity).insert((
@@ -774,11 +763,12 @@ fn handle_unit_selection(
                                                         army: selected_unit.army,
                                                     },
                                                     UnitMovement {
-                                                        path: new_path,
-                                                        current_waypoint: 0,
+                                                        waypoints,
+                                                        current_waypoint: 1,
                                                         progress: 1.0 - movement.progress,
                                                         speed: stats.speed,
-                                                        segment_start: next_cell,
+                                                        segment_distance: 0.0,
+                        segment_start: Vec3::ZERO,
                                                     },
                                                     crate::units::Targeting {
                                                         target_entity: clicked_entity,
@@ -792,7 +782,7 @@ fn handle_unit_selection(
                                     }
                                 } else {
                                     // Continue forward from next cell
-                                    if let (Some(goal), Some(path)) = (goal_from_next, path_from_next) {
+                                    if let (Some(goal), Some(waypoints)) = (goal_from_next, waypoints_from_next) {
                                         // Check if already adjacent (or will be adjacent at next_cell)
                                         if goal == next_cell {
                                             // Will be adjacent when we reach next_cell, just set targeting
@@ -803,20 +793,15 @@ fn handle_unit_selection(
                                                 last_repath_time: 0.0,
                                             });
                                         } else {
-                                            // Build path including next_cell as first element to maintain visual position
-                                            let mut new_full_path = vec![next_cell];
-                                            if path.len() > 1 {
-                                                new_full_path.extend_from_slice(&path[1..]);
-                                            }
-
-                                            if new_full_path.len() > 1 {
+                                            if waypoints.len() > 1 {
                                                 commands.entity(selected_entity).insert((
                                                     UnitMovement {
-                                                        path: new_full_path,
-                                                        current_waypoint: 0,
+                                                        waypoints,
+                                                        current_waypoint: 1,
                                                         progress: movement.progress,
                                                         speed: stats.speed,
-                                                        segment_start: movement.segment_start,
+                                                        segment_distance: 0.0,
+                        segment_start: Vec3::ZERO,
                                                     },
                                                     crate::units::Targeting {
                                                         target_entity: clicked_entity,
@@ -868,21 +853,16 @@ fn handle_unit_selection(
                                             repathing_cooldown: 0.5,
                                             last_repath_time: 0.0,
                                         });
-                                    } else if let Some(path) = crate::units::find_path(start_pos, goal, config.map_radius, &blocking_cells) {
-                                        let path_to_follow: Vec<(i32, i32)> = if path.len() > 1 {
-                                            path[1..].to_vec()
-                                        } else {
-                                            vec![]
-                                        };
-
-                                        if !path_to_follow.is_empty() {
+                                    } else if let Some(waypoints) = crate::units::find_path_waypoints(start_pos, goal, config.map_radius, &blocking_cells, &hex_grid) {
+                                        if waypoints.len() > 1 {
                                             commands.entity(selected_entity).insert((
                                                 UnitMovement {
-                                                    path: path_to_follow,
-                                                    current_waypoint: 0,
+                                                    waypoints,
+                                                    current_waypoint: 1,
                                                     progress: 0.0,
                                                     speed: stats.speed,
-                                                    segment_start: start_pos,
+                                                    segment_distance: 0.0,
+                        segment_start: Vec3::ZERO,
                                                 },
                                                 crate::units::Targeting {
                                                     target_entity: clicked_entity,
@@ -934,21 +914,16 @@ fn handle_unit_selection(
                                         repathing_cooldown: 0.5,
                                         last_repath_time: 0.0,
                                     });
-                                } else if let Some(path) = crate::units::find_path(start_pos, goal, config.map_radius, &blocking_cells) {
-                                    let path_to_follow: Vec<(i32, i32)> = if path.len() > 1 {
-                                        path[1..].to_vec()
-                                    } else {
-                                        vec![]
-                                    };
-
-                                    if !path_to_follow.is_empty() {
+                                } else if let Some(waypoints) = crate::units::find_path_waypoints(start_pos, goal, config.map_radius, &blocking_cells, &hex_grid) {
+                                    if waypoints.len() > 1 {
                                         commands.entity(selected_entity).insert((
                                             UnitMovement {
-                                                path: path_to_follow,
-                                                current_waypoint: 0,
+                                                waypoints,
+                                                current_waypoint: 1,
                                                 progress: 0.0,
                                                 speed: stats.speed,
-                                                segment_start: start_pos,
+                                                segment_distance: 0.0,
+                        segment_start: Vec3::ZERO,
                                             },
                                             crate::units::Targeting {
                                                 target_entity: clicked_entity,
@@ -1064,34 +1039,27 @@ fn handle_unit_selection(
                             let current_cell = (selected_unit.q, selected_unit.r);
 
                             // Check if current_waypoint is within bounds
-                            if movement.current_waypoint >= movement.path.len() {
+                            if movement.current_waypoint >= movement.waypoints.len() {
                                 // Path is complete, treat as if unit has no movement
-                                if let Some(path) =
-                                    find_path(current_cell, goal, config.map_radius, &blocking_cells)
+                                if let Some(waypoints) =
+                                    find_path_waypoints(current_cell, goal, config.map_radius, &blocking_cells, &hex_grid)
                                 {
-                                    let path_to_follow: Vec<(i32, i32)> = if path.len() > 1 {
-                                        path[1..].to_vec()
-                                    } else {
-                                        vec![]
-                                    };
-
-                                    if !path_to_follow.is_empty() {
+                                    if waypoints.len() > 1 {
                                         println!(
                                             "User-commanded unit moving from ({}, {}) to destination ({}, {})",
                                             current_cell.0, current_cell.1, goal.0, goal.1
                                         );
                                         commands.entity(selected_entity).insert(UnitMovement {
-                                            path: path_to_follow.clone(),
-                                            current_waypoint: 0,
+                                            waypoints: waypoints.clone(),
+                                            current_waypoint: 1,
                                             progress: 0.0,
                                             speed: stats.speed,
-                                            segment_start: current_cell,
+                                            segment_distance: 0.0,
+                        segment_start: Vec3::ZERO,
                                         });
 
-                                        // Mark all cells in path as claimed
-                                        for &cell in &path_to_follow {
-                                            claimed_cells.cells.insert(cell);
-                                        }
+                                        // Note: Cell claiming is no longer applicable with waypoint-based movement
+                                        claimed_cells.cells.insert(goal);
 
                                         spawn_destination_ring(
                                             &mut commands,
@@ -1104,35 +1072,24 @@ fn handle_unit_selection(
                                     }
                                 }
                             } else {
-                                let next_cell = movement.path[movement.current_waypoint];
+                                // For waypoint-based movement, get the current target waypoint position
+                                let current_world_pos = crate::map::axial_to_world_pos(current_cell.0, current_cell.1);
 
-                                let path_from_current =
-                                    find_path(current_cell, goal, config.map_radius, &blocking_cells);
-                                let path_from_next =
-                                    find_path(next_cell, goal, config.map_radius, &blocking_cells);
+                                let waypoints_from_current =
+                                    find_path_waypoints(current_cell, goal, config.map_radius, &blocking_cells, &hex_grid);
 
-                                let should_reverse = match (path_from_current, path_from_next) {
-                                    (Some(p1), Some(p2)) => p1.len() < p2.len(),
-                                    (Some(_), None) => true,
-                                    (None, Some(_)) => false,
-                                    (None, None) => false,
-                                };
-
-                                if should_reverse {
-                                    if let Some(path) = find_path(
-                                        current_cell,
-                                        goal,
-                                        config.map_radius,
-                                        &blocking_cells,
-                                    ) {
-                                        let mut new_path = vec![current_cell];
-                                        if path.len() > 1 {
-                                            new_path.extend_from_slice(&path[1..]);
-                                        }
-
-                                        // Only update unit position if we've already claimed next_cell (>= 0.5 progress)
+                                if let Some(waypoints) = waypoints_from_current {
+                                    if waypoints.len() > 1 {
+                                        // Calculate unit position based on progress
                                         let unit_position = if movement.progress >= 0.5 {
-                                            next_cell
+                                            // Past midpoint, closer to next waypoint
+                                            if movement.current_waypoint < movement.waypoints.len() {
+                                                let next_wp = movement.waypoints[movement.current_waypoint];
+                                                let next_cell = crate::map::world_pos_to_axial(next_wp.x, next_wp.z);
+                                                next_cell
+                                            } else {
+                                                current_cell
+                                            }
                                         } else {
                                             current_cell
                                         };
@@ -1145,50 +1102,17 @@ fn handle_unit_selection(
                                                 army: selected_unit.army,
                                             },
                                             UnitMovement {
-                                                path: new_path.clone(),
-                                                current_waypoint: 0,
-                                                progress: 1.0 - movement.progress,
+                                                waypoints: waypoints.clone(),
+                                                current_waypoint: 1,
+                                                progress: 0.0,
                                                 speed: stats.speed,
-                                                segment_start: next_cell,
+                                                segment_distance: 0.0,
+                        segment_start: Vec3::ZERO,
                                             },
                                         ));
 
-                                        // Mark all cells in path as claimed
-                                        for &cell in &new_path {
-                                            claimed_cells.cells.insert(cell);
-                                        }
-
-                                        spawn_destination_ring(
-                                            &mut commands,
-                                            &mut meshes,
-                                            &mut materials,
-                                            selected_entity,
-                                            goal,
-                                            selected_unit.army,
-                                        );
-                                    }
-                                } else if let Some(path) =
-                                    find_path(next_cell, goal, config.map_radius, &blocking_cells)
-                                {
-                                    let mut new_full_path = vec![next_cell];
-                                    if path.len() > 1 {
-                                        new_full_path.extend_from_slice(&path[1..]);
-                                    }
-
-                                    if new_full_path.len() > 1 {
-                                        // Keep current segment_start to maintain visual position
-                                        commands.entity(selected_entity).insert(UnitMovement {
-                                            path: new_full_path.clone(),
-                                            current_waypoint: 0,
-                                            progress: movement.progress,
-                                            speed: stats.speed,
-                                            segment_start: movement.segment_start,
-                                        });
-
-                                        // Mark all cells in path as claimed
-                                        for &cell in &new_full_path {
-                                            claimed_cells.cells.insert(cell);
-                                        }
+                                        // Note: Cell claiming is no longer applicable with waypoint-based movement
+                                        claimed_cells.cells.insert(goal);
 
                                         spawn_destination_ring(
                                             &mut commands,
@@ -1203,32 +1127,25 @@ fn handle_unit_selection(
                             }
                         } else {
                             let start = (selected_unit.q, selected_unit.r);
-                            if let Some(path) =
-                                find_path(start, goal, config.map_radius, &blocking_cells)
+                            if let Some(waypoints) =
+                                find_path_waypoints(start, goal, config.map_radius, &blocking_cells, &hex_grid)
                             {
-                                let path_to_follow: Vec<(i32, i32)> = if path.len() > 1 {
-                                    path[1..].to_vec()
-                                } else {
-                                    vec![]
-                                };
-
-                                if !path_to_follow.is_empty() {
+                                if waypoints.len() > 1 {
                                     println!(
                                         "User-commanded unit moving from ({}, {}) to destination ({}, {})",
                                         start.0, start.1, goal.0, goal.1
                                     );
                                     commands.entity(selected_entity).insert(UnitMovement {
-                                        path: path_to_follow.clone(),
-                                        current_waypoint: 0,
+                                        waypoints: waypoints.clone(),
+                                        current_waypoint: 1,
                                         progress: 0.0,
                                         speed: stats.speed,
-                                        segment_start: start,
+                                        segment_distance: 0.0,
+                        segment_start: Vec3::ZERO,
                                     });
 
-                                    // Mark all cells in path as claimed
-                                    for &cell in &path_to_follow {
-                                        claimed_cells.cells.insert(cell);
-                                    }
+                                    // Note: Cell claiming is no longer applicable with waypoint-based movement
+                                    claimed_cells.cells.insert(goal);
 
                                     spawn_destination_ring(
                                         &mut commands,
@@ -1508,7 +1425,7 @@ fn update_path_visualizations(
             if !is_selected {
                 continue;
             }
-            let remaining_path = &movement.path[movement.current_waypoint..];
+            let remaining_waypoints = &movement.waypoints[movement.current_waypoint..];
 
             // Get target position if unit is targeting
             let target_pos = if let Some(targeting) = targeting {
@@ -1523,9 +1440,8 @@ fn update_path_visualizations(
 
             let mut total_length = 0.0;
             let mut prev_pos = transform.translation;
-            for &(q, r) in remaining_path {
-                let waypoint_pos = axial_to_world_pos(q, r);
-                let curr_pos = Vec3::new(waypoint_pos.x, 0.0, waypoint_pos.z);
+            for &waypoint in remaining_waypoints {
+                let curr_pos = Vec3::new(waypoint.x, 0.0, waypoint.z);
                 total_length += prev_pos.distance(curr_pos);
                 prev_pos = curr_pos;
             }
@@ -1553,18 +1469,18 @@ fn update_path_visualizations(
                     };
 
                     // Check if we need to regenerate the mesh
-                    let path_changed = path_viz.cached_path != remaining_path;
+                    let path_changed = path_viz.cached_path != remaining_waypoints;
                     let target_changed = path_viz.cached_target_pos != target_pos;
                     let time_for_animation_update = time.elapsed_secs() - path_viz.last_mesh_update >= 0.05;
 
                     // Always update when there's only one waypoint left so the line starts from the unit's current position
-                    let is_last_waypoint = remaining_path.len() == 1;
+                    let is_last_waypoint = remaining_waypoints.len() == 1;
 
                     let needs_update = path_changed || target_changed || (time_for_animation_update && path_viz.loop_count < 2) || is_last_waypoint;
 
                     if needs_update {
                         let new_mesh = create_path_line_mesh(
-                            remaining_path,
+                            remaining_waypoints,
                             transform.translation,
                             animation_progress,
                             unit.army,
@@ -1573,7 +1489,7 @@ fn update_path_visualizations(
                         mesh_handle.0 = meshes.add(new_mesh);
 
                         // Update cache
-                        path_viz.cached_path = remaining_path.to_vec();
+                        path_viz.cached_path = remaining_waypoints.to_vec();
                         path_viz.cached_target_pos = target_pos;
                         path_viz.last_mesh_update = time.elapsed_secs();
                     }
@@ -1584,7 +1500,7 @@ fn update_path_visualizations(
 
             if !found {
                 let path_mesh =
-                    create_path_line_mesh(remaining_path, transform.translation, 0.0, unit.army, target_pos);
+                    create_path_line_mesh(remaining_waypoints, transform.translation, 0.0, unit.army, target_pos);
 
                 commands.spawn((
                     Mesh3d(meshes.add(path_mesh)),
@@ -1600,7 +1516,7 @@ fn update_path_visualizations(
                         unit_entity,
                         animation_progress: 0.0,
                         loop_count: 0,
-                        cached_path: remaining_path.to_vec(),
+                        cached_path: remaining_waypoints.to_vec(),
                         cached_target_pos: target_pos,
                         last_mesh_update: time.elapsed_secs(),
                     },
@@ -1817,7 +1733,7 @@ impl Plugin for SelectionPlugin {
         );
         app.add_systems(
             Update,
-            handle_unit_selection.run_if(not_paused)
+            handle_unit_selection.run_if(in_state(crate::loading::LoadingState::Playing))
         );
     }
 }

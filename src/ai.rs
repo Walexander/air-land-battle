@@ -6,7 +6,7 @@ use crate::loading::LoadingState;
 use crate::launch_pads::{GameTimer, LaunchPadOwner, LaunchPadOwnership, LaunchPads};
 use crate::map::{HexMapConfig, Obstacles};
 use crate::units::{
-    find_path, hex_distance, Army, ClaimedCellsThisFrame, Occupancy,
+    find_path_waypoints, hex_distance, Army, ClaimedCellsThisFrame, Occupancy,
     OccupancyIntent, Unit, UnitClass, UnitMovement, UnitSpawnQueue, UnitSpawnRequest, UnitStats, SpawnCooldowns, UnitDefinitions,
 };
 use crate::Paused;
@@ -389,6 +389,7 @@ fn ai_command_units(
     map_config: Res<HexMapConfig>,
     occupancy: Res<Occupancy>,
     occupancy_intent: Res<OccupancyIntent>,
+    hex_grid: Res<crate::hex_pathfinding::HexPathfindingGrid>,
     mut claimed_cells: ResMut<ClaimedCellsThisFrame>,
     unit_query: Query<(Entity, &Unit, &UnitStats, &UnitClass, Option<&UnitMovement>)>,
 ) {
@@ -408,7 +409,7 @@ fn ai_command_units(
         if unit.army == Army::Blue {
             // Unit is idle if it has no movement component or has reached end of path
             let is_idle = movement.is_none()
-                || movement.is_some_and(|m| m.current_waypoint >= m.path.len());
+                || movement.is_some_and(|m| m.current_waypoint >= m.waypoints.len());
             if is_idle {
                 idle_blue_units.push((entity, unit, stats, unit_class));
             }
@@ -483,21 +484,19 @@ fn ai_command_units(
 
         // Command unit to move to target
         if let Some(target_pos) = target {
-            if let Some(path) = find_path(unit_pos, target_pos, map_config.map_radius, &blocking_cells)
-                && path.len() > 1 {
-                    let path_to_follow: Vec<(i32, i32)> = path[1..].to_vec();
-
+            if let Some(waypoints) = find_path_waypoints(unit_pos, target_pos, map_config.map_radius, &blocking_cells, &hex_grid)
+                && waypoints.len() > 1 {
                     commands.entity(entity).insert(UnitMovement {
-                        path: path_to_follow.clone(),
-                        current_waypoint: 0,
+                        waypoints: waypoints.clone(),
+                        current_waypoint: 1,
                         progress: 0.0,
                         speed: stats.speed,
-                        segment_start: unit_pos,
+                        segment_distance: 0.0,
+                        segment_start: Vec3::ZERO,
                     });
 
-                    for &cell in &path_to_follow {
-                        claimed_cells.cells.insert(cell);
-                    }
+                    // Note: Cell claiming is no longer applicable with waypoint-based movement
+                    claimed_cells.cells.insert(target_pos);
                 }
         } else {
             println!("⚠️ AI unit at ({}, {}) has NO TARGET (Strategy: {:?}, Class: {:?})",

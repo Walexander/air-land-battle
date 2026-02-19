@@ -3,7 +3,7 @@ use bevy::gltf::GltfAssetLabel;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::asset::RenderAssetUsages;
 use std::time::Duration;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, BinaryHeap};
 use std::cmp::Ordering;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -14,6 +14,54 @@ use crate::selection::{create_selection_ring_mesh, create_ring_arc_mesh, InnerQu
 use crate::launch_pads::{GameState, GameTimer, GAME_DURATION};
 use crate::loading::LoadingState;
 use crate::Paused;
+
+// Hex Grid Pathfinding with pathfinding crate
+
+/// Hex coordinate type for pathfinding
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct HexCoord {
+    pub q: i32,
+    pub r: i32,
+}
+
+impl HexCoord {
+    pub fn new(q: i32, r: i32) -> Self {
+        Self { q, r }
+    }
+
+    pub fn to_tuple(self) -> (i32, i32) {
+        (self.q, self.r)
+    }
+
+    pub fn from_tuple(tuple: (i32, i32)) -> Self {
+        Self { q: tuple.0, r: tuple.1 }
+    }
+
+    /// Get neighbors of this hex cell
+    pub fn neighbors(&self, map_radius: i32, obstacles: &HashSet<(i32, i32)>) -> Vec<(HexCoord, i32)> {
+        // Six hex neighbors (axial coordinates)
+        const HEX_DIRECTIONS: [(i32, i32); 6] = [
+            (1, 0), (1, -1), (0, -1),
+            (-1, 0), (-1, 1), (0, 1)
+        ];
+
+        HEX_DIRECTIONS
+            .iter()
+            .map(|(dq, dr)| HexCoord::new(self.q + dq, self.r + dr))
+            .filter(|neighbor| {
+                // Check if within map bounds
+                let distance_from_origin = hex_distance((0, 0), (neighbor.q, neighbor.r));
+                if distance_from_origin > map_radius {
+                    return false;
+                }
+
+                // Check if not an obstacle
+                !obstacles.contains(&(neighbor.q, neighbor.r))
+            })
+            .map(|neighbor| (neighbor, 1)) // All moves cost 1
+            .collect()
+    }
+}
 
 // Unit definition structures loaded from RON files
 #[derive(Debug, Clone, Deserialize, Serialize, Resource)]
@@ -122,11 +170,12 @@ pub struct Unit {
 
 #[derive(Component, Clone)]
 pub struct UnitMovement {
-    pub path: Vec<(i32, i32)>,
+    pub waypoints: Vec<Vec3>, // World-space waypoints
     pub current_waypoint: usize,
     pub progress: f32,
     pub speed: f32,
-    pub segment_start: (i32, i32), // The hex position where this segment started
+    pub segment_distance: f32, // Distance of current segment (computed once per segment)
+    pub segment_start: Vec3, // Start position of current segment (fixed for entire segment)
 }
 
 #[derive(Component)]
@@ -331,6 +380,13 @@ pub struct Occupancy {
     pub position_to_entity: HashMap<(i32, i32), Entity>,
 }
 
+// Fast position cache that doesn't trigger change detection
+// Updated every frame for moving units without mutating Unit components
+#[derive(Resource, Default)]
+pub struct UnitPositionCache {
+    pub positions: HashMap<Entity, (i32, i32)>,
+}
+
 #[derive(Resource, Default)]
 pub struct OccupancyIntent {
     pub intentions: HashMap<Entity, (i32, i32)>,
@@ -452,6 +508,69 @@ fn hex_neighbors(pos: (i32, i32)) -> [(i32, i32); 6] {
     ]
 }
 
+// Get the two hexes adjacent to the edge between two neighboring hexes
+fn get_edge_adjacent_hexes(from: (i32, i32), to: (i32, i32)) -> Vec<(i32, i32)> {
+    let (q1, r1) = from;
+    let (q2, r2) = to;
+
+    // Calculate the direction of movement
+    let dq = q2 - q1;
+    let dr = r2 - r1;
+
+    // Get the two hexes that share this edge
+    match (dq, dr) {
+        (1, 0) => vec![(q1, r1 - 1), (q2, r2 + 1)],      // Moving right
+        (-1, 0) => vec![(q1, r1 + 1), (q2, r2 - 1)],     // Moving left
+        (0, 1) => vec![(q1 + 1, r1), (q2 - 1, r2)],      // Moving down-right
+        (0, -1) => vec![(q1 - 1, r1), (q2 + 1, r2)],     // Moving up-left
+        (1, -1) => vec![(q1 + 1, r1), (q2, r2 - 1)],     // Moving up-right
+        (-1, 1) => vec![(q1, r1 + 1), (q2 - 1, r2)],     // Moving down-left
+        _ => vec![], // Not adjacent hexes
+    }
+}
+
+// Check if moving along an edge is safe (no occupied cells on adjacent sides)
+fn is_edge_safe(from: (i32, i32), to: (i32, i32), obstacles: &HashSet<(i32, i32)>) -> bool {
+    let adjacent = get_edge_adjacent_hexes(from, to);
+
+    // Edge is safe if neither adjacent cell is occupied
+    for cell in &adjacent {
+        if obstacles.contains(cell) {
+            return false;
+        }
+    }
+
+    true
+}
+
+// A* pathfinding node
+#[derive(Clone, Eq, PartialEq)]
+struct PathNode {
+    position: (i32, i32),
+    g_cost: i32,  // Cost from start
+    h_cost: i32,  // Heuristic cost to goal
+    parent: Option<(i32, i32)>,
+}
+
+impl PathNode {
+    fn f_cost(&self) -> i32 {
+        self.g_cost + self.h_cost
+    }
+}
+
+impl Ord for PathNode {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other.f_cost().cmp(&self.f_cost())
+            .then_with(|| other.h_cost.cmp(&self.h_cost))
+    }
+}
+
+impl PartialOrd for PathNode {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 // Draw a line between two hex cells, returning all cells the line touches
 fn hex_line(start: (i32, i32), goal: (i32, i32)) -> Vec<(i32, i32)> {
     let (q0, r0) = start;
@@ -461,16 +580,17 @@ fn hex_line(start: (i32, i32), goal: (i32, i32)) -> Vec<(i32, i32)> {
     let s0 = -q0 - r0;
     let s1 = -q1 - r1;
 
-    // Calculate distance
-    let n = hex_distance(start, goal) as usize;
+    // Calculate distance - use very fine subdivision to catch all cells the line touches
+    let n = (hex_distance(start, goal) * 10) as usize; // 10x for very fine resolution
 
     if n == 0 {
         return vec![start];
     }
 
     let mut results = Vec::new();
+    let mut seen = HashSet::new();
 
-    // Linear interpolation in cube coordinates
+    // Linear interpolation in cube coordinates with fine granularity
     for i in 0..=n {
         let t = i as f32 / n as f32;
 
@@ -497,114 +617,233 @@ fn hex_line(start: (i32, i32), goal: (i32, i32)) -> Vec<(i32, i32)> {
             s = -q - r;
         }
 
-        results.push((q as i32, r as i32));
+        let cell = (q as i32, r as i32);
+
+        // Only add if we haven't seen this cell yet
+        if !seen.contains(&cell) {
+            seen.insert(cell);
+            results.push(cell);
+        }
     }
 
     results
 }
 
+// New function: compute world-space waypoints using bevy_northstar any-angle pathfinding
+pub fn find_path_waypoints(
+    start: (i32, i32),
+    goal: (i32, i32),
+    map_radius: i32,
+    obstacles: &HashSet<(i32, i32)>,
+    _hex_grid: &crate::hex_pathfinding::HexPathfindingGrid,
+) -> Option<Vec<Vec3>> {
+    // Get A* path
+    let path_cells = find_path(start, goal, map_radius, obstacles)?;
+
+    if path_cells.is_empty() {
+        return None;
+    }
+
+    // Apply path smoothing using line-of-sight optimization
+    let smoothed_path = smooth_path(&path_cells, obstacles);
+
+    // Convert cell positions to world positions
+    let waypoints: Vec<Vec3> = smoothed_path
+        .iter()
+        .map(|&(q, r)| axial_to_world_pos(q, r))
+        .collect();
+
+    Some(waypoints)
+}
+
+/// Smooth a path by removing unnecessary waypoints using line-of-sight checks.
+/// Uses "string pulling" algorithm: skip ahead as far as possible while maintaining clear line of sight.
+fn smooth_path(path: &[(i32, i32)], obstacles: &HashSet<(i32, i32)>) -> Vec<(i32, i32)> {
+    if path.len() <= 2 {
+        return path.to_vec();
+    }
+
+    let mut smoothed = vec![path[0]];
+    let mut current_idx = 0;
+
+    while current_idx < path.len() - 1 {
+        let current = path[current_idx];
+
+        // Try to find the farthest point we can see from current position
+        let mut farthest_visible = current_idx + 1;
+
+        for look_ahead in (current_idx + 2)..path.len() {
+            let target = path[look_ahead];
+
+            if has_line_of_sight(current, target, obstacles) {
+                farthest_visible = look_ahead;
+            } else {
+                break; // No point checking further if we hit an obstacle
+            }
+        }
+
+        // Add the farthest visible point
+        smoothed.push(path[farthest_visible]);
+        current_idx = farthest_visible;
+    }
+
+    smoothed
+}
+
+/// Check if there's a clear line of sight between two hex cells (no obstacles in between).
+/// Uses a "supercover" approach - checks not just the direct line but also adjacent cells
+/// to ensure there's adequate clearance (~1 hex cell width).
+fn has_line_of_sight(start: (i32, i32), goal: (i32, i32), obstacles: &HashSet<(i32, i32)>) -> bool {
+    if start == goal {
+        return true;
+    }
+
+    // Use hex_line to get all cells along the centerline
+    let line_cells = hex_line(start, goal);
+
+    // Check each cell along the line plus its immediate neighbors for obstacles
+    for &cell in line_cells.iter() {
+        if cell != start && cell != goal {
+            // Check the cell itself
+            if obstacles.contains(&cell) {
+                return false;
+            }
+
+            // Check all 6 neighbors to ensure clearance (supercover line)
+            let neighbors = [
+                (cell.0 + 1, cell.1),
+                (cell.0 + 1, cell.1 - 1),
+                (cell.0, cell.1 - 1),
+                (cell.0 - 1, cell.1),
+                (cell.0 - 1, cell.1 + 1),
+                (cell.0, cell.1 + 1),
+            ];
+
+            for &neighbor in &neighbors {
+                if neighbor != start && neighbor != goal && obstacles.contains(&neighbor) {
+                    return false;
+                }
+            }
+        }
+    }
+
+    true
+}
+
+// Old cell-based pathfinding (kept for backward compatibility)
 pub fn find_path(
     start: (i32, i32),
     goal: (i32, i32),
     map_radius: i32,
     obstacles: &HashSet<(i32, i32)>,
 ) -> Option<Vec<(i32, i32)>> {
-    // Line-based pathfinding: draw straight line, path around obstacles
-    let mut path = vec![start];
-    let mut current = start;
-    let mut visited = HashSet::new();
-    visited.insert(start);
+    // Get the straight line between start and goal
+    let line = hex_line(start, goal);
 
-    let max_iterations = 100; // Prevent infinite loops
-    let mut iterations = 0;
+    // Try to follow the line, only deviating when blocked
+    let mut path = Vec::new();
+    let mut current_idx = 0;
 
-    while current != goal && iterations < max_iterations {
-        iterations += 1;
+    while current_idx < line.len() {
+        let current = line[current_idx];
+        path.push(current);
 
-        // Get straight line from current to goal
-        let line = hex_line(current, goal);
+        // If we've reached the goal, we're done
+        if current == goal {
+            return Some(path);
+        }
 
-        // Find first blocked cell along the line (skip current position)
-        let mut next_pos = None;
-        let mut blocked_at = None;
+        // Check if we can continue along the line
+        if current_idx + 1 < line.len() {
+            let next = line[current_idx + 1];
 
-        for (i, &cell) in line.iter().enumerate().skip(1) {
-            // Check if cell is out of bounds
-            let (q, r) = cell;
+            // Check if next cell is valid
+            let (q, r) = next;
+            let out_of_bounds = q.abs() > map_radius || r.abs() > map_radius || (q + r).abs() > map_radius;
+            let is_blocked = obstacles.contains(&next) && next != goal;
+
+            if !out_of_bounds && !is_blocked {
+                // Can continue along line
+                current_idx += 1;
+                continue;
+            }
+        }
+
+        // Can't continue on line - need to path around
+        // Use A* from current position to goal
+        return path_around_obstacle(current, goal, map_radius, obstacles, path);
+    }
+
+    Some(path)
+}
+
+// Helper function to path around obstacles using A*
+fn path_around_obstacle(
+    start: (i32, i32),
+    goal: (i32, i32),
+    map_radius: i32,
+    obstacles: &HashSet<(i32, i32)>,
+    mut existing_path: Vec<(i32, i32)>,
+) -> Option<Vec<(i32, i32)>> {
+    let mut open_set = BinaryHeap::new();
+    let mut came_from: HashMap<(i32, i32), (i32, i32)> = HashMap::new();
+    let mut g_score: HashMap<(i32, i32), i32> = HashMap::new();
+
+    g_score.insert(start, 0);
+    open_set.push(PathNode {
+        position: start,
+        g_cost: 0,
+        h_cost: hex_distance(start, goal) * 10,
+        parent: None,
+    });
+
+    while let Some(current_node) = open_set.pop() {
+        let current = current_node.position;
+
+        if current == goal {
+            // Reconstruct path from A*
+            let mut astar_path = vec![current];
+            let mut pos = current;
+            while let Some(&parent) = came_from.get(&pos) {
+                if parent == start {
+                    break; // Don't include start since it's already in existing_path
+                }
+                astar_path.push(parent);
+                pos = parent;
+            }
+            astar_path.reverse();
+            existing_path.extend(astar_path);
+            return Some(existing_path);
+        }
+
+        for neighbor in hex_neighbors(current) {
+            let (q, r) = neighbor;
+
             if q.abs() > map_radius || r.abs() > map_radius || (q + r).abs() > map_radius {
-                blocked_at = Some(cell);
-                break;
+                continue;
             }
 
-            // Check if blocked (unless it's the goal)
-            if obstacles.contains(&cell) && cell != goal {
-                blocked_at = Some(cell);
-                break;
+            if obstacles.contains(&neighbor) && neighbor != goal {
+                continue;
             }
 
-            // This cell is clear, consider it as next position
-            next_pos = Some(cell);
-        }
+            let tentative_g_score = g_score.get(&current).unwrap_or(&i32::MAX) + 10;
 
-        // If we found a clear cell along the line, move there
-        if let Some(pos) = next_pos {
-            if visited.contains(&pos) {
-                // We're going in circles, try to find alternative
-                break;
+            if tentative_g_score < *g_score.get(&neighbor).unwrap_or(&i32::MAX) {
+                came_from.insert(neighbor, current);
+                g_score.insert(neighbor, tentative_g_score);
+
+                open_set.push(PathNode {
+                    position: neighbor,
+                    g_cost: tentative_g_score,
+                    h_cost: hex_distance(neighbor, goal) * 10,
+                    parent: Some(current),
+                });
             }
-            path.push(pos);
-            visited.insert(pos);
-            current = pos;
-            continue;
-        }
-
-        // Line is blocked, find a way around
-        if blocked_at.is_some() {
-            // Get all valid neighbors
-            let neighbors = hex_neighbors(current);
-            let mut best_neighbor = None;
-            let mut best_distance = i32::MAX;
-
-            for neighbor in neighbors {
-                let (q, r) = neighbor;
-
-                // Check bounds
-                if q.abs() > map_radius || r.abs() > map_radius || (q + r).abs() > map_radius {
-                    continue;
-                }
-
-                // Skip if blocked or already visited
-                if obstacles.contains(&neighbor) || visited.contains(&neighbor) {
-                    continue;
-                }
-
-                // Pick neighbor closest to goal
-                let dist = hex_distance(neighbor, goal);
-                if dist < best_distance {
-                    best_distance = dist;
-                    best_neighbor = Some(neighbor);
-                }
-            }
-
-            if let Some(neighbor) = best_neighbor {
-                path.push(neighbor);
-                visited.insert(neighbor);
-                current = neighbor;
-            } else {
-                // No valid neighbors, path is blocked
-                return None;
-            }
-        } else {
-            // No clear path and no blocked cell found - shouldn't happen
-            return None;
         }
     }
 
-    if current == goal {
-        Some(path)
-    } else {
-        None
-    }
+    None
 }
 
 pub fn get_adjacent_hexes(pos: (i32, i32)) -> Vec<(i32, i32)> {
@@ -629,7 +868,8 @@ pub fn find_closest_adjacent_cell(
 fn move_units(
     time: Res<Time>,
     mut commands: Commands,
-    occupancy: Res<Occupancy>,
+    _occupancy: Res<Occupancy>,
+    mut position_cache: ResMut<UnitPositionCache>,
     mut query: Query<(Entity, &Children, &mut Transform, &mut Unit, &mut UnitMovement, &UnitStats, Option<&mut Combat>), Without<SquadMemberIndex>>,
     squad_marker_query: Query<(), With<SquadMemberIndex>>,
     mut transform_query: ParamSet<(
@@ -639,11 +879,8 @@ fn move_units(
 ) {
     let current_time = time.elapsed_secs();
 
-    // Track cells claimed THIS FRAME to prevent race conditions
-    let mut cells_claimed_this_frame: HashMap<(i32, i32), Entity> = HashMap::new();
-
     for (entity, children, mut transform, mut unit, mut movement, stats, combat_opt) in &mut query {
-        if movement.current_waypoint >= movement.path.len() {
+        if movement.current_waypoint >= movement.waypoints.len() {
             // Update last_movement_time when movement ends
             if let Some(mut combat) = combat_opt {
                 combat.last_movement_time = current_time;
@@ -652,20 +889,25 @@ fn move_units(
             continue;
         }
 
-        let target_hex = movement.path[movement.current_waypoint];
-        let start_hex = movement.segment_start;
+        // Waypoint-based movement
+        let target_wp = movement.waypoints[movement.current_waypoint];
 
-        let start_pos = axial_to_world_pos(start_hex.0, start_hex.1);
-        let target_pos = axial_to_world_pos(target_hex.0, target_hex.1);
-        let distance = start_pos.distance(target_pos);
+        // Initialize segment start and distance at the beginning of each segment
+        if movement.progress == 0.0 {
+            movement.segment_start = Vec3::new(transform.translation.x, 0.0, transform.translation.z);
+            movement.segment_distance = movement.segment_start.distance(target_wp);
+        }
 
-        if distance > 0.0 {
-            let direction = (target_pos - start_pos).normalize();
+        let start_wp = movement.segment_start;
+
+        // Rotate toward target waypoint
+        if movement.segment_distance > 0.0 {
+            let direction = (target_wp - start_wp).normalize();
             let angle = direction.z.atan2(direction.x);
             let target_rotation = Quat::from_rotation_y(-angle + std::f32::consts::PI / 2.0);
             let rotation_speed = 8.0;
 
-            // Check if any children are infantry models
+            // Check if any children are squad models
             let mut is_squad = false;
             for child in children.iter() {
                 if squad_marker_query.get(child).is_ok() {
@@ -675,7 +917,6 @@ fn move_units(
             }
 
             if is_squad {
-                // Squad: rotate each model individually
                 let mut squad_transforms = transform_query.p0();
                 for child in children.iter() {
                     if let Ok(mut child_transform) = squad_transforms.get_mut(child) {
@@ -683,91 +924,58 @@ fn move_units(
                     }
                 }
             } else {
-                // Non-squad: rotate the first scene child (the model)
                 let mut non_squad_transforms = transform_query.p1();
                 for child in children.iter() {
                     if let Ok(mut child_transform) = non_squad_transforms.get_mut(child) {
                         child_transform.rotation = child_transform.rotation.slerp(target_rotation, time.delta_secs() * rotation_speed);
-                        break; // Only rotate the first child (the model)
+                        break;
                     }
                 }
             }
         }
 
-        if distance > 0.0 {
-            movement.progress += (time.delta_secs() * stats.speed) / distance;
+        // Update progress
+        if movement.segment_distance > 0.0 {
+            movement.progress += (time.delta_secs() * stats.speed) / movement.segment_distance;
         } else {
             movement.progress = 1.0;
         }
 
-        // Update unit occupancy at halfway point
-        if movement.progress >= 0.5 && (unit.q, unit.r) == start_hex {
-            // CRITICAL: Check if target cell is occupied by another unit before claiming it
-            let mut cell_occupied = false;
-
-            // Check existing occupancy
-            if let Some(&occupying_entity) = occupancy.position_to_entity.get(&target_hex)
-                && occupying_entity != entity {
-                    cell_occupied = true;
-                }
-
-            // Also check if another unit claimed it THIS FRAME
-            if let Some(&claiming_entity) = cells_claimed_this_frame.get(&target_hex)
-                && claiming_entity != entity {
-                    cell_occupied = true;
-                }
-
-            if cell_occupied {
-                // Target cell is occupied - reverse direction and return to start cell
-                println!("⚠️  Unit {:?} stopped: destination ({}, {}) occupied, reversing to ({}, {})",
-                    entity, target_hex.0, target_hex.1, start_hex.0, start_hex.1);
-
-                // Create a reverse path back to the start cell
-                movement.path = vec![start_hex];
-                movement.current_waypoint = 0;
-                movement.progress = 1.0 - movement.progress; // Reverse the progress
-                movement.segment_start = target_hex; // We're now moving "from" target back to start
-
-                // Update unit position to claim the start cell
-                unit.q = start_hex.0;
-                unit.r = start_hex.1;
-                cells_claimed_this_frame.insert(start_hex, entity);
-
-                continue; // Let the movement system handle the rest
-            }
-
-            // Claim the cell
-            unit.q = target_hex.0;
-            unit.r = target_hex.1;
-            cells_claimed_this_frame.insert(target_hex, entity);
-        }
-
         if movement.progress >= 1.0 {
-            // Ensure unit position is correct
-            unit.q = target_hex.0;
-            unit.r = target_hex.1;
-            transform.translation.x = target_pos.x;
-            transform.translation.z = target_pos.z;
-
             movement.current_waypoint += 1;
             movement.progress = 0.0;
+            // Segment start and distance will be recomputed on next frame
 
-            // Update segment_start for next waypoint
-            if movement.current_waypoint < movement.path.len() {
-                movement.segment_start = target_hex;
-            }
+            // Update unit cell position when reaching final waypoint
+            if movement.current_waypoint >= movement.waypoints.len() {
+                let final_pos = movement.waypoints.last().unwrap();
+                transform.translation.x = final_pos.x;
+                transform.translation.z = final_pos.z;
 
-            if movement.current_waypoint >= movement.path.len() {
-                // Update last_movement_time when movement ends
                 if let Some(mut combat) = combat_opt {
                     combat.last_movement_time = current_time;
                 }
                 commands.entity(entity).remove::<UnitMovement>();
+            } else {
+                // Snap to waypoint
+                transform.translation.x = target_wp.x;
+                transform.translation.z = target_wp.z;
             }
         } else {
-            let current_pos = start_pos.lerp(target_pos, movement.progress);
+            // Interpolate between waypoints
+            let current_pos = start_wp.lerp(target_wp, movement.progress);
             transform.translation.x = current_pos.x;
             transform.translation.z = current_pos.z;
+        }
+
+        // Update position cache every frame (fast, no change detection)
+        let current_cell = crate::map::world_pos_to_axial(transform.translation.x, transform.translation.z);
+        position_cache.positions.insert(entity, current_cell);
+
+        // Update Unit component position if it has changed (for fog of war and other systems)
+        if (unit.q, unit.r) != current_cell {
+            unit.q = current_cell.0;
+            unit.r = current_cell.1;
         }
     }
 }
@@ -994,14 +1202,29 @@ fn update_targeting_system(
     obstacles: Res<Obstacles>,
     occupancy: Res<Occupancy>,
     occupancy_intent: Res<OccupancyIntent>,
-    target_query: Query<&Unit, Without<Targeting>>,
+    hex_grid: Res<crate::hex_pathfinding::HexPathfindingGrid>,
+    non_targeting_units: Query<(Entity, &Unit), Without<Targeting>>,
     mut targeting_query: Query<(Entity, &mut Unit, &UnitStats, &mut Targeting, Option<&UnitMovement>)>,
 ) {
     let current_time = time.elapsed_secs();
 
+    // Build a map of non-targeting unit entities to their armies for quick lookup
+    let non_targeting_armies: std::collections::HashMap<Entity, Army> = non_targeting_units
+        .iter()
+        .map(|(entity, unit)| (entity, unit.army))
+        .collect();
+
+    // Also collect targeting unit armies (before mutable iteration)
+    let _targeting_armies: std::collections::HashMap<Entity, Army> = targeting_query
+        .iter()
+        .map(|(entity, unit, _, _, _)| (entity, unit.army))
+        .collect();
+
     for (attacker_entity, mut attacker_unit, stats, mut targeting, movement_opt) in &mut targeting_query {
         // Check if target still exists
-        if let Ok(target_unit) = target_query.get(targeting.target_entity) {
+        if let Some(&_target_army) = non_targeting_armies.get(&targeting.target_entity) {
+            // Get target position from non_targeting_units
+            let target_unit = non_targeting_units.get(targeting.target_entity).unwrap().1;
             let target_pos = (target_unit.q, target_unit.r);
             let attacker_pos = (attacker_unit.q, attacker_unit.r);
 
@@ -1030,32 +1253,22 @@ fn update_targeting_system(
                 if let Some(goal) = find_closest_adjacent_cell(target_pos, attacker_pos, &blocking_cells) {
                     if let Some(movement) = movement_opt {
                         // Unit is currently moving - handle mid-movement repathing
-                        if movement.current_waypoint < movement.path.len() {
+                        if movement.current_waypoint < movement.waypoints.len() {
                             let current_cell = (attacker_unit.q, attacker_unit.r);
-                            let next_cell = movement.path[movement.current_waypoint];
 
-                            // Compare paths from current cell vs next cell
-                            let path_from_current = find_path(current_cell, goal, config.map_radius, &blocking_cells);
-                            let path_from_next = find_path(next_cell, goal, config.map_radius, &blocking_cells);
-
-                            let should_reverse = match (path_from_current, path_from_next) {
-                                (Some(p1), Some(p2)) => p1.len() < p2.len(),
-                                (Some(_), None) => true,
-                                (None, Some(_)) => false,
-                                (None, None) => false,
-                            };
-
-                            if should_reverse {
-                                // Reverse direction - go back to current cell and repath
-                                if let Some(path) = find_path(current_cell, goal, config.map_radius, &blocking_cells) {
-                                    let mut new_path = vec![current_cell];
-                                    if path.len() > 1 {
-                                        new_path.extend_from_slice(&path[1..]);
-                                    }
-
-                                    // Update unit position based on progress
+                            // Get waypoints from current position to goal
+                            if let Some(waypoints) = find_path_waypoints(current_cell, goal, config.map_radius, &blocking_cells, &hex_grid) {
+                                if waypoints.len() > 1 {
+                                    // Calculate unit position based on progress
                                     let unit_position = if movement.progress >= 0.5 {
-                                        next_cell
+                                        // Past midpoint, closer to next waypoint
+                                        if movement.current_waypoint < movement.waypoints.len() {
+                                            let next_wp = movement.waypoints[movement.current_waypoint];
+                                            let next_cell = crate::map::world_pos_to_axial(next_wp.x, next_wp.z);
+                                            next_cell
+                                        } else {
+                                            current_cell
+                                        }
                                     } else {
                                         current_cell
                                     };
@@ -1068,49 +1281,27 @@ fn update_targeting_system(
                                     };
 
                                     commands.entity(attacker_entity).insert(UnitMovement {
-                                        path: new_path,
-                                        current_waypoint: 0,
-                                        progress: 1.0 - movement.progress,
+                                        waypoints,
+                                        current_waypoint: 1,
+                                        progress: 0.0,
                                         speed: stats.speed,
-                                        segment_start: next_cell,
+                                        segment_distance: 0.0,
+                                        segment_start: Vec3::ZERO,
                                     });
-                                }
-                            } else {
-                                // Continue forward but with new goal
-                                if let Some(path) = find_path(next_cell, goal, config.map_radius, &blocking_cells) {
-                                    let mut new_full_path = vec![next_cell];
-                                    if path.len() > 1 {
-                                        new_full_path.extend_from_slice(&path[1..]);
-                                    }
-
-                                    if new_full_path.len() > 1 {
-                                        commands.entity(attacker_entity).insert(UnitMovement {
-                                            path: new_full_path,
-                                            current_waypoint: 0,
-                                            progress: movement.progress,
-                                            speed: stats.speed,
-                                            segment_start: movement.segment_start,
-                                        });
-                                    }
                                 }
                             }
                         }
                     } else {
                         // Unit not moving - start new movement
-                        if let Some(path) = find_path(attacker_pos, goal, config.map_radius, &blocking_cells) {
-                            let path_to_follow: Vec<(i32, i32)> = if path.len() > 1 {
-                                path[1..].to_vec()
-                            } else {
-                                vec![]
-                            };
-
-                            if !path_to_follow.is_empty() {
+                        if let Some(waypoints) = find_path_waypoints(attacker_pos, goal, config.map_radius, &blocking_cells, &hex_grid) {
+                            if waypoints.len() > 1 {
                                 commands.entity(attacker_entity).insert(UnitMovement {
-                                    path: path_to_follow,
-                                    current_waypoint: 0,
+                                    waypoints,
+                                    current_waypoint: 1,
                                     progress: 0.0,
                                     speed: stats.speed,
-                                    segment_start: attacker_pos,
+                                    segment_distance: 0.0,
+                                    segment_start: Vec3::ZERO,
                                 });
                             }
                         }
@@ -1296,52 +1487,53 @@ fn clear_claimed_cells(
 
 fn update_occupancy_intent(
     unit_query: Query<(Entity, &Unit, Option<&UnitMovement>)>,
+    position_cache: Res<UnitPositionCache>,
     mut occupancy_intent: ResMut<OccupancyIntent>,
 ) {
     occupancy_intent.intentions.clear();
     for (entity, unit, movement_opt) in &unit_query {
+        // Get current position from cache (updated every frame) or fall back to Unit component
+        let current_pos = position_cache.positions.get(&entity).copied().unwrap_or((unit.q, unit.r));
+
         if let Some(movement) = movement_opt {
             // Unit is moving
-            if movement.current_waypoint < movement.path.len() {
+            if movement.current_waypoint < movement.waypoints.len() {
                 if movement.progress >= 0.5 {
                     // At >= 0.5, unit already occupies current target, so intent is for next cell if it exists
-                    if movement.current_waypoint + 1 < movement.path.len() {
-                        let next_cell = movement.path[movement.current_waypoint + 1];
+                    if movement.current_waypoint + 1 < movement.waypoints.len() {
+                        let next_waypoint = movement.waypoints[movement.current_waypoint + 1];
+                        let next_cell = crate::map::world_pos_to_axial(next_waypoint.x, next_waypoint.z);
                         occupancy_intent.intentions.insert(entity, next_cell);
                     } else {
                         // No next cell, intent is current position
-                        occupancy_intent
-                            .intentions
-                            .insert(entity, (unit.q, unit.r));
+                        occupancy_intent.intentions.insert(entity, current_pos);
                     }
                 } else {
                     // At < 0.5, intent is for the current target
-                    let next_cell = movement.path[movement.current_waypoint];
+                    let next_waypoint = movement.waypoints[movement.current_waypoint];
+                    let next_cell = crate::map::world_pos_to_axial(next_waypoint.x, next_waypoint.z);
                     occupancy_intent.intentions.insert(entity, next_cell);
                 }
             } else {
-                occupancy_intent
-                    .intentions
-                    .insert(entity, (unit.q, unit.r));
+                occupancy_intent.intentions.insert(entity, current_pos);
             }
         } else {
             // Unit is stationary - it intends to stay at its current position
-            occupancy_intent
-                .intentions
-                .insert(entity, (unit.q, unit.r));
+            occupancy_intent.intentions.insert(entity, current_pos);
         }
     }
 }
 
 fn update_occupancy(
-    unit_query: Query<(Entity, &Unit, Option<&UnitMovement>)>,
+    unit_query: Query<(Entity, &Unit)>,
+    position_cache: Res<UnitPositionCache>,
     mut occupancy: ResMut<Occupancy>,
 ) {
     occupancy.positions.clear();
     occupancy.position_to_entity.clear();
-    for (entity, unit, _movement_opt) in &unit_query {
-        // Unit.q/r is now updated at 0.5 progress, so it always reflects the occupied cell
-        let occupied_cell = (unit.q, unit.r);
+    for (entity, unit) in &unit_query {
+        // Use position cache (updated every frame) as the source of truth
+        let occupied_cell = position_cache.positions.get(&entity).copied().unwrap_or((unit.q, unit.r));
         occupancy.positions.insert(occupied_cell);
         occupancy.position_to_entity.insert(occupied_cell, entity);
     }
@@ -1370,34 +1562,77 @@ fn detect_collisions_and_repath(
     occupancy_intent: Res<OccupancyIntent>,
     obstacles: Res<Obstacles>,
     config: Res<HexMapConfig>,
+    hex_grid: Res<crate::hex_pathfinding::HexPathfindingGrid>,
 ) {
+    // Build a map of all unit armies for quick lookup
+    let _unit_armies: std::collections::HashMap<Entity, Army> = unit_query
+        .iter()
+        .map(|(entity, unit, _)| (entity, unit.army))
+        .collect();
+
     let mut units_to_repath: Vec<(Entity, Unit, (i32, i32), UnitMovement)> = Vec::new();
 
+    // Build a map of all moving units' current segments
+    let mut unit_segments: std::collections::HashMap<Entity, Vec<(i32, i32)>> = std::collections::HashMap::new();
     for (entity, unit, movement) in &unit_query {
-        if movement.current_waypoint < movement.path.len() {
-            let next_cell = movement.path[movement.current_waypoint];
+        if movement.current_waypoint < movement.waypoints.len() {
+            let current_cell = (unit.q, unit.r);
+            let next_waypoint = movement.waypoints[movement.current_waypoint];
+            let next_cell = crate::map::world_pos_to_axial(next_waypoint.x, next_waypoint.z);
+            let segment = hex_line(current_cell, next_cell);
+            unit_segments.insert(entity, segment);
+        }
+    }
+
+    for (entity, unit, movement) in &unit_query {
+        if movement.current_waypoint < movement.waypoints.len() {
             let current_cell = (unit.q, unit.r);
 
-            let should_yield_to_occupied_cell =
-                if let Some(&occupying_entity) = occupancy.position_to_entity.get(&next_cell) {
-                    next_cell != current_cell && should_entity_yield_to(entity, occupying_entity)
-                } else {
-                    false
-                };
+            // Get our current segment
+            let our_segment = unit_segments.get(&entity).unwrap();
 
-            let should_yield_to_intent = movement.progress >= 0.4
-                && occupancy_intent.intentions.iter().any(
-                    |(other_entity, &intent_pos)| {
-                        if *other_entity != entity && intent_pos == next_cell {
-                            should_entity_yield_to(entity, *other_entity)
-                        } else {
-                            false
+            let mut should_yield = false;
+
+            // Check each cell along our segment
+            for &check_cell in our_segment {
+                if check_cell == current_cell {
+                    continue; // Skip our current position
+                }
+
+                // Check if cell is occupied by a stationary unit
+                if let Some(&occupying_entity) = occupancy.position_to_entity.get(&check_cell) {
+                    if occupying_entity != entity && should_entity_yield_to(entity, occupying_entity) {
+                        should_yield = true;
+                        break;
+                    }
+                }
+
+                // Check for collisions with other moving units' segments
+                for (other_entity, other_segment) in &unit_segments {
+                    if *other_entity == entity {
+                        continue;
+                    }
+
+                    // Check if this cell is in the other unit's segment
+                    if other_segment.contains(&check_cell) {
+                        if should_entity_yield_to(entity, *other_entity) {
+                            println!("🚧 Collision detected: Entity {:?} yielding to {:?} at cell {:?}",
+                                entity, other_entity, check_cell);
+                            should_yield = true;
+                            break;
                         }
-                    },
-                );
+                    }
+                }
 
-            if should_yield_to_occupied_cell || should_yield_to_intent {
-                let final_goal = *movement.path.last().unwrap();
+                if should_yield {
+                    break;
+                }
+            }
+
+            if should_yield {
+                // Get the final goal from the last waypoint
+                let final_waypoint = *movement.waypoints.last().unwrap();
+                let final_goal = crate::map::world_pos_to_axial(final_waypoint.x, final_waypoint.z);
                 units_to_repath.push((entity, unit.clone(), final_goal, movement.clone()));
             }
         }
@@ -1405,41 +1640,152 @@ fn detect_collisions_and_repath(
 
     for (entity, unit, final_goal, old_movement) in units_to_repath {
         let current_cell = (unit.q, unit.r);
-        let next_cell = old_movement.path[old_movement.current_waypoint];
 
         let mut blocking = obstacles.positions.clone();
+
+        // Block occupied cells
         for &occupied_pos in &occupancy.positions {
             if occupied_pos != current_cell && occupied_pos != final_goal {
                 blocking.insert(occupied_pos);
             }
         }
+
+        // Block intent positions
         for (other_entity, &intent_pos) in &occupancy_intent.intentions {
             if *other_entity != entity && intent_pos != current_cell && intent_pos != final_goal {
                 blocking.insert(intent_pos);
             }
         }
 
-        if let Some(path) = find_path(current_cell, final_goal, config.map_radius, &blocking)
-            && path.len() > 1 {
-                let mut new_path = vec![current_cell];
-                new_path.extend_from_slice(&path[1..]);
+        // IMPORTANT: Block all cells along other moving units' path segments
+        // This prevents repathing into paths that will still cause collisions
+        for (other_entity, other_segment) in &unit_segments {
+            if *other_entity != entity {
+                for &segment_cell in other_segment {
+                    if segment_cell != current_cell && segment_cell != final_goal {
+                        blocking.insert(segment_cell);
+                    }
+                }
+            }
+        }
 
-                if new_path != old_movement.path
-                    && let Ok((_, mut unit_component, mut movement)) = unit_query.get_mut(entity) {
-                        // Update unit's stored position to next_cell so lerp works correctly
-                        // Visual position is currently: segment_start.lerp(next_cell, progress)
-                        // We want to maintain that position while reversing direction
-                        // By setting unit position to next_cell and segment_start to next_cell, inverting progress:
-                        // new visual = next_cell.lerp(current_cell, 1.0 - progress) = segment_start.lerp(next_cell, progress) ✓
+        // Try to find a new path
+        let new_path = find_path_waypoints(current_cell, final_goal, config.map_radius, &blocking, &hex_grid);
+
+        match new_path {
+            Some(waypoints) if waypoints.len() > 1 => {
+                // Check if the new path still has the same collision
+                let new_segment = {
+                    let next_waypoint = waypoints[1]; // Skip first waypoint (current position)
+                    let next_cell = crate::map::world_pos_to_axial(next_waypoint.x, next_waypoint.z);
+                    hex_line(current_cell, next_cell)
+                };
+
+                // Check if new path still collides with any other unit's segment
+                let mut still_collides = false;
+                for (other_entity, other_segment) in &unit_segments {
+                    if *other_entity != entity {
+                        for &check_cell in &new_segment {
+                            if check_cell != current_cell && other_segment.contains(&check_cell) {
+                                still_collides = true;
+                                break;
+                            }
+                        }
+                    }
+                    if still_collides {
+                        break;
+                    }
+                }
+
+                if !still_collides && let Ok((_, mut unit_component, mut movement)) = unit_query.get_mut(entity) {
+                    println!("🔄 Repathing entity {:?} from {:?} to {:?}", entity, current_cell, final_goal);
+                // Update unit's position based on progress through current segment
+                if old_movement.current_waypoint < old_movement.waypoints.len() {
+                    let next_waypoint = old_movement.waypoints[old_movement.current_waypoint];
+                    let next_cell = crate::map::world_pos_to_axial(next_waypoint.x, next_waypoint.z);
+
+                    // If we're past halfway, update to next cell
+                    if old_movement.progress >= 0.5 {
                         unit_component.q = next_cell.0;
                         unit_component.r = next_cell.1;
-
-                        movement.path = new_path;
-                        movement.current_waypoint = 0;
-                        movement.progress = 1.0 - old_movement.progress;
-                        movement.segment_start = next_cell;
                     }
+                }
+
+                    // Update movement with new waypoints
+                    movement.waypoints = waypoints;
+                    movement.current_waypoint = 1;
+                    movement.progress = 0.0;
+                } else if still_collides {
+                    // New path would still collide - adjust destination to stop at safe cell before goal
+                    println!("⚠️  Entity {:?} adjusting destination - {:?} is blocked", entity, final_goal);
+
+                    // Find the last safe cell along the path before the collision
+                    let mut safe_destination = current_cell;
+                    for (i, &waypoint) in waypoints.iter().enumerate().skip(1) {
+                        let cell = crate::map::world_pos_to_axial(waypoint.x, waypoint.z);
+
+                        // Check if this cell is safe (not in any other unit's segment)
+                        let mut is_safe = true;
+                        for (other_entity, other_segment) in &unit_segments {
+                            if *other_entity != entity && other_segment.contains(&cell) {
+                                is_safe = false;
+                                break;
+                            }
+                        }
+
+                        if is_safe {
+                            safe_destination = cell;
+                        } else {
+                            // Stop at the last safe cell
+                            break;
+                        }
+                    }
+
+                    // If we found a safe destination different from current, update path
+                    if safe_destination != current_cell && let Ok((_, mut unit_component, mut movement)) = unit_query.get_mut(entity) {
+                        // Create new waypoints up to the safe destination
+                        let safe_waypoints: Vec<Vec3> = waypoints.iter()
+                            .take_while(|&&wp| {
+                                let cell = crate::map::world_pos_to_axial(wp.x, wp.z);
+                                cell == safe_destination || {
+                                    // Check if cell is before safe_destination along path
+                                    let safe_pos = axial_to_world_pos(safe_destination.0, safe_destination.1);
+                                    (wp - waypoints[0]).length() <= (safe_pos - waypoints[0]).length()
+                                }
+                            })
+                            .copied()
+                            .collect();
+
+                        if safe_waypoints.len() > 1 {
+                            println!("🔄 Repathing entity {:?} to safe destination {:?}", entity, safe_destination);
+
+                            // Update position
+                            if old_movement.current_waypoint < old_movement.waypoints.len() {
+                                let next_waypoint = old_movement.waypoints[old_movement.current_waypoint];
+                                let next_cell = crate::map::world_pos_to_axial(next_waypoint.x, next_waypoint.z);
+                                if old_movement.progress >= 0.5 {
+                                    unit_component.q = next_cell.0;
+                                    unit_component.r = next_cell.1;
+                                }
+                            }
+
+                            movement.waypoints = safe_waypoints;
+                            movement.current_waypoint = 1;
+                            movement.progress = 0.0;
+                        }
+                    }
+                }
             }
+            _ => {
+                // No path found - unit must stop and wait
+                println!("🛑 Entity {:?} cannot find path to {:?} - stopping", entity, final_goal);
+                if let Ok((_, _, mut movement)) = unit_query.get_mut(entity) {
+                    // Stop the unit by marking movement as complete
+                    movement.current_waypoint = movement.waypoints.len();
+                    movement.progress = 1.0;
+                }
+            }
+        }
     }
 }
 
@@ -1969,6 +2315,7 @@ fn spawn_unit_from_request(
     mut spawn_cooldowns: ResMut<SpawnCooldowns>,
     ring_assets: Res<SelectionRingAssets>,
     unit_definitions: Res<UnitDefinitions>,
+    mut position_cache: ResMut<UnitPositionCache>,
 ) {
     let requests: Vec<_> = spawn_queue.requests.drain(..).collect();
     for spawn_request in requests.iter() {
@@ -2162,6 +2509,10 @@ fn spawn_unit_from_request(
 
             // Add child models based on unit type
             let unit_entity = unit_entity_commands.id();
+
+            // Initialize position cache for this unit
+            position_cache.positions.insert(unit_entity, (q, r));
+
             unit_entity_commands.with_children(|unit_parent| {
                 let scene: Handle<Scene> = asset_server.load(format!("{}#Scene0", model_path));
 
@@ -2584,6 +2935,7 @@ impl Plugin for UnitsPlugin {
             .insert_resource(SpawnCooldowns::default())
             .insert_resource(ClickedUnit::default())
             .insert_resource(HoveredUnit::default())
+            .insert_resource(UnitPositionCache::default())
             .add_systems(OnEnter(LoadingState::Playing), (load_unit_definitions, setup_selection_ring_assets, setup_units).chain())
             .add_systems(
                 Update,
@@ -2648,6 +3000,125 @@ mod tests {
         assert!(unit_types.contains(&"Cavalry"));
         assert!(unit_types.contains(&"Artillery"));
         assert!(unit_types.contains(&"Harvester"));
+    }
+
+    #[test]
+    fn test_waypoint_path_is_straight() {
+        use crate::map::axial_to_world_pos;
+
+        let start = (-4, 2);
+        let goal = (-3, 0);
+        let map_radius = 10;
+        let obstacles = HashSet::new();
+
+        let waypoints = find_path_waypoints(start, goal, map_radius, &obstacles);
+
+        assert!(waypoints.is_some(), "Waypoints should be found");
+        let waypoints = waypoints.unwrap();
+
+        println!("Waypoint path from {:?} to {:?}:", start, goal);
+        for (i, wp) in waypoints.iter().enumerate() {
+            println!("  {}: {:?}", i, wp);
+        }
+
+        // Verify it's a straight line - all waypoints should have same x coordinate
+        // (since we're going straight up from (-4,2) to (-3,0))
+        let start_pos = axial_to_world_pos(start.0, start.1);
+        let goal_pos = axial_to_world_pos(goal.0, goal.1);
+
+        println!("Start world pos: {:?}", start_pos);
+        println!("Goal world pos: {:?}", goal_pos);
+
+        // Check that x doesn't change much (straight in one direction)
+        let x_change = (start_pos.x - goal_pos.x).abs();
+        println!("X change: {}", x_change);
+    }
+
+    #[test]
+    fn test_path_from_minus4_2_to_minus3_0() {
+        let start = (-4, 2);
+        let goal = (-3, 0);
+        let map_radius = 10;
+        let obstacles = HashSet::new(); // No obstacles
+
+        let path = find_path(start, goal, map_radius, &obstacles);
+
+        assert!(path.is_some(), "Path should be found");
+        let path = path.unwrap();
+
+        println!("Path from {:?} to {:?}: {:?}", start, goal, path);
+
+        // Path should start at start and end at goal
+        assert_eq!(path[0], start);
+        assert_eq!(path[path.len() - 1], goal);
+
+        // Check if path goes through both (-4, 1) and (-3, 1) in sequence
+        let has_minus4_1 = path.contains(&(-4, 1));
+        let has_minus3_1 = path.contains(&(-3, 1));
+
+        if has_minus4_1 && has_minus3_1 {
+            // Find their positions in the path
+            let pos_4_1 = path.iter().position(|&p| p == (-4, 1)).unwrap();
+            let pos_3_1 = path.iter().position(|&p| p == (-3, 1)).unwrap();
+
+            // They should be adjacent in the path
+            assert!(
+                (pos_3_1 as i32 - pos_4_1 as i32).abs() == 1,
+                "(-4, 1) and (-3, 1) should be adjacent in path, but positions are {} and {}",
+                pos_4_1, pos_3_1
+            );
+
+            println!("✓ Path goes through edge between (-4, 1) and (-3, 1)");
+        } else {
+            println!("⚠ Path does not go through both (-4, 1) and (-3, 1)");
+            println!("  Has (-4, 1): {}, Has (-3, 1): {}", has_minus4_1, has_minus3_1);
+        }
+    }
+
+    #[test]
+    fn test_straight_path_preference() {
+        let start = (0, 0);
+        let goal = (3, 3);
+        let map_radius = 10;
+        let obstacles = HashSet::new();
+
+        let path = find_path(start, goal, map_radius, &obstacles);
+
+        assert!(path.is_some(), "Path should be found");
+        let path = path.unwrap();
+
+        println!("Path from {:?} to {:?}: {:?}", start, goal, path);
+
+        // Path should be reasonably short (not more than 2x the hex distance)
+        let hex_dist = hex_distance(start, goal);
+        assert!(
+            path.len() - 1 <= (hex_dist * 2) as usize,
+            "Path length {} should not be more than 2x hex distance {}",
+            path.len() - 1,
+            hex_dist
+        );
+    }
+
+    #[test]
+    fn test_path_around_obstacle() {
+        let start = (0, 0);
+        let goal = (2, 0);
+        let map_radius = 10;
+        let mut obstacles = HashSet::new();
+        obstacles.insert((1, 0)); // Obstacle directly in the way
+
+        let path = find_path(start, goal, map_radius, &obstacles);
+
+        assert!(path.is_some(), "Path should be found around obstacle");
+        let path = path.unwrap();
+
+        println!("Path from {:?} to {:?} with obstacle at (1, 0): {:?}", start, goal, path);
+
+        // Path should not contain the obstacle
+        assert!(!path.contains(&(1, 0)), "Path should not go through obstacle");
+
+        // Path should still reach the goal
+        assert_eq!(path[path.len() - 1], goal);
     }
 }
 

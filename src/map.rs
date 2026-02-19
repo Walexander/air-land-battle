@@ -113,7 +113,7 @@ impl Plugin for MapPlugin {
             .insert_resource(HoveredHex::default())
             .insert_resource(obstacles)
             .insert_resource(ClearColor(Color::srgb(0.53, 0.81, 0.92))) // Light sky blue
-            .add_systems(OnEnter(LoadingState::Playing), setup_hex_map)
+            .add_systems(OnEnter(LoadingState::Playing), (setup_hex_map, crate::hex_pathfinding::setup_hex_pathfinding).chain())
             .add_systems(Update, (hex_hover_system, update_outline_colors, update_launch_pad_colors, billboard_sprites, apply_crystal_materials, animate_crystal_sparkle, update_fog_of_war, update_crystal_visuals).run_if(in_state(LoadingState::Playing)));
     }
 }
@@ -123,6 +123,18 @@ pub fn axial_to_world_pos(q: i32, r: i32) -> Vec3 {
     let x = HEX_HEIGHT * (q as f32 + r as f32 * 0.5);
     let z = HEX_WIDTH * 0.75 * r as f32;
     Vec3::new(x, 0.0, z)
+}
+
+pub fn world_pos_to_axial(x: f32, z: f32) -> (i32, i32) {
+    // Inverse of axial_to_world_pos for pointy-top hex coordinates
+    // From: x = HEX_HEIGHT * (q + r * 0.5)
+    //       z = HEX_WIDTH * 0.75 * r
+    // Solve for q and r:
+    let r = z / (HEX_WIDTH * 0.75);
+    let q = (x / HEX_HEIGHT) - (r * 0.5);
+
+    // Round to nearest integer coordinates
+    (q.round() as i32, r.round() as i32)
 }
 
 fn create_hexagon_prism_mesh(height: f32) -> Mesh {
