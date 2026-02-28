@@ -2941,8 +2941,8 @@ fn setup_selection_ring_assets(
     // Main ring: 10 units wide
     let main_ring_mesh = meshes.add(create_selection_ring_mesh(90.0, 100.0));
     let main_ring_material = materials.add(StandardMaterial {
-        base_color: Color::srgba(1.0, 1.0, 1.0, 1.0),
-        emissive: LinearRgba::new(3.0, 3.0, 3.0, 1.0), // Brighter emissive
+        base_color: Color::linear_rgb(100.0, 100.0, 100.0),
+        emissive: LinearRgba::new(100.0, 100.0, 100.0, 1.0),
         unlit: true,
         alpha_mode: AlphaMode::Opaque,
         ..default()
@@ -2951,8 +2951,8 @@ fn setup_selection_ring_assets(
     // Outer ring: 5 units wide, outside main ring
     let outer_ring_mesh = meshes.add(create_selection_ring_mesh(105.0, 110.0));
     let outer_ring_material = materials.add(StandardMaterial {
-        base_color: Color::srgba(1.0, 1.0, 1.0, 1.0),
-        emissive: LinearRgba::new(3.0, 3.0, 3.0, 1.0), // Brighter emissive
+        base_color: Color::linear_rgb(100.0, 100.0, 100.0),
+        emissive: LinearRgba::new(100.0, 100.0, 100.0, 1.0),
         unlit: true,
         alpha_mode: AlphaMode::Opaque,
         ..default()
@@ -2972,8 +2972,8 @@ fn setup_selection_ring_assets(
         8
     ));
     let inner_ring_material = materials.add(StandardMaterial {
-        base_color: Color::srgba(1.0, 1.0, 1.0, 1.0),
-        emissive: LinearRgba::new(3.0, 3.0, 3.0, 1.0), // Brighter emissive
+        base_color: Color::linear_rgb(100.0, 100.0, 100.0),
+        emissive: LinearRgba::new(100.0, 100.0, 100.0, 1.0),
         unlit: true,
         alpha_mode: AlphaMode::Opaque,
         ..default()

@@ -298,14 +298,14 @@ pub fn spawn_destination_ring(
     let dest_pos = axial_to_world_pos(destination.0, destination.1);
     let hex_pos = dest_pos + Vec3::new(0.0, 2.5, 0.0);
 
-    let color = Color::srgba(1.0, 1.0, 1.0, 0.5); // White with 50% opacity
+    let color = Color::linear_rgba(100.0, 100.0, 100.0, 1.0);
     let border_color = Color::srgb(0.0, 0.0, 0.0); // Black
 
     // Use a filled hexagon
     let hex_mesh = meshes.add(create_filled_hexagon_mesh(63.0));
     let hex_material = materials.add(StandardMaterial {
         base_color: color,
-        emissive: LinearRgba::new(1.0, 1.0, 1.0, 0.5),
+        emissive: LinearRgba::new(100.0, 100.0, 100.0, 0.5),
         unlit: true,
         double_sided: true,
         cull_mode: None,
@@ -373,7 +373,7 @@ fn create_path_line_mesh(
     let destination_ring_outer_radius = 35.0;
     let line_width = 8.0;
     let line_height = 8.0;
-    let white_color = [1.0, 1.0, 1.0, 1.0];
+    let white_color = [100.0, 100.0, 100.0, 1.0];
     let dark_color = match army {
         Army::Red => [0.9, 0.2, 0.2, 1.0],
         Army::Blue => [0.2, 0.4, 0.9, 1.0],
@@ -1209,7 +1209,7 @@ fn add_outline_to_children(
                 entity_commands.insert(OutlineVolume {
                     visible: true,
                     width: 2.0,
-                    colour: Color::srgb(1.0, 1.0, 1.0), // White
+                    colour: Color::linear_rgb(100.0, 100.0, 100.0), // White (HDR)
                 });
             }
 
@@ -1496,7 +1496,7 @@ fn update_path_visualizations(
                 commands.spawn((
                     Mesh3d(meshes.add(path_mesh)),
                     MeshMaterial3d(materials.add(StandardMaterial {
-                        base_color: Color::srgba(1.0, 1.0, 1.0, 1.0),
+                        base_color: Color::linear_rgba(100.0, 100.0, 100.0, 1.0),
                         alpha_mode: AlphaMode::Blend,
                         unlit: true,
                         cull_mode: None,
