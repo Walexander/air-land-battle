@@ -37,22 +37,16 @@ pub enum HarvesterState {
     Idle,
     MovingToField,
     Harvesting,
-    MovingToBase,
 }
 
 #[derive(Component)]
 pub struct Harvester {
     pub state: HarvesterState,
     pub harvest_timer: f32,
-    pub harvest_duration: f32, // Time to fill up (10 seconds)
     pub crystals_carried: i32,
     pub crystal_accumulator: f32, // Fractional crystals accumulated
-    pub spawn_point: (i32, i32), // Base location
     pub target_field: Option<(i32, i32)>,
 }
-
-#[derive(Component)]
-struct HarvesterDepositing;
 
 // Systems
 fn harvester_ai_find_target(
@@ -246,74 +240,6 @@ fn harvester_collect_crystals(
             harvester.crystals_carried = 0;
             println!("Crystal field at ({}, {}) depleted, harvester searching for new field", unit.q, unit.r);
         }
-    }
-}
-
-// Command harvesters to return to base
-fn harvester_return_to_base(
-    mut commands: Commands,
-    mut harvester_query: Query<(Entity, &Unit, &UnitStats, &mut Harvester), Without<UnitMovement>>,
-    occupancy: Res<Occupancy>,
-    obstacles: Res<Obstacles>,
-    config: Res<HexMapConfig>,
-    hex_grid: Res<crate::hex_pathfinding::HexPathfindingGrid>,
-) {
-    for (entity, unit, stats, harvester) in &mut harvester_query {
-        if harvester.state != HarvesterState::MovingToBase {
-            continue;
-        }
-
-        let (base_q, base_r) = harvester.spawn_point;
-
-        // Check if we've arrived at base
-        if unit.q == base_q && unit.r == base_r {
-            // Deposit crystals and reset
-            commands.entity(entity).insert(HarvesterDepositing);
-            println!("Harvester arrived at base, depositing {} crystals", harvester.crystals_carried);
-            continue;
-        }
-
-        // Build blocking cells set (obstacles + occupied cells, excluding current position and goal)
-        let mut blocking_cells = obstacles.positions.clone();
-        for &occupied_pos in &occupancy.positions {
-            if occupied_pos != (unit.q, unit.r) && occupied_pos != (base_q, base_r) {
-                blocking_cells.insert(occupied_pos);
-            }
-        }
-
-        // Use world-space waypoint pathfinding
-        if let Some(waypoints) = find_path_waypoints((unit.q, unit.r), (base_q, base_r), config.map_radius, &blocking_cells, &hex_grid) {
-            if waypoints.len() > 1 {
-                commands.entity(entity).insert(UnitMovement {
-                    waypoints,
-                    current_waypoint: 1,
-                    progress: 0.0,
-                    speed: stats.speed,
-                    segment_distance: 0.0,
-                    segment_start: Vec3::ZERO,
-                });
-            }
-        }
-    }
-}
-
-// Deposit crystals and reset harvester state
-fn harvester_deposit_crystals(
-    mut commands: Commands,
-    mut harvester_query: Query<(Entity, &Army, &mut Harvester), With<HarvesterDepositing>>,
-) {
-    for (entity, army, mut harvester) in &mut harvester_query {
-        // Money was already paid during collection, just reset the harvester
-        println!("{:?} harvester returned to base with {} crystals collected",
-            army, harvester.crystals_carried);
-
-        // Reset harvester state
-        harvester.state = HarvesterState::Idle;
-        harvester.crystals_carried = 0;
-        harvester.target_field = None;
-
-        // Remove depositing marker
-        commands.entity(entity).remove::<HarvesterDepositing>();
     }
 }
 

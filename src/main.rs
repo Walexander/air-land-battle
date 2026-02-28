@@ -12,7 +12,6 @@ mod loading;
 mod ai;
 mod economy;
 mod music;
-mod hex_cube_filter;
 mod hex_pathfinding;
 
 use map::MapPlugin;

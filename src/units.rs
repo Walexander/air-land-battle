@@ -15,54 +15,6 @@ use crate::launch_pads::{GameState, GameTimer, GAME_DURATION};
 use crate::loading::LoadingState;
 use crate::Paused;
 
-// Hex Grid Pathfinding with pathfinding crate
-
-/// Hex coordinate type for pathfinding
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct HexCoord {
-    pub q: i32,
-    pub r: i32,
-}
-
-impl HexCoord {
-    pub fn new(q: i32, r: i32) -> Self {
-        Self { q, r }
-    }
-
-    pub fn to_tuple(self) -> (i32, i32) {
-        (self.q, self.r)
-    }
-
-    pub fn from_tuple(tuple: (i32, i32)) -> Self {
-        Self { q: tuple.0, r: tuple.1 }
-    }
-
-    /// Get neighbors of this hex cell
-    pub fn neighbors(&self, map_radius: i32, obstacles: &HashSet<(i32, i32)>) -> Vec<(HexCoord, i32)> {
-        // Six hex neighbors (axial coordinates)
-        const HEX_DIRECTIONS: [(i32, i32); 6] = [
-            (1, 0), (1, -1), (0, -1),
-            (-1, 0), (-1, 1), (0, 1)
-        ];
-
-        HEX_DIRECTIONS
-            .iter()
-            .map(|(dq, dr)| HexCoord::new(self.q + dq, self.r + dr))
-            .filter(|neighbor| {
-                // Check if within map bounds
-                let distance_from_origin = hex_distance((0, 0), (neighbor.q, neighbor.r));
-                if distance_from_origin > map_radius {
-                    return false;
-                }
-
-                // Check if not an obstacle
-                !obstacles.contains(&(neighbor.q, neighbor.r))
-            })
-            .map(|neighbor| (neighbor, 1)) // All moves cost 1
-            .collect()
-    }
-}
-
 // Unit definition structures loaded from RON files
 #[derive(Debug, Clone, Deserialize, Serialize, Resource)]
 pub struct UnitDefinitions {
@@ -508,41 +460,6 @@ fn hex_neighbors(pos: (i32, i32)) -> [(i32, i32); 6] {
     ]
 }
 
-// Get the two hexes adjacent to the edge between two neighboring hexes
-fn get_edge_adjacent_hexes(from: (i32, i32), to: (i32, i32)) -> Vec<(i32, i32)> {
-    let (q1, r1) = from;
-    let (q2, r2) = to;
-
-    // Calculate the direction of movement
-    let dq = q2 - q1;
-    let dr = r2 - r1;
-
-    // Get the two hexes that share this edge
-    match (dq, dr) {
-        (1, 0) => vec![(q1, r1 - 1), (q2, r2 + 1)],      // Moving right
-        (-1, 0) => vec![(q1, r1 + 1), (q2, r2 - 1)],     // Moving left
-        (0, 1) => vec![(q1 + 1, r1), (q2 - 1, r2)],      // Moving down-right
-        (0, -1) => vec![(q1 - 1, r1), (q2 + 1, r2)],     // Moving up-left
-        (1, -1) => vec![(q1 + 1, r1), (q2, r2 - 1)],     // Moving up-right
-        (-1, 1) => vec![(q1, r1 + 1), (q2 - 1, r2)],     // Moving down-left
-        _ => vec![], // Not adjacent hexes
-    }
-}
-
-// Check if moving along an edge is safe (no occupied cells on adjacent sides)
-fn is_edge_safe(from: (i32, i32), to: (i32, i32), obstacles: &HashSet<(i32, i32)>) -> bool {
-    let adjacent = get_edge_adjacent_hexes(from, to);
-
-    // Edge is safe if neither adjacent cell is occupied
-    for cell in &adjacent {
-        if obstacles.contains(cell) {
-            return false;
-        }
-    }
-
-    true
-}
-
 // A* pathfinding node
 #[derive(Clone, Eq, PartialEq)]
 struct PathNode {
@@ -572,7 +489,68 @@ impl PartialOrd for PathNode {
 }
 
 // Draw a line between two hex cells, returning all cells the line touches
+/// Standard hex line - produces a thin line touching one hex at a time.
+/// Used for pathfinding to create smooth, direct paths.
 fn hex_line(start: (i32, i32), goal: (i32, i32)) -> Vec<(i32, i32)> {
+    let (q0, r0) = start;
+    let (q1, r1) = goal;
+
+    // Convert to cube coordinates (q, r, s where q + r + s = 0)
+    let s0 = -q0 - r0;
+    let s1 = -q1 - r1;
+
+    // Calculate distance - use normal subdivision for thin line
+    let n = hex_distance(start, goal) as usize;
+
+    if n == 0 {
+        return vec![start];
+    }
+
+    let mut results = Vec::new();
+    let mut seen = HashSet::new();
+
+    // Linear interpolation in cube coordinates
+    for i in 0..=n {
+        let t = i as f32 / n as f32;
+
+        // Interpolate cube coordinates
+        let q_f = q0 as f32 * (1.0 - t) + q1 as f32 * t;
+        let r_f = r0 as f32 * (1.0 - t) + r1 as f32 * t;
+        let s_f = s0 as f32 * (1.0 - t) + s1 as f32 * t;
+
+        // Round to nearest hex using cube rounding
+        let mut q = q_f.round();
+        let mut r = r_f.round();
+        let mut s = s_f.round();
+
+        let q_diff = (q - q_f).abs();
+        let r_diff = (r - r_f).abs();
+        let s_diff = (s - s_f).abs();
+
+        // Fix rounding to maintain q + r + s = 0
+        if q_diff > r_diff && q_diff > s_diff {
+            q = -r - s;
+        } else if r_diff > s_diff {
+            r = -q - s;
+        } else {
+            s = -q - r;
+        }
+
+        let cell = (q as i32, r as i32);
+
+        // Only add if we haven't seen this cell yet
+        if !seen.contains(&cell) {
+            seen.insert(cell);
+            results.push(cell);
+        }
+    }
+
+    results
+}
+
+/// Supercover hex line - produces a thick line catching all cells the line touches.
+/// Used for line-of-sight and collision checking to ensure proper clearance.
+fn hex_line_supercover(start: (i32, i32), goal: (i32, i32)) -> Vec<(i32, i32)> {
     let (q0, r0) = start;
     let (q1, r1) = goal;
 
@@ -646,6 +624,7 @@ pub fn find_path_waypoints(
 
     // Apply path smoothing using line-of-sight optimization
     let smoothed_path = smooth_path(&path_cells, obstacles);
+    // let smoothed_path = path_cells;
 
     // Convert cell positions to world positions
     let waypoints: Vec<Vec3> = smoothed_path
@@ -691,38 +670,20 @@ fn smooth_path(path: &[(i32, i32)], obstacles: &HashSet<(i32, i32)>) -> Vec<(i32
 }
 
 /// Check if there's a clear line of sight between two hex cells (no obstacles in between).
-/// Uses a "supercover" approach - checks not just the direct line but also adjacent cells
-/// to ensure there's adequate clearance (~1 hex cell width).
+/// Uses a "supercover" approach - checks all cells the line touches for obstacles.
 fn has_line_of_sight(start: (i32, i32), goal: (i32, i32), obstacles: &HashSet<(i32, i32)>) -> bool {
     if start == goal {
         return true;
     }
 
-    // Use hex_line to get all cells along the centerline
-    let line_cells = hex_line(start, goal);
+    // Use supercover hex_line to get all cells the line touches
+    let line_cells = hex_line_supercover(start, goal);
 
-    // Check each cell along the line plus its immediate neighbors for obstacles
+    // Check each cell along the supercover line for obstacles
     for &cell in line_cells.iter() {
         if cell != start && cell != goal {
-            // Check the cell itself
             if obstacles.contains(&cell) {
                 return false;
-            }
-
-            // Check all 6 neighbors to ensure clearance (supercover line)
-            let neighbors = [
-                (cell.0 + 1, cell.1),
-                (cell.0 + 1, cell.1 - 1),
-                (cell.0, cell.1 - 1),
-                (cell.0 - 1, cell.1),
-                (cell.0 - 1, cell.1 + 1),
-                (cell.0, cell.1 + 1),
-            ];
-
-            for &neighbor in &neighbors {
-                if neighbor != start && neighbor != goal && obstacles.contains(&neighbor) {
-                    return false;
-                }
             }
         }
     }
@@ -868,10 +829,13 @@ pub fn find_closest_adjacent_cell(
 fn move_units(
     time: Res<Time>,
     mut commands: Commands,
-    _occupancy: Res<Occupancy>,
+    occupancy: Res<Occupancy>,
+    obstacles: Res<Obstacles>,
+    config: Res<HexMapConfig>,
     mut position_cache: ResMut<UnitPositionCache>,
-    mut query: Query<(Entity, &Children, &mut Transform, &mut Unit, &mut UnitMovement, &UnitStats, Option<&mut Combat>), Without<SquadMemberIndex>>,
+    mut query: Query<(Entity, &Children, &mut Transform, &mut Unit, &mut UnitMovement, &UnitStats, &Army, Option<&mut Combat>), Without<SquadMemberIndex>>,
     squad_marker_query: Query<(), With<SquadMemberIndex>>,
+    army_query: Query<&Army>,
     mut transform_query: ParamSet<(
         Query<&mut Transform, With<SquadMemberIndex>>,
         Query<&mut Transform, (Without<SquadMemberIndex>, Without<Unit>)>,
@@ -879,7 +843,7 @@ fn move_units(
 ) {
     let current_time = time.elapsed_secs();
 
-    for (entity, children, mut transform, mut unit, mut movement, stats, combat_opt) in &mut query {
+    for (entity, children, mut transform, mut unit, mut movement, stats, army, combat_opt) in &mut query {
         if movement.current_waypoint >= movement.waypoints.len() {
             // Update last_movement_time when movement ends
             if let Some(mut combat) = combat_opt {
@@ -894,6 +858,76 @@ fn move_units(
 
         // Initialize segment start and distance at the beginning of each segment
         if movement.progress == 0.0 {
+            let target_cell = crate::map::world_pos_to_axial(target_wp.x, target_wp.z);
+
+            // Check if target cell is occupied by another unit when starting new segment
+            if let Some(&occupying_entity) = occupancy.position_to_entity.get(&target_cell) {
+                if occupying_entity != entity {
+                    // Check if it's an enemy unit
+                    if let Ok(occupying_army) = army_query.get(occupying_entity) {
+                        if occupying_army != army {
+                            // Target cell is occupied by an enemy
+                            let is_final_destination = movement.current_waypoint == movement.waypoints.len() - 1;
+
+                            if is_final_destination {
+                                // Derive actual current cell from transform (not unit.q/r which
+                                // may have been pre-updated by the selection system).
+                                let current_cell = crate::map::world_pos_to_axial(transform.translation.x, transform.translation.z);
+
+                                // Build blocking set: static obstacles + occupied cells,
+                                // excluding the unit itself and the enemy's cell (used only as
+                                // a reference point for find_closest_adjacent_cell).
+                                let mut blocking = obstacles.positions.clone();
+                                for &pos in &occupancy.positions {
+                                    if pos != current_cell && pos != target_cell {
+                                        blocking.insert(pos);
+                                    }
+                                }
+
+                                // Find the closest free neighbour of the enemy cell and repath there.
+                                let adjacent = find_closest_adjacent_cell(target_cell, current_cell, &blocking);
+                                if let Some(adj_cell) = adjacent
+                                    && adj_cell != current_cell
+                                {
+                                    let dummy_grid = crate::hex_pathfinding::HexPathfindingGrid;
+                                    if let Some(waypoints) = find_path_waypoints(current_cell, adj_cell, config.map_radius, &blocking, &dummy_grid)
+                                        && waypoints.len() > 1
+                                    {
+                                        movement.waypoints = waypoints;
+                                        movement.current_waypoint = 1;
+                                        movement.progress = 0.0;
+                                        movement.segment_distance = 0.0;
+                                        movement.segment_start = Vec3::ZERO;
+                                        continue;
+                                    }
+                                }
+
+                                // Fallback: already adjacent or no path available — stop here.
+                                println!("⚠️  Unit {:?} destination ({}, {}) occupied by enemy, stopping at current cell",
+                                    entity, target_cell.0, target_cell.1);
+                                let center_pos = crate::map::axial_to_world_pos(current_cell.0, current_cell.1);
+                                transform.translation.x = center_pos.x;
+                                transform.translation.z = center_pos.z;
+                                unit.q = current_cell.0;
+                                unit.r = current_cell.1;
+
+                                if let Some(mut combat) = combat_opt {
+                                    combat.last_movement_time = current_time;
+                                }
+                                commands.entity(entity).remove::<UnitMovement>();
+                                continue;
+                            } else {
+                                // Not the destination - skip this waypoint and try the next one
+                                println!("⚠️  Unit {:?} waypoint ({}, {}) occupied by enemy, skipping to next waypoint",
+                                    entity, target_cell.0, target_cell.1);
+                                movement.current_waypoint += 1;
+                                movement.progress = 0.0;
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
             movement.segment_start = Vec3::new(transform.translation.x, 0.0, transform.translation.z);
             movement.segment_distance = movement.segment_start.distance(target_wp);
         }
@@ -1557,18 +1591,23 @@ fn should_entity_yield_to(entity_a: Entity, entity_b: Entity) -> bool {
 }
 
 fn detect_collisions_and_repath(
+    mut commands: Commands,
     mut unit_query: Query<(Entity, &mut Unit, &mut UnitMovement)>,
+    all_unit_query: Query<(Entity, &Unit), Without<UnitMovement>>,
     occupancy: Res<Occupancy>,
     occupancy_intent: Res<OccupancyIntent>,
     obstacles: Res<Obstacles>,
     config: Res<HexMapConfig>,
     hex_grid: Res<crate::hex_pathfinding::HexPathfindingGrid>,
 ) {
-    // Build a map of all unit armies for quick lookup
-    let _unit_armies: std::collections::HashMap<Entity, Army> = unit_query
+    // Build a map of all unit armies for quick lookup (moving + stationary)
+    let mut unit_armies: std::collections::HashMap<Entity, Army> = unit_query
         .iter()
         .map(|(entity, unit, _)| (entity, unit.army))
         .collect();
+    for (entity, unit) in &all_unit_query {
+        unit_armies.insert(entity, unit.army);
+    }
 
     let mut units_to_repath: Vec<(Entity, Unit, (i32, i32), UnitMovement)> = Vec::new();
 
@@ -1599,9 +1638,13 @@ fn detect_collisions_and_repath(
                     continue; // Skip our current position
                 }
 
-                // Check if cell is occupied by a stationary unit
+                // Check if cell is occupied by a stationary same-army unit
+                // (enemy units blocking a path are handled by move_units, not collision avoidance)
                 if let Some(&occupying_entity) = occupancy.position_to_entity.get(&check_cell) {
-                    if occupying_entity != entity && should_entity_yield_to(entity, occupying_entity) {
+                    if occupying_entity != entity
+                        && unit_armies.get(&occupying_entity) == Some(&unit.army)
+                        && should_entity_yield_to(entity, occupying_entity)
+                    {
                         should_yield = true;
                         break;
                     }
@@ -1643,16 +1686,16 @@ fn detect_collisions_and_repath(
 
         let mut blocking = obstacles.positions.clone();
 
-        // Block occupied cells
+        // Block occupied cells (including the goal if occupied by another unit)
         for &occupied_pos in &occupancy.positions {
-            if occupied_pos != current_cell && occupied_pos != final_goal {
+            if occupied_pos != current_cell {
                 blocking.insert(occupied_pos);
             }
         }
 
-        // Block intent positions
+        // Block intent positions (including the goal if intended by another unit)
         for (other_entity, &intent_pos) in &occupancy_intent.intentions {
-            if *other_entity != entity && intent_pos != current_cell && intent_pos != final_goal {
+            if *other_entity != entity && intent_pos != current_cell {
                 blocking.insert(intent_pos);
             }
         }
@@ -1662,7 +1705,7 @@ fn detect_collisions_and_repath(
         for (other_entity, other_segment) in &unit_segments {
             if *other_entity != entity {
                 for &segment_cell in other_segment {
-                    if segment_cell != current_cell && segment_cell != final_goal {
+                    if segment_cell != current_cell {
                         blocking.insert(segment_cell);
                     }
                 }
@@ -1721,7 +1764,7 @@ fn detect_collisions_and_repath(
 
                     // Find the last safe cell along the path before the collision
                     let mut safe_destination = current_cell;
-                    for (i, &waypoint) in waypoints.iter().enumerate().skip(1) {
+                    for (_i, &waypoint) in waypoints.iter().enumerate().skip(1) {
                         let cell = crate::map::world_pos_to_axial(waypoint.x, waypoint.z);
 
                         // Check if this cell is safe (not in any other unit's segment)
@@ -1772,6 +1815,42 @@ fn detect_collisions_and_repath(
                             movement.waypoints = safe_waypoints;
                             movement.current_waypoint = 1;
                             movement.progress = 0.0;
+                        } else {
+                            // safe_waypoints too short - try closest neighbor of blocked goal
+                            if let Some(neighbor_goal) = find_closest_adjacent_cell(final_goal, current_cell, &blocking) {
+                                if let Some(neighbor_waypoints) = find_path_waypoints(current_cell, neighbor_goal, config.map_radius, &blocking, &hex_grid) {
+                                    if neighbor_waypoints.len() > 1 {
+                                        movement.waypoints = neighbor_waypoints;
+                                        movement.current_waypoint = 1;
+                                        movement.progress = 0.0;
+                                    } else {
+                                        commands.entity(entity).remove::<UnitMovement>();
+                                    }
+                                } else {
+                                    commands.entity(entity).remove::<UnitMovement>();
+                                }
+                            } else {
+                                commands.entity(entity).remove::<UnitMovement>();
+                            }
+                        }
+                    } else if safe_destination == current_cell {
+                        // No safe cell found along path - try closest neighbor of blocked goal
+                        if let Some(neighbor_goal) = find_closest_adjacent_cell(final_goal, current_cell, &blocking) {
+                            if let Some(neighbor_waypoints) = find_path_waypoints(current_cell, neighbor_goal, config.map_radius, &blocking, &hex_grid) {
+                                if neighbor_waypoints.len() > 1 {
+                                    if let Ok((_, _, mut movement)) = unit_query.get_mut(entity) {
+                                        movement.waypoints = neighbor_waypoints;
+                                        movement.current_waypoint = 1;
+                                        movement.progress = 0.0;
+                                    }
+                                } else {
+                                    commands.entity(entity).remove::<UnitMovement>();
+                                }
+                            } else {
+                                commands.entity(entity).remove::<UnitMovement>();
+                            }
+                        } else {
+                            commands.entity(entity).remove::<UnitMovement>();
                         }
                     }
                 }
@@ -2490,14 +2569,12 @@ fn spawn_unit_from_request(
 
             // Add Harvester component if unit has harvester behavior
             let unit_def = spawn_request.unit_class.definition(&unit_definitions);
-            if let Some(harvester_behavior) = &unit_def.harvester_behavior {
+            if let Some(_harvester_behavior) = &unit_def.harvester_behavior {
                 unit_entity_commands.insert(Harvester {
                     state: HarvesterState::Idle,
                     harvest_timer: 0.0,
-                    harvest_duration: harvester_behavior.harvest_duration,
                     crystals_carried: 0,
                     crystal_accumulator: 0.0,
-                    spawn_point: (q, r),
                     target_field: None,
                 });
             }
@@ -2983,7 +3060,7 @@ impl Plugin for UnitsPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_load_unit_definitions() {
         let ron_str = std::fs::read_to_string("assets/units.ron")
@@ -2991,7 +3068,7 @@ mod tests {
         let definitions: UnitDefinitions = ron::from_str(&ron_str)
             .expect("Failed to parse units.ron");
         assert_eq!(definitions.units.len(), 4);
-        
+
         // Verify all unit types are present
         let unit_types: Vec<&str> = definitions.units.iter()
             .map(|d| d.unit_type.as_str())
@@ -3226,7 +3303,7 @@ fn validate_unit_definitions(definitions: &UnitDefinitions) -> Result<(), String
             return Err(format!("Missing definition for {}", unit_type));
         }
     }
-    
+
     // Validate value ranges
     for def in &definitions.units {
         if def.stats.max_health <= 0.0 {
@@ -3244,17 +3321,17 @@ fn validate_unit_definitions(definitions: &UnitDefinitions) -> Result<(), String
         if def.rendering.scale <= 0.0 {
             return Err(format!("{} has invalid scale: {}", def.unit_type, def.rendering.scale));
         }
-        
+
         // Validate Infantry has squad_behavior
         if def.unit_type == "Infantry" && def.squad_behavior.is_none() {
             return Err(format!("{} is missing required squad_behavior", def.unit_type));
         }
-        
+
         // Validate Harvester has harvester_behavior
         if def.unit_type == "Harvester" && def.harvester_behavior.is_none() {
             return Err(format!("{} is missing required harvester_behavior", def.unit_type));
         }
     }
-    
+
     Ok(())
 }

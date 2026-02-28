@@ -6,7 +6,6 @@ use bevy_mod_outline::OutlineVolume;
 use crate::map::{axial_to_world_pos, HexMapConfig, HoveredHex, Obstacles};
 use crate::units::{find_path_waypoints, Occupancy, OccupancyIntent, ClaimedCellsThisFrame, Unit, UnitMovement, Army, UnitStats};
 use crate::loading::LoadingState;
-use crate::Paused;
 
 // Components
 #[derive(Component)]
@@ -753,22 +752,14 @@ fn handle_unit_selection(
                                             });
                                         } else {
                                             if waypoints.len() > 1 {
-                                                let unit_position = if movement.progress >= 0.5 { next_cell } else { current_cell };
-
                                                 commands.entity(selected_entity).insert((
-                                                    Unit {
-                                                        q: unit_position.0,
-                                                        r: unit_position.1,
-                                                        _sprite_index: selected_unit._sprite_index,
-                                                        army: selected_unit.army,
-                                                    },
                                                     UnitMovement {
                                                         waypoints,
                                                         current_waypoint: 1,
-                                                        progress: 1.0 - movement.progress,
+                                                        progress: 0.0,
                                                         speed: stats.speed,
                                                         segment_distance: 0.0,
-                        segment_start: Vec3::ZERO,
+                                                        segment_start: Vec3::ZERO,
                                                     },
                                                     crate::units::Targeting {
                                                         target_entity: clicked_entity,
@@ -798,7 +789,7 @@ fn handle_unit_selection(
                                                     UnitMovement {
                                                         waypoints,
                                                         current_waypoint: 1,
-                                                        progress: movement.progress,
+                                                        progress: 0.0,
                                                         speed: stats.speed,
                                                         segment_distance: 0.0,
                         segment_start: Vec3::ZERO,
@@ -988,6 +979,30 @@ fn handle_unit_selection(
                             return; // Cannot move to cell claimed this frame
                         }
 
+                        // Check if goal is occupied or intended by a same-army unit
+                        if let Some(&occupying_entity) = occupancy.position_to_entity.get(&goal) {
+                            if occupying_entity != selected_entity {
+                                if let Ok((_, occupying_unit, _, _)) = unit_query.get(occupying_entity) {
+                                    if occupying_unit.army == selected_unit.army {
+                                        println!("⚠️  Cannot move to ({}, {}) - occupied by same-army unit", goal.0, goal.1);
+                                        return; // Don't allow moving to cell occupied by same-army unit
+                                    }
+                                }
+                            }
+                        }
+
+                        // Check if goal is intended by a same-army unit
+                        for (other_entity, &intent_pos) in &occupancy_intent.intentions {
+                            if intent_pos == goal && *other_entity != selected_entity {
+                                if let Ok((_, other_unit, _, _)) = unit_query.get(*other_entity) {
+                                    if other_unit.army == selected_unit.army {
+                                        println!("⚠️  Cannot move to ({}, {}) - intended by same-army unit", goal.0, goal.1);
+                                        return; // Don't allow moving to cell intended by same-army unit
+                                    }
+                                }
+                            }
+                        }
+
                         let mut blocking_cells = obstacles.positions.clone();
                         let unit_current_pos = (selected_unit.q, selected_unit.r);
                         // Only add occupied positions if the occupying unit is visible
@@ -1073,43 +1088,19 @@ fn handle_unit_selection(
                                 }
                             } else {
                                 // For waypoint-based movement, get the current target waypoint position
-                                let current_world_pos = crate::map::axial_to_world_pos(current_cell.0, current_cell.1);
-
                                 let waypoints_from_current =
                                     find_path_waypoints(current_cell, goal, config.map_radius, &blocking_cells, &hex_grid);
 
                                 if let Some(waypoints) = waypoints_from_current {
                                     if waypoints.len() > 1 {
-                                        // Calculate unit position based on progress
-                                        let unit_position = if movement.progress >= 0.5 {
-                                            // Past midpoint, closer to next waypoint
-                                            if movement.current_waypoint < movement.waypoints.len() {
-                                                let next_wp = movement.waypoints[movement.current_waypoint];
-                                                let next_cell = crate::map::world_pos_to_axial(next_wp.x, next_wp.z);
-                                                next_cell
-                                            } else {
-                                                current_cell
-                                            }
-                                        } else {
-                                            current_cell
-                                        };
-
-                                        commands.entity(selected_entity).insert((
-                                            Unit {
-                                                q: unit_position.0,
-                                                r: unit_position.1,
-                                                _sprite_index: selected_unit._sprite_index,
-                                                army: selected_unit.army,
-                                            },
-                                            UnitMovement {
-                                                waypoints: waypoints.clone(),
-                                                current_waypoint: 1,
-                                                progress: 0.0,
-                                                speed: stats.speed,
-                                                segment_distance: 0.0,
-                        segment_start: Vec3::ZERO,
-                                            },
-                                        ));
+                                        commands.entity(selected_entity).insert(UnitMovement {
+                                            waypoints: waypoints.clone(),
+                                            current_waypoint: 1,
+                                            progress: 0.0,
+                                            speed: stats.speed,
+                                            segment_distance: 0.0,
+                                        segment_start: Vec3::ZERO,
+                                        });
 
                                         // Note: Cell claiming is no longer applicable with waypoint-based movement
                                         claimed_cells.cells.insert(goal);
@@ -1698,10 +1689,6 @@ fn animate_inner_quarter_circles(
         // Rotate around Y axis
         transform.rotate_y(delta_rotation);
     }
-}
-
-fn not_paused(paused: Res<Paused>) -> bool {
-    !paused.0
 }
 
 impl Plugin for SelectionPlugin {
