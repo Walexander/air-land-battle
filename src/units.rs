@@ -865,65 +865,58 @@ fn move_units(
                 if occupying_entity != entity {
                     // Check if it's an enemy unit
                     if let Ok(occupying_army) = army_query.get(occupying_entity) {
-                        if occupying_army != army {
-                            // Target cell is occupied by an enemy
-                            let is_final_destination = movement.current_waypoint == movement.waypoints.len() - 1;
+                        let is_final_destination = movement.current_waypoint == movement.waypoints.len() - 1;
 
-                            if is_final_destination {
-                                // Derive actual current cell from transform (not unit.q/r which
-                                // may have been pre-updated by the selection system).
-                                let current_cell = crate::map::world_pos_to_axial(transform.translation.x, transform.translation.z);
+                        if occupying_army != army || is_final_destination {
+                            // Target cell is occupied — stop or repath.
+                            // (Enemy at any waypoint, or friendly at the final destination)
+                            let current_cell = crate::map::world_pos_to_axial(transform.translation.x, transform.translation.z);
 
-                                // Build blocking set: static obstacles + occupied cells,
-                                // excluding the unit itself and the enemy's cell (used only as
-                                // a reference point for find_closest_adjacent_cell).
-                                let mut blocking = obstacles.positions.clone();
-                                for &pos in &occupancy.positions {
-                                    if pos != current_cell && pos != target_cell {
-                                        blocking.insert(pos);
-                                    }
+                            // Build blocking set: static obstacles + occupied cells,
+                            // excluding the unit itself and the occupied cell (used as
+                            // reference point for find_closest_adjacent_cell).
+                            let mut blocking = obstacles.positions.clone();
+                            for &pos in &occupancy.positions {
+                                if pos != current_cell && pos != target_cell {
+                                    blocking.insert(pos);
                                 }
-
-                                // Find the closest free neighbour of the enemy cell and repath there.
-                                let adjacent = find_closest_adjacent_cell(target_cell, current_cell, &blocking);
-                                if let Some(adj_cell) = adjacent
-                                    && adj_cell != current_cell
-                                {
-                                    let dummy_grid = crate::hex_pathfinding::HexPathfindingGrid;
-                                    if let Some(waypoints) = find_path_waypoints(current_cell, adj_cell, config.map_radius, &blocking, &dummy_grid)
-                                        && waypoints.len() > 1
-                                    {
-                                        movement.waypoints = waypoints;
-                                        movement.current_waypoint = 1;
-                                        movement.progress = 0.0;
-                                        movement.segment_distance = 0.0;
-                                        movement.segment_start = Vec3::ZERO;
-                                        continue;
-                                    }
-                                }
-
-                                // Fallback: already adjacent or no path available — stop here.
-                                println!("⚠️  Unit {:?} destination ({}, {}) occupied by enemy, stopping at current cell",
-                                    entity, target_cell.0, target_cell.1);
-                                let center_pos = crate::map::axial_to_world_pos(current_cell.0, current_cell.1);
-                                transform.translation.x = center_pos.x;
-                                transform.translation.z = center_pos.z;
-                                unit.q = current_cell.0;
-                                unit.r = current_cell.1;
-
-                                if let Some(mut combat) = combat_opt {
-                                    combat.last_movement_time = current_time;
-                                }
-                                commands.entity(entity).remove::<UnitMovement>();
-                                continue;
-                            } else {
-                                // Not the destination - skip this waypoint and try the next one
-                                println!("⚠️  Unit {:?} waypoint ({}, {}) occupied by enemy, skipping to next waypoint",
-                                    entity, target_cell.0, target_cell.1);
-                                movement.current_waypoint += 1;
-                                movement.progress = 0.0;
-                                continue;
                             }
+
+                            // Find the closest free neighbour of the occupied cell and repath there.
+                            let adjacent = find_closest_adjacent_cell(target_cell, current_cell, &blocking);
+                            if let Some(adj_cell) = adjacent
+                                && adj_cell != current_cell
+                            {
+                                let dummy_grid = crate::hex_pathfinding::HexPathfindingGrid;
+                                if let Some(waypoints) = find_path_waypoints(current_cell, adj_cell, config.map_radius, &blocking, &dummy_grid)
+                                    && waypoints.len() > 1
+                                {
+                                    movement.waypoints = waypoints;
+                                    movement.current_waypoint = 1;
+                                    movement.progress = 0.0;
+                                    movement.segment_distance = 0.0;
+                                    movement.segment_start = Vec3::ZERO;
+                                    continue;
+                                }
+                            }
+
+                            // Fallback: already adjacent or no path available — stop here.
+                            let center_pos = crate::map::axial_to_world_pos(current_cell.0, current_cell.1);
+                            transform.translation.x = center_pos.x;
+                            transform.translation.z = center_pos.z;
+                            unit.q = current_cell.0;
+                            unit.r = current_cell.1;
+
+                            if let Some(mut combat) = combat_opt {
+                                combat.last_movement_time = current_time;
+                            }
+                            commands.entity(entity).remove::<UnitMovement>();
+                            continue;
+                        } else {
+                            // Friendly unit at an intermediate waypoint - skip to next waypoint
+                            movement.current_waypoint += 1;
+                            movement.progress = 0.0;
+                            continue;
                         }
                     }
                 }
@@ -3029,11 +3022,14 @@ impl Plugin for UnitsPlugin {
                     update_spawn_cooldowns,
                     spawn_unit_from_request,
                     update_targeting_system,
+                    update_occupancy_intent,
+                    update_occupancy,
+                    detect_collisions_and_repath,
                     move_units,
                     rotate_units_toward_enemies,
                     combat_system,
                     handle_flash_effects,
-                ).run_if(in_state(LoadingState::Playing).and(not_paused)),
+                ).chain().run_if(in_state(LoadingState::Playing).and(not_paused)),
             )
             .add_systems(
                 Update,
@@ -3045,9 +3041,7 @@ impl Plugin for UnitsPlugin {
                     handle_infantry_progressive_death,
                     fade_out_dead_infantry,
                     remove_dead_units,
-                    update_occupancy_intent,
                     update_occupancy,
-                    detect_collisions_and_repath,
                     update_unit_animations,
                     play_animation_when_loaded,
                     update_health_bars,
