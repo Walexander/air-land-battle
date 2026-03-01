@@ -4,7 +4,7 @@ use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy_mod_outline::OutlineVolume;
 
 use crate::map::{axial_to_world_pos, HexMapConfig, HoveredHex, Obstacles};
-use crate::units::{find_path_waypoints, Occupancy, OccupancyIntent, ClaimedCellsThisFrame, Unit, UnitMovement, Army, UnitStats};
+use crate::units::{find_path_waypoints, Occupancy, ClaimedCellsThisFrame, Unit, UnitMovement, Army, UnitStats};
 use crate::loading::LoadingState;
 
 // Components
@@ -296,7 +296,7 @@ pub fn spawn_destination_ring(
     _army: Army,
 ) {
     let dest_pos = axial_to_world_pos(destination.0, destination.1);
-    let hex_pos = dest_pos + Vec3::new(0.0, 2.5, 0.0);
+    let hex_pos = dest_pos + Vec3::new(0.0, 5.0, 0.0);
 
     let color = Color::linear_rgba(100.0, 100.0, 100.0, 1.0);
     let border_color = Color::srgb(0.0, 0.0, 0.0); // Black
@@ -372,7 +372,7 @@ fn create_path_line_mesh(
 
     let destination_ring_outer_radius = 35.0;
     let line_width = 8.0;
-    let line_height = 8.0;
+    let line_height = 0.0;
     let white_color = [100.0, 100.0, 100.0, 1.0];
     let dark_color = match army {
         Army::Red => [0.9, 0.2, 0.2, 1.0],
@@ -639,7 +639,6 @@ fn handle_unit_selection(
     config: Res<HexMapConfig>,
     obstacles: Res<Obstacles>,
     occupancy: Res<Occupancy>,
-    occupancy_intent: Res<OccupancyIntent>,
     hex_grid: Res<crate::hex_pathfinding::HexPathfindingGrid>,
     mut claimed_cells: ResMut<ClaimedCellsThisFrame>,
     unit_query: Query<(Entity, &Unit, Option<&UnitMovement>, &InheritedVisibility), Without<Selected>>,
@@ -705,17 +704,6 @@ fn handle_unit_selection(
                                             }
                                         } else {
                                             blocking_cells.insert(occupied_pos);
-                                        }
-                                    }
-                                }
-                                for (entity, &intent_pos) in &occupancy_intent.intentions {
-                                    if *entity != selected_entity {
-                                        if let Ok((_, _, _, visibility)) = unit_query.get(*entity) {
-                                            if visibility.get() {
-                                                blocking_cells.insert(intent_pos);
-                                            }
-                                        } else {
-                                            blocking_cells.insert(intent_pos);
                                         }
                                     }
                                 }
@@ -822,17 +810,6 @@ fn handle_unit_selection(
                                         }
                                     }
                                 }
-                                for (entity, &intent_pos) in &occupancy_intent.intentions {
-                                    if *entity != selected_entity {
-                                        if let Ok((_, _, _, visibility)) = unit_query.get(*entity) {
-                                            if visibility.get() {
-                                                blocking_cells.insert(intent_pos);
-                                            }
-                                        } else {
-                                            blocking_cells.insert(intent_pos);
-                                        }
-                                    }
-                                }
 
                                 if let Some(goal) = crate::units::find_closest_adjacent_cell(enemy_pos, start_pos, &blocking_cells) {
                                     // Check if already adjacent (goal is current position)
@@ -883,18 +860,6 @@ fn handle_unit_selection(
                                     }
                                 }
                             }
-                            for (entity, &intent_pos) in &occupancy_intent.intentions {
-                                if *entity != selected_entity {
-                                    if let Ok((_, _, _, visibility)) = unit_query.get(*entity) {
-                                        if visibility.get() {
-                                            blocking_cells.insert(intent_pos);
-                                        }
-                                    } else {
-                                        blocking_cells.insert(intent_pos);
-                                    }
-                                }
-                            }
-
                             if let Some(goal) = crate::units::find_closest_adjacent_cell(enemy_pos, start_pos, &blocking_cells) {
                                 // Check if already adjacent (goal is current position)
                                 if goal == start_pos {
@@ -947,61 +912,6 @@ fn handle_unit_selection(
                             return;
                         }
 
-                        // Check if goal is occupied by a VISIBLE unit
-                        if let Some(&occupying_entity) = occupancy.position_to_entity.get(&goal) {
-                            // Only block if the occupying unit is visible
-                            if let Ok((_, _, _, visibility)) = unit_query.get(occupying_entity) {
-                                if visibility.get() {
-                                    return; // Cannot move to cell occupied by visible unit
-                                }
-                            } else {
-                                // If we can't get visibility, assume visible and block
-                                return;
-                            }
-                        }
-
-                        // Check if another unit is already moving to this goal (only if visible)
-                        for (entity, &intent_pos) in &occupancy_intent.intentions {
-                            if *entity != selected_entity && intent_pos == goal {
-                                // Only block if the entity with intent is visible
-                                if let Ok((_, _, _, visibility)) = unit_query.get(*entity) {
-                                    if visibility.get() {
-                                        return; // Cannot move to cell already targeted by visible unit
-                                    }
-                                } else {
-                                    return; // If we can't get visibility, assume visible and block
-                                }
-                            }
-                        }
-
-                        // CRITICAL: Check if goal has been claimed by any system THIS FRAME
-                        if claimed_cells.cells.contains(&goal) {
-                            return; // Cannot move to cell claimed this frame
-                        }
-
-                        // Check if goal is occupied or intended by a same-army unit
-                        if let Some(&occupying_entity) = occupancy.position_to_entity.get(&goal) {
-                            if occupying_entity != selected_entity {
-                                if let Ok((_, occupying_unit, _, _)) = unit_query.get(occupying_entity) {
-                                    if occupying_unit.army == selected_unit.army {
-                                        println!("⚠️  Cannot move to ({}, {}) - occupied by same-army unit", goal.0, goal.1);
-                                        return; // Don't allow moving to cell occupied by same-army unit
-                                    }
-                                }
-                            }
-                        }
-
-                        // Check if goal is intended by a same-army unit
-                        for (other_entity, &intent_pos) in &occupancy_intent.intentions {
-                            if intent_pos == goal && *other_entity != selected_entity {
-                                if let Ok((_, other_unit, _, _)) = unit_query.get(*other_entity) {
-                                    if other_unit.army == selected_unit.army {
-                                        println!("⚠️  Cannot move to ({}, {}) - intended by same-army unit", goal.0, goal.1);
-                                        return; // Don't allow moving to cell intended by same-army unit
-                                    }
-                                }
-                            }
-                        }
 
                         let mut blocking_cells = obstacles.positions.clone();
                         let unit_current_pos = (selected_unit.q, selected_unit.r);
@@ -1020,19 +930,6 @@ fn handle_unit_selection(
                                 } else {
                                     // No entity at this position, still block it
                                     blocking_cells.insert(occupied_pos);
-                                }
-                            }
-                        }
-                        for (entity, &intent_pos) in &occupancy_intent.intentions {
-                            if *entity != selected_entity && intent_pos != unit_current_pos {
-                                // Check visibility for intent positions too
-                                if let Ok((_, _, _, visibility)) = unit_query.get(*entity) {
-                                    if visibility.get() {
-                                        blocking_cells.insert(intent_pos);
-                                    }
-                                } else {
-                                    // If we can't get visibility, assume visible and block
-                                    blocking_cells.insert(intent_pos);
                                 }
                             }
                         }
@@ -1502,7 +1399,7 @@ fn update_path_visualizations(
                         cull_mode: None,
                         ..default()
                     })),
-                    Transform::default(),
+                    Transform::from_xyz(0.0, 8.0, 0.0),
                     PathVisualization {
                         unit_entity,
                         animation_progress: 0.0,

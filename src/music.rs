@@ -58,22 +58,8 @@ enum TrackType {
     Intense,
 }
 
-fn setup_music(mut commands: Commands, asset_server: Res<AssetServer>) {
-    commands.spawn((
-        AudioPlayer::<AudioSource>(asset_server.load("sounds/music/track_01.ogg")),
-        PlaybackSettings::LOOP.with_volume(Volume::Linear(0.0)),
-        MusicTrack {
-            track_type: TrackType::Calm,
-            target_volume: 0.025,
-        },
-        FadingIn {
-            elapsed: 0.0,
-            duration: 5.0,
-            target_volume: 0.025,
-        },
-    ));
-
-    println!("🎵 Started background music: track_01.ogg (fading in over 5s)");
+fn setup_music(_commands: Commands, _asset_server: Res<AssetServer>) {
+    // Main music disabled
 }
 
 fn check_music_switch(
@@ -114,19 +100,8 @@ fn check_music_switch(
 
         if has_intense {
             music_state.in_danger_zone = false;
+            // Main music disabled — just fade out the intense track without crossfading to calm
             music_state.crossfade_progress = Some(CrossfadeDirection::ToCalm(0.0));
-
-            println!("🎵 Exiting danger zone - switching back to calm music");
-
-            // Spawn the calm track at volume 0
-            commands.spawn((
-                AudioPlayer::<AudioSource>(asset_server.load("sounds/music/track_01.ogg")),
-                PlaybackSettings::LOOP.with_volume(Volume::Linear(0.0)),
-                MusicTrack {
-                    track_type: TrackType::Calm,
-                    target_volume: 0.025,
-                },
-            ));
         }
     }
 }
