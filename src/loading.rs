@@ -106,6 +106,7 @@ fn check_assets_ready(
     assets_loading: Res<AssetsLoading>,
     asset_server: Res<AssetServer>,
     mut progress_bar_query: Query<&mut Node, With<LoadingProgressBar>>,
+    map_def: Option<Res<crate::map_loader::MapDefinition>>,
 ) {
     // Count loaded assets
     let loaded_count = assets_loading.handles.iter()
@@ -125,8 +126,9 @@ fn check_assets_ready(
         node.width = Val::Percent(progress);
     }
 
-    // Transition to playing when all loaded
-    if loaded_count == total_count {
+    // Transition to playing when all 3D assets loaded AND map definition is ready
+    let map_loaded = map_def.map(|m| m.loaded).unwrap_or(false);
+    if loaded_count == total_count && map_loaded {
         println!("All assets loaded! Starting game...");
         next_state.set(LoadingState::Playing);
     }

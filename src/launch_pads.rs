@@ -175,26 +175,21 @@ pub struct LaunchPadsPlugin;
 
 impl Plugin for LaunchPadsPlugin {
     fn build(&self, app: &mut App) {
-        let mut launch_pads = LaunchPads { pads: Vec::new() };
-        // Launch platform 1 (left side)
-        launch_pads
-            .pads
-            .push(vec![(-3, 3), (-3, 2), (-2, 2)]);
-        // Launch platform 2 (center)
-        launch_pads
-            .pads
-            .push(vec![(0, 2), (1, 2), (0, 3)]);
-        // Launch platform 3 (bottom right)
-        launch_pads
-            .pads
-            .push(vec![(1, -1), (1, -2), (0, -1), (0, 0)]);
-
-        app.insert_resource(launch_pads)
+        app.insert_resource(LaunchPads { pads: Vec::new() })
             .insert_resource(GameTimer::default())
             .insert_resource(GameState::default())
             .insert_resource(LaunchPadOwnership::default())
+            .add_systems(OnEnter(LoadingState::Playing), populate_launch_pads)
             .add_systems(Update, check_launch_pad_ownership.run_if(in_state(LoadingState::Playing).and(not_paused)));
     }
+}
+
+fn populate_launch_pads(
+    mut launch_pads: ResMut<LaunchPads>,
+    map_def: Res<crate::map_loader::MapDefinition>,
+) {
+    launch_pads.pads = map_def.launch_pads.clone();
+    println!("LaunchPads: loaded {} pads from map definition", launch_pads.pads.len());
 }
 
 fn not_paused(paused: Res<crate::Paused>) -> bool {

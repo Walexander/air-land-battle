@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.10" tiledversion="1.11.2" orientation="hexagonal" renderorder="right-down" width="13" height="7" tilewidth="120" tileheight="140" infinite="0" hexsidelength="70" staggeraxis="y" staggerindex="odd" nextlayerid="8" nextobjectid="62">
+ <tileset firstgid="1" source="../../../../../Downloads/kenney_hexagon-tiles/Spritesheet/hexagonAll_sheet.tsx"/>
+ <tileset firstgid="225" source="../../../../../Downloads/kenney_hexagon-tiles/Spritesheet/hexagonBuildings_sheet.tsx"/>
+ <layer id="1" name="Tile Layer 1" width="13" height="7" visible="0" locked="1">
+  <data encoding="csv">
+0,18,51,36,36,51,51,51,36,36,51,34,0,
+18,18,51,51,51,51,51,51,51,51,34,34,0,
+18,18,0,51,51,51,0,51,51,51,0,34,34,
+51,51,51,51,51,66,66,51,51,51,51,51,0,
+51,51,51,66,0,51,66,51,0,66,51,51,51,
+51,51,66,66,51,51,51,51,66,66,51,51,0,
+51,51,51,51,51,51,51,51,51,51,51,51,0
+</data>
+ </layer>
+ <objectgroup id="2" name="Bases">
+  <object id="1" template="Right Base.tx" name="Blue Base" x="1380" y="0"/>
+  <object id="3" template="Left Base.tx" name="Red Base" x="180" y="0"/>
+ </objectgroup>
+ <objectgroup id="7" name="Spawn Points">
+  <object id="60" name="Red Spawn" gid="3" x="240" y="350" width="120" height="140"/>
+  <object id="61" name="Blue Spawn" gid="19" x="1200" y="350" width="120" height="140"/>
+ </objectgroup>
+ <objectgroup id="6" name="Crystals">
+  <object id="22" gid="36" x="0" y="560" width="120" height="140"/>
+  <object id="23" gid="36" x="0" y="560" width="120" height="140"/>
+  <object id="24" gid="36" x="60" y="665" width="120" height="140"/>
+  <object id="25" gid="36" x="120" y="770" width="120" height="140"/>
+  <object id="26" gid="36" x="360" y="140" width="120" height="140"/>
+  <object id="27" gid="36" x="480" y="140" width="120" height="140"/>
+  <object id="28" gid="36" x="960" y="140" width="120" height="140"/>
+  <object id="29" gid="36" x="1080" y="140" width="120" height="140"/>
+  <object id="30" gid="1073741860" x="1320" y="770" width="120" height="140"/>
+  <object id="31" gid="1073741860" x="1380" y="665" width="120" height="140"/>
+  <object id="32" gid="1073741860" x="1440" y="560" width="120" height="140"/>
+ </objectgroup>
+ <objectgroup id="3" name="Launch Pads">
+  <object id="6" name="Right Launchpad" x="1140" y="420">
+   <polygon points="0,0 -60,35 -60,105 -120,140 -120,210 -60,245 0,210 60,245 120,210 120,140 60,105 60,35"/>
+  </object>
+  <object id="7" name="Left Launchpad" x="420" y="420">
+   <polygon points="0,0 -60,35 -60,105 -120,140 -120,210 -60,245 0,210 60,245 120,210 120,140 60,105 60,35"/>
+  </object>
+  <object id="8" name="Center LaunchPad" x="780" y="560">
+   <polygon points="0,0 -60,-35 -60,-105 -120,-140 -120,-210 -60,-245 0,-210 60,-245 120,-210 120,-140 60,-105 60,-35"/>
+  </object>
+ </objectgroup>
+ <objectgroup id="5" name="Obstacles">
+  <object id="9" name="Mountain" gid="50" x="960" y="560" width="120" height="140" visible="0"/>
+  <object id="10" name="Mountain" gid="50" x="480" y="560" width="120" height="140" visible="0"/>
+  <object id="11" name="Silo" gid="237" x="720" y="350" width="120" height="140" visible="0"/>
+  <object id="19" name="Right Boundary" x="1500" y="770">
+   <polygon points="0,0 -60,-35 -60,-105 0,-140 0,-210 60,-245 60,-315 0,-350 0,-420 60,-455 60,-525 0,-560 0,-630 -60,-665 -60,-735 0,-770 60,-735 60,-665 120,-630 120,-560 120,0 60,-35 0,0"/>
+  </object>
+  <object id="20" name="Left Boundary" x="60" y="350">
+   <polygon points="0,0 -60,-35 -60,385 0,420 60,385 60,315 0,280 0,210 -60,175 -60,105 0,70"/>
+  </object>
+  <object id="21" name="Left Boundary" x="0" y="315">
+   <polygon points="0,0 0,-280 60,-315 120,-280 120,-210 60,-175 60,-105 0,-70"/>
+  </object>
+ </objectgroup>
+</map>

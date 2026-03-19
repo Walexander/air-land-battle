@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<template>
+ <object name="Left Base">
+  <polygon points="0,0 60,35 60,105 120,140 120,210 60,245 60,315 0,350 -60,315 -120,350 -180,315 -180,245 -120,210 -120,140 -60,105 -60,35"/>
+ </object>
+</template>

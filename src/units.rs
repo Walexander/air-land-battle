@@ -2387,7 +2387,7 @@ fn spawn_unit_from_request(
     mut spawn_cooldowns: ResMut<SpawnCooldowns>,
     ring_assets: Res<SelectionRingAssets>,
     unit_definitions: Res<UnitDefinitions>,
-    mut position_cache: ResMut<UnitPositionCache>,
+    map_def: Res<crate::map_loader::MapDefinition>,
 ) {
     let requests: Vec<_> = spawn_queue.requests.drain(..).collect();
     for spawn_request in requests.iter() {
@@ -2422,40 +2422,10 @@ fn spawn_unit_from_request(
             continue;
         }
 
-        // Find available spawn location based on army
-        // Red spawns to the right of HQ at (-5, 2): (-4, 2), (-3, 2), (-2, 2)
-        // Blue spawns to the left of HQ at (3, 2): (2, 2), (1, 2), (0, 2)
-        let spawn_candidates = match spawn_request.army {
-            Army::Red => {
-                if spawn_request.unit_class == UnitClass::Harvester {
-                    vec![
-                        (-4, 2), (-3, 2), (-2, 2),
-                        (-4, 0), (-3, 1), (-4, 1), (-5, 1),
-                        (-2, 1), (-3, 0), (-2, 0),
-                    ]
-                } else {
-                    vec![
-                        (-4, 2), (-3, 2), (-2, 2),
-                        (-3, 1), (-4, 1), (-5, 1),
-                        (-2, 1), (-3, 0), (-4, 0),
-                    ]
-                }
-            },
-            Army::Blue => {
-                if spawn_request.unit_class == UnitClass::Harvester {
-                    vec![
-                        (2, 2), (1, 2), (0, 2),
-                        (4, 0), (3, 1), (4, 1), (5, 1),
-                        (2, 1), (3, 0), (2, 0),
-                    ]
-                } else {
-                    vec![
-                        (2, 2), (1, 2), (0, 2),
-                        (3, 1), (4, 1), (5, 1),
-                        (2, 1), (3, 0), (4, 0),
-                    ]
-                }
-            },
+        // Find available spawn location from loaded map definition
+        let spawn_candidates: Vec<(i32, i32)> = match spawn_request.army {
+            Army::Red => map_def.spawn_red.clone(),
+            Army::Blue => map_def.spawn_blue.clone(),
         };
 
         // Check both current occupancy AND intent (units moving toward cells)
@@ -2579,9 +2549,6 @@ fn spawn_unit_from_request(
 
             // Add child models based on unit type
             let unit_entity = unit_entity_commands.id();
-
-            // Initialize position cache for this unit
-            position_cache.positions.insert(unit_entity, (q, r));
 
             unit_entity_commands.with_children(|unit_parent| {
                 let scene: Handle<Scene> = asset_server.load(format!("{}#Scene0", model_path));

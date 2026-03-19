@@ -3,7 +3,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 
 use crate::ui::GameCamera;
-use crate::launch_pads::{LaunchPads, LaunchPadOwner, LaunchPadOwnership};
+use crate::launch_pads::{LaunchPadOwner, LaunchPadOwnership};
 use crate::selection::{create_hexagon_outline_mesh, Selected};
 use crate::units::Unit;
 use crate::loading::LoadingState;
@@ -26,6 +26,12 @@ pub struct HexTile {
 
 #[derive(Component)]
 pub struct HexOutline {}
+
+#[derive(Component)]
+pub struct DebugOutline;
+
+#[derive(Resource, Default)]
+pub struct DebugOverlay(pub bool);
 
 #[derive(Component)]
 pub struct ObstacleSprite;
@@ -89,32 +95,13 @@ pub struct MapPlugin;
 
 impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
-        // Set up obstacles
-        let mut obstacles = Obstacles::default();
-
-        // Add left edge obstacles
-        obstacles.positions.insert((-4, -2));
-        obstacles.positions.insert((-5, 0));
-        obstacles.positions.insert((-6, 2));
-
-        // Add right edge obstacles
-        obstacles.positions.insert((6, -2));
-        obstacles.positions.insert((5, 0));
-        obstacles.positions.insert((4, 2));
-
-        // Add center obstacle
-        obstacles.positions.insert((-1, 2));
-
-        // Add HQ positions (also obstacles)
-        obstacles.positions.insert((-5, 2)); // Red HQ
-        obstacles.positions.insert((3, 2));  // Blue HQ
-
         app.insert_resource(HexMapConfig { map_radius: 5 })
             .insert_resource(HoveredHex::default())
-            .insert_resource(obstacles)
+            .insert_resource(Obstacles::default())
+            .insert_resource(DebugOverlay::default())
             .insert_resource(ClearColor(Color::srgb(0.53, 0.81, 0.92))) // Light sky blue
             .add_systems(OnEnter(LoadingState::Playing), (setup_hex_map, crate::hex_pathfinding::setup_hex_pathfinding).chain())
-            .add_systems(Update, (hex_hover_system, update_outline_colors, update_launch_pad_colors, billboard_sprites, apply_crystal_materials, animate_crystal_sparkle, update_fog_of_war, update_crystal_visuals).run_if(in_state(LoadingState::Playing)));
+            .add_systems(Update, (hex_hover_system, update_outline_colors, update_launch_pad_colors, billboard_sprites, apply_crystal_materials, animate_crystal_sparkle, update_fog_of_war, update_crystal_visuals, toggle_debug_overlay).run_if(in_state(LoadingState::Playing)));
     }
 }
 
@@ -435,10 +422,11 @@ fn setup_hex_map(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
-    config: Res<HexMapConfig>,
-    obstacles: Res<Obstacles>,
-    launch_pads: Res<LaunchPads>,
+    mut obstacles: ResMut<Obstacles>,
+    map_def: Res<crate::map_loader::MapDefinition>,
 ) {
+    // Populate obstacles from the loaded map definition
+    obstacles.positions = map_def.obstacles.clone();
     // Spawn 3D camera with orthographic projection
     let mut orthographic = OrthographicProjection::default_3d();
     orthographic.scale = 0.8;
@@ -491,32 +479,23 @@ fn setup_hex_map(
         Visibility::default(),
         Name::new("HexMap"),
     )).with_children(|parent| {
-        // Iterate over a wider range to ensure we cover the square area
-        let search_radius = (config.map_radius as f32 * 1.5) as i32;
-        for q in -search_radius..=search_radius {
-            for r in -search_radius..=search_radius {
+        // Iterate only the tiles defined in the TMX tile layer.
+        let tile_map = map_def.tile_map.clone();
+        for (&(q, r), &gid) in &tile_map {
                 let world_pos = axial_to_world_pos(q, r);
-
-                // Create a square map by checking if the hex falls within square bounds
-                let map_size = HEX_HEIGHT * config.map_radius as f32;
-                if world_pos.x.abs() > map_size || world_pos.z.abs() > map_size {
-                    continue;
-                }
-
-                // Skip top and bottom rows to make room for UI
-                if world_pos.z <= -map_size + HEX_WIDTH || world_pos.z >= map_size - HEX_WIDTH {
-                    continue;
-                }
 
                 let height = prism_height;
 
                 let is_obstacle = obstacles.positions.contains(&(q, r));
 
-                // Check if this position is part of any launch platform and get its index
-                let pad_index = launch_pads.pads.iter().position(|platform| {
-                    platform.contains(&(q, r))
-                });
-                let is_launch_pad = pad_index.is_some();
+                let is_launch_pad = gid == crate::map_loader::TILE_LAUNCH_PAD;
+
+                // Check launch pad index for per-pad ownership colouring.
+                let pad_index = if is_launch_pad {
+                    map_def.launch_pads.iter().position(|platform| platform.contains(&(q, r)))
+                } else {
+                    None
+                };
 
                 // Alternate tile colors based on hex coordinates
                 let color = if is_launch_pad {
@@ -578,10 +557,10 @@ fn setup_hex_map(
                 let outline_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
 
                 if is_obstacle {
-                    // Check if this is an HQ position
-                    let red_hq_pos = (-5, 2);
-                    let blue_hq_pos = (3, 2);
-                    let is_hq = (q, r) == red_hq_pos || (q, r) == blue_hq_pos;
+                    // Check if this is an HQ position using loaded map definition
+                    let is_red_hq = map_def.hq_red == Some((q, r));
+                    let is_blue_hq = map_def.hq_blue == Some((q, r));
+                    let is_hq = is_red_hq || is_blue_hq;
 
                     if is_hq {
                         // Spawn HQ building using HexBase from JustBuildings.glb
@@ -590,7 +569,7 @@ fn setup_hex_map(
                         let hq_pos = world_pos + Vec3::new(0.0, 10.0, 0.0);
                         let hq_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
 
-                        let army = if (q, r) == red_hq_pos {
+                        let army = if is_red_hq {
                             crate::units::Army::Red
                         } else {
                             crate::units::Army::Blue
@@ -625,7 +604,7 @@ fn setup_hex_map(
                 } else if is_launch_pad {
                     // Only process this once per pad (only for the first hex in the pad)
                     let pad_idx = pad_index.unwrap();
-                    let pad_cells = &launch_pads.pads[pad_idx];
+                    let pad_cells = &map_def.launch_pads[pad_idx];
                     let is_first_cell = pad_cells.first() == Some(&(q, r));
 
                     if is_first_cell {
@@ -753,27 +732,35 @@ fn setup_hex_map(
                     ));
                 }
 
-                if is_obstacle {
-                    println!("Creating RED OBSTACLE at ({}, {})", q, r);
-                }
-                if is_launch_pad {
-                    println!("Creating BLUE LAUNCH PAD at ({}, {})", q, r);
-                }
-            }
+                // Debug outline — colour encodes tile type, hidden until F1 is pressed.
+                let debug_color = if is_obstacle {
+                    Color::srgb(0.0, 0.0, 0.0) // black for obstacles
+                } else if gid == crate::map_loader::TILE_CRYSTAL {
+                    Color::srgb(0.6, 0.0, 0.8) // purple for crystal fields
+                } else {
+                    Color::srgb(0.0, 0.8, 0.0) // green for regular tiles
+                };
+                parent.spawn((
+                    Mesh3d(hover_outline_mesh.clone()),
+                    MeshMaterial3d(materials.add(StandardMaterial {
+                        base_color: debug_color,
+                        emissive: debug_color.into(),
+                        unlit: true,
+                        double_sided: true,
+                        cull_mode: None,
+                        ..default()
+                    })),
+                    Transform::from_translation(world_pos + Vec3::new(0.0, 9.0, 0.0))
+                        .with_rotation(outline_rotation)
+                        .with_scale(Vec3::splat(0.75)),
+                    DebugOutline,
+                    Visibility::Hidden,
+                ));
+
         }
 
-        // Spawn crystal fields at specific positions
-        // 3 on each side of the battlefield, away from launch pads
-        let crystal_positions = vec![
-            // Left side (Red territory)
-            (-2, -2),
-            (-2, -3),
-            (-1, -2),
-            // Right side (Blue territory)
-            (5, -3),
-            (4, -2),
-            (3, -2),
-        ];
+        // Spawn crystal fields from loaded map definition
+        let crystal_positions = map_def.crystal_fields.clone();
 
         for (q, r) in crystal_positions {
             let world_pos = axial_to_world_pos(q, r);
@@ -830,6 +817,48 @@ fn setup_hex_map(
                     ));
                 }
             });
+        }
+
+        // Debug outlines for spawn cells — raised to y=11 to sit above tile outlines (y=9).
+        info!("debug: spawn_red={} spawn_blue={}", map_def.spawn_red.len(), map_def.spawn_blue.len());
+        let outline_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
+        for &(q, r) in &map_def.spawn_red {
+            let world_pos = axial_to_world_pos(q, r);
+            parent.spawn((
+                Mesh3d(hover_outline_mesh.clone()),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(1.0, 0.1, 0.1),
+                    emissive: Color::srgb(1.0, 0.1, 0.1).into(),
+                    unlit: true,
+                    double_sided: true,
+                    cull_mode: None,
+                    ..default()
+                })),
+                Transform::from_translation(world_pos + Vec3::new(0.0, 11.0, 0.0))
+                    .with_rotation(outline_rotation)
+                    .with_scale(Vec3::splat(0.75)),
+                DebugOutline,
+                Visibility::Hidden,
+            ));
+        }
+        for &(q, r) in &map_def.spawn_blue {
+            let world_pos = axial_to_world_pos(q, r);
+            parent.spawn((
+                Mesh3d(hover_outline_mesh.clone()),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.1, 0.3, 1.0),
+                    emissive: Color::srgb(0.1, 0.3, 1.0).into(),
+                    unlit: true,
+                    double_sided: true,
+                    cull_mode: None,
+                    ..default()
+                })),
+                Transform::from_translation(world_pos + Vec3::new(0.0, 11.0, 0.0))
+                    .with_rotation(outline_rotation)
+                    .with_scale(Vec3::splat(0.75)),
+                DebugOutline,
+                Visibility::Hidden,
+            ));
         }
     });
 }
@@ -1182,6 +1211,20 @@ fn update_crystal_visuals(
                 && visual.index >= visible_count {
                     commands.entity(entity).despawn();
                 }
+        }
+    }
+}
+
+fn toggle_debug_overlay(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut overlay: ResMut<DebugOverlay>,
+    mut query: Query<&mut Visibility, With<DebugOutline>>,
+) {
+    if keyboard.just_pressed(KeyCode::F1) {
+        overlay.0 = !overlay.0;
+        let vis = if overlay.0 { Visibility::Visible } else { Visibility::Hidden };
+        for mut v in &mut query {
+            *v = vis;
         }
     }
 }

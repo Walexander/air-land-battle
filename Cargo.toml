@@ -8,6 +8,7 @@ bevy = { version = "0.17", features = ["jpeg"] }
 bevy-inspector-egui = "0.35"
 bevy_mod_outline = { git = "https://github.com/komadori/bevy_mod_outline.git", branch = "bevy-0.17" }
 bevy_northstar = "0.5"
+tiled = "0.15"
 ndarray = "0.17"
 pathfinding = "4.14"
 rand = "0.8"
