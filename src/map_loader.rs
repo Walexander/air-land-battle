@@ -27,6 +27,10 @@ pub struct MapDefinition {
     pub spawn_blue: Vec<(i32, i32)>,
     pub launch_pads: Vec<Vec<(i32, i32)>>,
     pub crystal_fields: Vec<(i32, i32)>,
+    pub base_red_polygon: Vec<(f32, f32)>,         // game world (wx, wz) outline vertices
+    pub base_blue_polygon: Vec<(f32, f32)>,
+    pub launch_pad_polygons: Vec<Vec<(f32, f32)>>, // one per launch-pad object
+    pub boundary_polygons: Vec<Vec<(f32, f32)>>,   // filled black non-playable regions
     pub loaded: bool,
 }
 
@@ -73,6 +77,48 @@ fn load_map_data(mut map_def: ResMut<MapDefinition>) {
         Ok(map) => parse_object_layers(&map, &mut map_def),
         Err(e) => error!("map_loader: failed to load TMX objects: {e}"),
     }
+
+    // Step 3: remove tiles whose centres fall inside a boundary polygon, then
+    // re-derive crystal_fields and launch_pads from the filtered tile_map.
+    if !map_def.boundary_polygons.is_empty() {
+        let polys = map_def.boundary_polygons.clone(); // avoid split-borrow
+        map_def.tile_map.retain(|&(q, r), _| {
+            const HEX_WIDTH: f32 = 128.0;
+            const HEX_HEIGHT: f32 = HEX_WIDTH * 0.866_025_4;
+            let wx = HEX_HEIGHT * (q as f32 + r as f32 * 0.5);
+            let wz = HEX_WIDTH * 0.75 * r as f32;
+            !polys.iter().any(|poly| point_in_polygon(wx, wz, poly))
+        });
+        let pad_cells: Vec<(i32, i32)> = map_def.tile_map.iter()
+            .filter(|&(_, &g)| g == TILE_LAUNCH_PAD)
+            .map(|(&pos, _)| pos)
+            .collect();
+        map_def.launch_pads = group_connected_cells(&pad_cells);
+        map_def.crystal_fields = map_def.tile_map.iter()
+            .filter(|&(_, &g)| g == TILE_CRYSTAL)
+            .map(|(&pos, _)| pos)
+            .collect();
+        info!(
+            "map_loader: after boundary filter → {} tiles, {} launch pads, {} crystal fields",
+            map_def.tile_map.len(), map_def.launch_pads.len(), map_def.crystal_fields.len(),
+        );
+    }
+}
+
+/// Ray-cast point-in-polygon test (game world XZ coordinates).
+fn point_in_polygon(wx: f32, wz: f32, poly: &[(f32, f32)]) -> bool {
+    let n = poly.len();
+    let mut inside = false;
+    let mut j = n - 1;
+    for i in 0..n {
+        let (xi, zi) = poly[i];
+        let (xj, zj) = poly[j];
+        if ((zi > wz) != (zj > wz)) && (wx < (xj - xi) * (wz - zi) / (zj - zi) + xi) {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
 }
 
 // ---------------------------------------------------------------------------
@@ -198,9 +244,29 @@ fn parse_object_layers(map: &tiled::Map, def: &mut MapDefinition) {
                             def.hq_blue = Some(pos);
                             def.obstacles.insert(pos);
                         }
+                        "Red Base" => {
+                            if let tiled::ObjectShape::Polygon { points } = &obj.shape {
+                                def.base_red_polygon = polygon_to_world(obj.x, obj.y, points);
+                                info!("map_loader: Red Base polygon {} pts", def.base_red_polygon.len());
+                            }
+                        }
+                        "Blue Base" => {
+                            if let tiled::ObjectShape::Polygon { points } = &obj.shape {
+                                def.base_blue_polygon = polygon_to_world(obj.x, obj.y, points);
+                                info!("map_loader: Blue Base polygon {} pts", def.base_blue_polygon.len());
+                            }
+                        }
                         _ => {}
                     }
                 }
+            }
+            "Launch Pads" => {
+                for obj in obj_layer.objects() {
+                    if let tiled::ObjectShape::Polygon { points } = &obj.shape {
+                        def.launch_pad_polygons.push(polygon_to_world(obj.x, obj.y, points));
+                    }
+                }
+                info!("map_loader: {} launch pad polygons", def.launch_pad_polygons.len());
             }
             "Spawn Points" => {
                 for obj in obj_layer.objects() {
@@ -214,6 +280,14 @@ fn parse_object_layers(map: &tiled::Map, def: &mut MapDefinition) {
                         _ => {}
                     }
                 }
+            }
+            "Boundaries" => {
+                for obj in obj_layer.objects() {
+                    if let tiled::ObjectShape::Polygon { points } = &obj.shape {
+                        def.boundary_polygons.push(polygon_to_world(obj.x, obj.y, points));
+                    }
+                }
+                info!("map_loader: {} boundary polygons", def.boundary_polygons.len());
             }
             _ => {}
         }
@@ -233,6 +307,34 @@ fn parse_object_layers(map: &tiled::Map, def: &mut MapDefinition) {
 // ---------------------------------------------------------------------------
 // Coordinate helpers
 // ---------------------------------------------------------------------------
+
+/// Convert tiled polygon relative points to world XZ coords, stripping any closing duplicate.
+/// Tiled always repeats the first vertex as the last — ear-clipping requires unique vertices.
+fn polygon_to_world(obj_x: f32, obj_y: f32, points: &[(f32, f32)]) -> Vec<(f32, f32)> {
+    let mut pts: Vec<(f32, f32)> = points.iter()
+        .map(|&(dx, dy)| tiled_pixel_to_world_xz(obj_x + dx, obj_y + dy))
+        .collect();
+    if let (Some(&first), Some(&last)) = (pts.first(), pts.last()) {
+        if (first.0 - last.0).abs() < 0.01 && (first.1 - last.1).abs() < 0.01 {
+            pts.pop();
+        }
+    }
+    pts
+}
+
+/// Tiled absolute pixel position → game world (wx, wz) continuously (no rounding).
+///
+/// Derived from `tiled_to_axial` + `axial_to_world_pos`:
+///   wx = (HEX_HEIGHT / 120) * (px − 840)
+///   wz = (96 / 105) * (py − 70) − 288
+/// where 840 is the Tiled x of the center tile (col=6, row=3 odd), and
+/// 288 = 96 * 3 accounts for the r=0 centering.
+pub fn tiled_pixel_to_world_xz(px: f32, py: f32) -> (f32, f32) {
+    const HEX_HEIGHT: f32 = 128.0 * 0.866_025_4;
+    let wx = (HEX_HEIGHT / 120.0) * (px - 840.0);
+    let wz = (96.0 / 105.0) * (py - 70.0) - 288.0;
+    (wx, wz)
+}
 
 /// Tile-object bottom-left pixel → game axial (q, r).
 pub fn tile_obj_to_axial(obj_x: f32, obj_y: f32) -> (i32, i32) {

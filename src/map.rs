@@ -252,6 +252,121 @@ fn create_filled_hexagon_border_mesh() -> Mesh {
     create_filled_hexagon_mesh_with_radius(HEX_RADIUS)
 }
 
+/// Build a flat polygon outline mesh (in the XZ plane) from world-space (wx, wz) vertices.
+/// Each edge becomes a thin quad with the given `line_width`. `y` sets the height.
+fn create_polygon_outline_mesh(points: &[(f32, f32)], y: f32, line_width: f32) -> Mesh {
+    let n = points.len();
+    let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+
+    for i in 0..n {
+        let (x0, z0) = points[i];
+        let (x1, z1) = points[(i + 1) % n];
+        let dx = x1 - x0;
+        let dz = z1 - z0;
+        let len = (dx * dx + dz * dz).sqrt();
+        if len < 0.001 {
+            continue;
+        }
+        // Perpendicular to edge direction (in XZ plane)
+        let perp_x = -dz / len;
+        let perp_z =  dx / len;
+        let half = line_width * 0.5;
+        let base = positions.len() as u32;
+        positions.push([x0 + perp_x * half, y, z0 + perp_z * half]);
+        positions.push([x0 - perp_x * half, y, z0 - perp_z * half]);
+        positions.push([x1 + perp_x * half, y, z1 + perp_z * half]);
+        positions.push([x1 - perp_x * half, y, z1 - perp_z * half]);
+        for _ in 0..4 {
+            normals.push([0.0, 1.0, 0.0]);
+        }
+        indices.extend_from_slice(&[base, base+1, base+2, base+1, base+3, base+2]);
+    }
+
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_indices(Indices::U32(indices));
+    mesh
+}
+
+/// Ear-clipping triangulation for a simple (non-self-intersecting) polygon.
+/// `points` must NOT repeat the first vertex at the end.
+fn triangulate_polygon(points: &[(f32, f32)]) -> Vec<u32> {
+    let n = points.len();
+    if n < 3 { return vec![]; }
+    if n == 3 { return vec![0, 1, 2]; }
+
+    // Signed area via shoelace — positive = CCW in standard (y-up) coords.
+    let area2: f32 = (0..n)
+        .map(|i| {
+            let (x0, z0) = points[i];
+            let (x1, z1) = points[(i + 1) % n];
+            x0 * z1 - x1 * z0
+        })
+        .sum();
+    let ccw = area2 > 0.0;
+
+    let mut idx: Vec<usize> = (0..n).collect();
+    let mut tris: Vec<u32> = Vec::with_capacity((n - 2) * 3);
+    let mut guard = n * n;
+
+    'clip: while idx.len() > 3 && guard > 0 {
+        guard -= 1;
+        let m = idx.len();
+        for i in 0..m {
+            let ia = idx[(i + m - 1) % m];
+            let ib = idx[i];
+            let ic = idx[(i + 1) % m];
+            let a = points[ia]; let b = points[ib]; let c = points[ic];
+            let cross = (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0);
+            let convex = if ccw { cross > 0.0 } else { cross < 0.0 };
+            if !convex { continue; }
+            // Valid ear: no other polygon vertex lies strictly inside triangle abc.
+            if idx.iter().filter(|&&j| j != ia && j != ib && j != ic)
+                .all(|&j| !tri_contains_2d(points[j], a, b, c))
+            {
+                tris.extend_from_slice(&[ia as u32, ib as u32, ic as u32]);
+                idx.remove(i);
+                continue 'clip;
+            }
+        }
+        break; // degenerate polygon
+    }
+    if idx.len() >= 3 {
+        tris.extend_from_slice(&[idx[0] as u32, idx[1] as u32, idx[2] as u32]);
+    }
+    tris
+}
+
+/// Returns true if point `p` lies strictly inside triangle (a, b, c).
+fn tri_contains_2d(p: (f32, f32), a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> bool {
+    let cross = |o: (f32, f32), u: (f32, f32), v: (f32, f32)| -> f32 {
+        (u.0 - o.0) * (v.1 - o.1) - (u.1 - o.1) * (v.0 - o.0)
+    };
+    let d1 = cross(a, b, p);
+    let d2 = cross(b, c, p);
+    let d3 = cross(c, a, p);
+    let has_neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
+    let has_pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
+    !(has_neg && has_pos)
+}
+
+/// Build a filled polygon mesh (XZ plane) using ear-clipping triangulation.
+fn create_filled_polygon_mesh(points: &[(f32, f32)], y: f32) -> Mesh {
+    let n = points.len();
+    let positions: Vec<[f32; 3]> = points.iter().map(|&(x, z)| [x, y, z]).collect();
+    let normals: Vec<[f32; 3]> = vec![[0.0, 1.0, 0.0]; n];
+    let indices = triangulate_polygon(points);
+
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_indices(Indices::U32(indices));
+    mesh
+}
+
 fn create_launch_pad_outline_mesh(perimeter_edges: &[((i32, i32), (i32, i32))], pad_center: Vec3) -> Mesh {
     // Create a mesh from the perimeter edges
     // All positions are relative to pad_center so scaling works correctly
@@ -732,30 +847,32 @@ fn setup_hex_map(
                     ));
                 }
 
-                // Debug outline — colour encodes tile type, hidden until F1 is pressed.
+                // Debug outline — only for obstacles and crystal fields (no green on regular tiles).
                 let debug_color = if is_obstacle {
-                    Color::srgb(0.0, 0.0, 0.0) // black for obstacles
+                    Some(Color::srgb(0.0, 0.0, 0.0)) // black for obstacles
                 } else if gid == crate::map_loader::TILE_CRYSTAL {
-                    Color::srgb(0.6, 0.0, 0.8) // purple for crystal fields
+                    Some(Color::srgb(0.6, 0.0, 0.8)) // purple for crystal fields
                 } else {
-                    Color::srgb(0.0, 0.8, 0.0) // green for regular tiles
+                    None
                 };
-                parent.spawn((
-                    Mesh3d(hover_outline_mesh.clone()),
-                    MeshMaterial3d(materials.add(StandardMaterial {
-                        base_color: debug_color,
-                        emissive: debug_color.into(),
-                        unlit: true,
-                        double_sided: true,
-                        cull_mode: None,
-                        ..default()
-                    })),
-                    Transform::from_translation(world_pos + Vec3::new(0.0, 9.0, 0.0))
-                        .with_rotation(outline_rotation)
-                        .with_scale(Vec3::splat(0.75)),
-                    DebugOutline,
-                    Visibility::Hidden,
-                ));
+                if let Some(debug_color) = debug_color {
+                    parent.spawn((
+                        Mesh3d(hover_outline_mesh.clone()),
+                        MeshMaterial3d(materials.add(StandardMaterial {
+                            base_color: debug_color,
+                            emissive: debug_color.into(),
+                            unlit: true,
+                            double_sided: true,
+                            cull_mode: None,
+                            ..default()
+                        })),
+                        Transform::from_translation(world_pos + Vec3::new(0.0, 9.0, 0.0))
+                            .with_rotation(outline_rotation)
+                            .with_scale(Vec3::splat(0.75)),
+                        DebugOutline,
+                        Visibility::Hidden,
+                    ));
+                }
 
         }
 
@@ -819,6 +936,23 @@ fn setup_hex_map(
             });
         }
 
+        // Boundary filled polygons — always visible, black, cover non-playable regions.
+        for poly in &map_def.boundary_polygons {
+            let mesh = create_filled_polygon_mesh(poly, 0.5);
+            parent.spawn((
+                Mesh3d(meshes.add(mesh)),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.0, 0.0, 0.0),
+                    unlit: true,
+                    double_sided: true,
+                    cull_mode: None,
+                    ..default()
+                })),
+                Transform::default(),
+                Name::new("Boundary"),
+            ));
+        }
+
         // Debug outlines for spawn cells — raised to y=11 to sit above tile outlines (y=9).
         info!("debug: spawn_red={} spawn_blue={}", map_def.spawn_red.len(), map_def.spawn_blue.len());
         let outline_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
@@ -856,6 +990,61 @@ fn setup_hex_map(
                 Transform::from_translation(world_pos + Vec3::new(0.0, 11.0, 0.0))
                     .with_rotation(outline_rotation)
                     .with_scale(Vec3::splat(0.75)),
+                DebugOutline,
+                Visibility::Hidden,
+            ));
+        }
+
+        // Launch pad polygon outlines (black, toggled by F1 debug overlay).
+        for poly in &map_def.launch_pad_polygons {
+            let mesh = create_polygon_outline_mesh(poly, 13.0, 8.0);
+            parent.spawn((
+                Mesh3d(meshes.add(mesh)),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.0, 0.0, 0.0),
+                    emissive: Color::srgb(0.0, 0.0, 0.0).into(),
+                    unlit: true,
+                    double_sided: true,
+                    cull_mode: None,
+                    ..default()
+                })),
+                Transform::default(),
+                DebugOutline,
+                Visibility::Hidden,
+            ));
+        }
+
+        // Base polygon outlines (toggled by F1 debug overlay).
+        if !map_def.base_red_polygon.is_empty() {
+            let mesh = create_polygon_outline_mesh(&map_def.base_red_polygon, 13.0, 8.0);
+            parent.spawn((
+                Mesh3d(meshes.add(mesh)),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(1.0, 0.1, 0.1),
+                    emissive: Color::srgb(1.0, 0.1, 0.1).into(),
+                    unlit: true,
+                    double_sided: true,
+                    cull_mode: None,
+                    ..default()
+                })),
+                Transform::default(),
+                DebugOutline,
+                Visibility::Hidden,
+            ));
+        }
+        if !map_def.base_blue_polygon.is_empty() {
+            let mesh = create_polygon_outline_mesh(&map_def.base_blue_polygon, 13.0, 8.0);
+            parent.spawn((
+                Mesh3d(meshes.add(mesh)),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.1, 0.3, 1.0),
+                    emissive: Color::srgb(0.1, 0.3, 1.0).into(),
+                    unlit: true,
+                    double_sided: true,
+                    cull_mode: None,
+                    ..default()
+                })),
+                Transform::default(),
                 DebugOutline,
                 Visibility::Hidden,
             ));
