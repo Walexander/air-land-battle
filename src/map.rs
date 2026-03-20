@@ -1003,22 +1003,6 @@ fn setup_hex_map(
             });
         }
 
-        // Boundary filled polygons — always visible, black, cover non-playable regions.
-        for poly in &map_def.boundary_polygons {
-            let mesh = create_filled_polygon_mesh(poly, 0.5);
-            parent.spawn((
-                Mesh3d(meshes.add(mesh)),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::srgb(0.0, 0.0, 0.0),
-                    unlit: true,
-                    double_sided: true,
-                    cull_mode: None,
-                    ..default()
-                })),
-                Transform::default(),
-                Name::new("Boundary"),
-            ));
-        }
 
         // Debug outlines for spawn cells — raised to y=11 to sit above tile outlines (y=9).
         info!("debug: spawn_red={} spawn_blue={}", map_def.spawn_red.len(), map_def.spawn_blue.len());

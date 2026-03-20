@@ -23,7 +23,6 @@ pub struct MapDefinition {
     pub base_red_polygon: Vec<(f32, f32)>,         // game world (wx, wz) outline vertices
     pub base_blue_polygon: Vec<(f32, f32)>,
     pub launch_pad_polygons: Vec<Vec<(f32, f32)>>, // one per launch-pad object
-    pub boundary_polygons: Vec<Vec<(f32, f32)>>,   // filled black non-playable regions
     pub loaded: bool,
 }
 
@@ -45,7 +44,7 @@ impl Plugin for MapLoaderPlugin {
 // ---------------------------------------------------------------------------
 
 fn load_map_data(mut map_def: ResMut<MapDefinition>) {
-    let tmx_path = Path::new("assets/maps/Side By Side.tmx");
+    let tmx_path = Path::new("assets/maps/Side By Side By Side.tmx");
 
     // Step 1: parse tile layer directly from the CSV in the raw file.
     match std::fs::read_to_string(tmx_path) {
@@ -71,23 +70,7 @@ fn load_map_data(mut map_def: ResMut<MapDefinition>) {
         Err(e) => error!("map_loader: failed to load TMX objects: {e}"),
     }
 
-    // Step 3: remove tiles whose centres fall inside a boundary polygon.
-    if !map_def.boundary_polygons.is_empty() {
-        let polys = map_def.boundary_polygons.clone();
-        map_def.tile_map.retain(|&(q, r), _| {
-            const HEX_WIDTH: f32 = 128.0;
-            const HEX_HEIGHT: f32 = HEX_WIDTH * 0.866_025_4;
-            let wx = HEX_HEIGHT * (q as f32 + r as f32 * 0.5);
-            let wz = HEX_WIDTH * 0.75 * r as f32;
-            !polys.iter().any(|poly| point_in_polygon(wx, wz, poly))
-        });
-        // Also remove any crystal fields that fell inside a boundary polygon.
-        let live: HashSet<(i32, i32)> = map_def.tile_map.keys().cloned().collect();
-        map_def.crystal_fields.retain(|pos| live.contains(pos));
-        info!("map_loader: after boundary filter → {} tiles", map_def.tile_map.len());
-    }
-
-    // Step 4: derive launch_pads from the launch-pad polygons by enumerating all
+    // Step 3: derive launch_pads from the launch-pad polygons by enumerating all
     // hex cells in each polygon's bounding box.  Cells missing from tile_map (GID=0)
     // are synthesized as TILE_LAUNCH_PAD so they render and are walkable.
     if !map_def.launch_pad_polygons.is_empty() {
@@ -268,14 +251,6 @@ fn parse_object_layers(map: &tiled::Map, def: &mut MapDefinition) {
                     def.crystal_fields.push(tile_obj_to_axial(obj.x, obj.y));
                 }
                 info!("map_loader: {} crystal fields", def.crystal_fields.len());
-            }
-            "Boundaries" => {
-                for obj in obj_layer.objects() {
-                    if let tiled::ObjectShape::Polygon { points } = &obj.shape {
-                        def.boundary_polygons.push(polygon_to_world(obj.x, obj.y, points));
-                    }
-                }
-                info!("map_loader: {} boundary polygons", def.boundary_polygons.len());
             }
             _ => {}
         }
