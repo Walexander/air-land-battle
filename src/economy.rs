@@ -147,7 +147,7 @@ fn harvester_move_to_field(
             }
 
             // Use world-space waypoint pathfinding
-            if let Some(waypoints) = find_path_waypoints((unit.q, unit.r), (target_q, target_r), config.map_radius, &blocking_cells, &hex_grid) {
+            if let Some(waypoints) = find_path_waypoints((unit.q, unit.r), (target_q, target_r), &config.valid_cells, &blocking_cells, &hex_grid) {
                 if waypoints.len() > 1 {
                     commands.entity(entity).insert(UnitMovement {
                         waypoints,

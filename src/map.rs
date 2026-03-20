@@ -74,9 +74,9 @@ struct CrystalVisual {
 }
 
 // Resources
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub struct HexMapConfig {
-    pub map_radius: i32,
+    pub valid_cells: std::collections::HashSet<(i32, i32)>,
 }
 
 #[derive(Resource, Default)]
@@ -95,7 +95,7 @@ pub struct MapPlugin;
 
 impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(HexMapConfig { map_radius: 5 })
+        app.insert_resource(HexMapConfig::default())
             .insert_resource(HoveredHex::default())
             .insert_resource(Obstacles::default())
             .insert_resource(DebugOverlay::default())
@@ -538,10 +538,15 @@ fn setup_hex_map(
     mut materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
     mut obstacles: ResMut<Obstacles>,
+    mut map_config: ResMut<HexMapConfig>,
     map_def: Res<crate::map_loader::MapDefinition>,
 ) {
     // Populate obstacles from the loaded map definition
     obstacles.positions = map_def.obstacles.clone();
+    // Build valid_cells from all rendered tiles (tile_map + launch_pad_cells).
+    map_config.valid_cells = map_def.tile_map.keys().cloned()
+        .chain(map_def.launch_pad_cells.iter().cloned())
+        .collect();
     // Spawn 3D camera with orthographic projection
     let mut orthographic = OrthographicProjection::default_3d();
     orthographic.scale = 0.8;

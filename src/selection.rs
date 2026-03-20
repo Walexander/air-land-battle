@@ -713,10 +713,10 @@ fn handle_unit_selection(
                                 let goal_from_next = crate::units::find_closest_adjacent_cell(enemy_pos, next_cell, &blocking_cells);
 
                                 let waypoints_from_current = goal_from_current.and_then(|goal|
-                                    crate::units::find_path_waypoints(current_cell, goal, config.map_radius, &blocking_cells, &hex_grid)
+                                    crate::units::find_path_waypoints(current_cell, goal, &config.valid_cells, &blocking_cells, &hex_grid)
                                 );
                                 let waypoints_from_next = goal_from_next.and_then(|goal|
-                                    crate::units::find_path_waypoints(next_cell, goal, config.map_radius, &blocking_cells, &hex_grid)
+                                    crate::units::find_path_waypoints(next_cell, goal, &config.valid_cells, &blocking_cells, &hex_grid)
                                 );
 
                                 let should_reverse = match (&waypoints_from_current, &waypoints_from_next) {
@@ -821,7 +821,7 @@ fn handle_unit_selection(
                                             repathing_cooldown: 0.5,
                                             last_repath_time: 0.0,
                                         });
-                                    } else if let Some(waypoints) = crate::units::find_path_waypoints(start_pos, goal, config.map_radius, &blocking_cells, &hex_grid) {
+                                    } else if let Some(waypoints) = crate::units::find_path_waypoints(start_pos, goal, &config.valid_cells, &blocking_cells, &hex_grid) {
                                         if waypoints.len() > 1 {
                                             commands.entity(selected_entity).insert((
                                                 UnitMovement {
@@ -870,7 +870,7 @@ fn handle_unit_selection(
                                         repathing_cooldown: 0.5,
                                         last_repath_time: 0.0,
                                     });
-                                } else if let Some(waypoints) = crate::units::find_path_waypoints(start_pos, goal, config.map_radius, &blocking_cells, &hex_grid) {
+                                } else if let Some(waypoints) = crate::units::find_path_waypoints(start_pos, goal, &config.valid_cells, &blocking_cells, &hex_grid) {
                                     if waypoints.len() > 1 {
                                         commands.entity(selected_entity).insert((
                                             UnitMovement {
@@ -954,7 +954,7 @@ fn handle_unit_selection(
                             if movement.current_waypoint >= movement.waypoints.len() {
                                 // Path is complete, treat as if unit has no movement
                                 if let Some(waypoints) =
-                                    find_path_waypoints(current_cell, goal, config.map_radius, &blocking_cells, &hex_grid)
+                                    find_path_waypoints(current_cell, goal, &config.valid_cells, &blocking_cells, &hex_grid)
                                 {
                                     if waypoints.len() > 1 {
                                         println!(
@@ -986,7 +986,7 @@ fn handle_unit_selection(
                             } else {
                                 // For waypoint-based movement, get the current target waypoint position
                                 let waypoints_from_current =
-                                    find_path_waypoints(current_cell, goal, config.map_radius, &blocking_cells, &hex_grid);
+                                    find_path_waypoints(current_cell, goal, &config.valid_cells, &blocking_cells, &hex_grid);
 
                                 if let Some(waypoints) = waypoints_from_current {
                                     if waypoints.len() > 1 {
@@ -1016,7 +1016,7 @@ fn handle_unit_selection(
                         } else {
                             let start = (selected_unit.q, selected_unit.r);
                             if let Some(waypoints) =
-                                find_path_waypoints(start, goal, config.map_radius, &blocking_cells, &hex_grid)
+                                find_path_waypoints(start, goal, &config.valid_cells, &blocking_cells, &hex_grid)
                             {
                                 if waypoints.len() > 1 {
                                     println!(

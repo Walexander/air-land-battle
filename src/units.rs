@@ -611,12 +611,12 @@ fn hex_line_supercover(start: (i32, i32), goal: (i32, i32)) -> Vec<(i32, i32)> {
 pub fn find_path_waypoints(
     start: (i32, i32),
     goal: (i32, i32),
-    map_radius: i32,
+    valid_cells: &HashSet<(i32, i32)>,
     obstacles: &HashSet<(i32, i32)>,
     _hex_grid: &crate::hex_pathfinding::HexPathfindingGrid,
 ) -> Option<Vec<Vec3>> {
     // Get A* path
-    let path_cells = find_path(start, goal, map_radius, obstacles)?;
+    let path_cells = find_path(start, goal, valid_cells, obstacles)?;
 
     if path_cells.is_empty() {
         return None;
@@ -695,7 +695,7 @@ fn has_line_of_sight(start: (i32, i32), goal: (i32, i32), obstacles: &HashSet<(i
 pub fn find_path(
     start: (i32, i32),
     goal: (i32, i32),
-    map_radius: i32,
+    valid_cells: &HashSet<(i32, i32)>,
     obstacles: &HashSet<(i32, i32)>,
 ) -> Option<Vec<(i32, i32)>> {
     // Get the straight line between start and goal
@@ -719,11 +719,9 @@ pub fn find_path(
             let next = line[current_idx + 1];
 
             // Check if next cell is valid
-            let (q, r) = next;
-            let out_of_bounds = q.abs() > map_radius || r.abs() > map_radius || (q + r).abs() > map_radius;
             let is_blocked = obstacles.contains(&next) && next != goal;
 
-            if !out_of_bounds && !is_blocked {
+            if valid_cells.contains(&next) && !is_blocked {
                 // Can continue along line
                 current_idx += 1;
                 continue;
@@ -732,7 +730,7 @@ pub fn find_path(
 
         // Can't continue on line - need to path around
         // Use A* from current position to goal
-        return path_around_obstacle(current, goal, map_radius, obstacles, path);
+        return path_around_obstacle(current, goal, valid_cells, obstacles, path);
     }
 
     Some(path)
@@ -742,7 +740,7 @@ pub fn find_path(
 fn path_around_obstacle(
     start: (i32, i32),
     goal: (i32, i32),
-    map_radius: i32,
+    valid_cells: &HashSet<(i32, i32)>,
     obstacles: &HashSet<(i32, i32)>,
     mut existing_path: Vec<(i32, i32)>,
 ) -> Option<Vec<(i32, i32)>> {
@@ -780,7 +778,7 @@ fn path_around_obstacle(
         for neighbor in hex_neighbors(current) {
             let (q, r) = neighbor;
 
-            if q.abs() > map_radius || r.abs() > map_radius || (q + r).abs() > map_radius {
+            if !valid_cells.contains(&neighbor) {
                 continue;
             }
 
@@ -888,7 +886,7 @@ fn move_units(
                                 && adj_cell != current_cell
                             {
                                 let dummy_grid = crate::hex_pathfinding::HexPathfindingGrid;
-                                if let Some(waypoints) = find_path_waypoints(current_cell, adj_cell, config.map_radius, &blocking, &dummy_grid)
+                                if let Some(waypoints) = find_path_waypoints(current_cell, adj_cell, &config.valid_cells, &blocking, &dummy_grid)
                                     && waypoints.len() > 1
                                 {
                                     movement.waypoints = waypoints;
@@ -1284,7 +1282,7 @@ fn update_targeting_system(
                             let current_cell = (attacker_unit.q, attacker_unit.r);
 
                             // Get waypoints from current position to goal
-                            if let Some(waypoints) = find_path_waypoints(current_cell, goal, config.map_radius, &blocking_cells, &hex_grid) {
+                            if let Some(waypoints) = find_path_waypoints(current_cell, goal, &config.valid_cells, &blocking_cells, &hex_grid) {
                                 if waypoints.len() > 1 {
                                     // Calculate unit position based on progress
                                     let unit_position = if movement.progress >= 0.5 {
@@ -1320,7 +1318,7 @@ fn update_targeting_system(
                         }
                     } else {
                         // Unit not moving - start new movement
-                        if let Some(waypoints) = find_path_waypoints(attacker_pos, goal, config.map_radius, &blocking_cells, &hex_grid) {
+                        if let Some(waypoints) = find_path_waypoints(attacker_pos, goal, &config.valid_cells, &blocking_cells, &hex_grid) {
                             if waypoints.len() > 1 {
                                 commands.entity(attacker_entity).insert(UnitMovement {
                                     waypoints,
@@ -1706,7 +1704,7 @@ fn detect_collisions_and_repath(
         }
 
         // Try to find a new path
-        let new_path = find_path_waypoints(current_cell, final_goal, config.map_radius, &blocking, &hex_grid);
+        let new_path = find_path_waypoints(current_cell, final_goal, &config.valid_cells, &blocking, &hex_grid);
 
         match new_path {
             Some(waypoints) if waypoints.len() > 1 => {
@@ -1811,7 +1809,7 @@ fn detect_collisions_and_repath(
                         } else {
                             // safe_waypoints too short - try closest neighbor of blocked goal
                             if let Some(neighbor_goal) = find_closest_adjacent_cell(final_goal, current_cell, &blocking) {
-                                if let Some(neighbor_waypoints) = find_path_waypoints(current_cell, neighbor_goal, config.map_radius, &blocking, &hex_grid) {
+                                if let Some(neighbor_waypoints) = find_path_waypoints(current_cell, neighbor_goal, &config.valid_cells, &blocking, &hex_grid) {
                                     if neighbor_waypoints.len() > 1 {
                                         movement.waypoints = neighbor_waypoints;
                                         movement.current_waypoint = 1;
@@ -1829,7 +1827,7 @@ fn detect_collisions_and_repath(
                     } else if safe_destination == current_cell {
                         // No safe cell found along path - try closest neighbor of blocked goal
                         if let Some(neighbor_goal) = find_closest_adjacent_cell(final_goal, current_cell, &blocking) {
-                            if let Some(neighbor_waypoints) = find_path_waypoints(current_cell, neighbor_goal, config.map_radius, &blocking, &hex_grid) {
+                            if let Some(neighbor_waypoints) = find_path_waypoints(current_cell, neighbor_goal, &config.valid_cells, &blocking, &hex_grid) {
                                 if neighbor_waypoints.len() > 1 {
                                     if let Ok((_, _, mut movement)) = unit_query.get_mut(entity) {
                                         movement.waypoints = neighbor_waypoints;
@@ -3046,10 +3044,10 @@ mod tests {
 
         let start = (-4, 2);
         let goal = (-3, 0);
-        let map_radius = 10;
+        let valid_cells: HashSet<(i32,i32)> = (-15..=15).flat_map(|q| (-15i32..=15).map(move |r| (q,r))).collect();
         let obstacles = HashSet::new();
 
-        let waypoints = find_path_waypoints(start, goal, map_radius, &obstacles);
+        let waypoints = find_path_waypoints(start, goal, &valid_cells, &obstacles);
 
         assert!(waypoints.is_some(), "Waypoints should be found");
         let waypoints = waypoints.unwrap();
@@ -3076,10 +3074,10 @@ mod tests {
     fn test_path_from_minus4_2_to_minus3_0() {
         let start = (-4, 2);
         let goal = (-3, 0);
-        let map_radius = 10;
+        let valid_cells: HashSet<(i32,i32)> = (-15..=15).flat_map(|q| (-15i32..=15).map(move |r| (q,r))).collect();
         let obstacles = HashSet::new(); // No obstacles
 
-        let path = find_path(start, goal, map_radius, &obstacles);
+        let path = find_path(start, goal, &valid_cells, &obstacles);
 
         assert!(path.is_some(), "Path should be found");
         let path = path.unwrap();
@@ -3117,10 +3115,10 @@ mod tests {
     fn test_straight_path_preference() {
         let start = (0, 0);
         let goal = (3, 3);
-        let map_radius = 10;
+        let valid_cells: HashSet<(i32,i32)> = (-15..=15).flat_map(|q| (-15i32..=15).map(move |r| (q,r))).collect();
         let obstacles = HashSet::new();
 
-        let path = find_path(start, goal, map_radius, &obstacles);
+        let path = find_path(start, goal, &valid_cells, &obstacles);
 
         assert!(path.is_some(), "Path should be found");
         let path = path.unwrap();
@@ -3141,11 +3139,11 @@ mod tests {
     fn test_path_around_obstacle() {
         let start = (0, 0);
         let goal = (2, 0);
-        let map_radius = 10;
+        let valid_cells: HashSet<(i32,i32)> = (-15..=15).flat_map(|q| (-15i32..=15).map(move |r| (q,r))).collect();
         let mut obstacles = HashSet::new();
         obstacles.insert((1, 0)); // Obstacle directly in the way
 
-        let path = find_path(start, goal, map_radius, &obstacles);
+        let path = find_path(start, goal, &valid_cells, &obstacles);
 
         assert!(path.is_some(), "Path should be found around obstacle");
         let path = path.unwrap();

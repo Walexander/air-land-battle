@@ -484,7 +484,7 @@ fn ai_command_units(
 
         // Command unit to move to target
         if let Some(target_pos) = target {
-            if let Some(waypoints) = find_path_waypoints(unit_pos, target_pos, map_config.map_radius, &blocking_cells, &hex_grid)
+            if let Some(waypoints) = find_path_waypoints(unit_pos, target_pos, &map_config.valid_cells, &blocking_cells, &hex_grid)
                 && waypoints.len() > 1 {
                     commands.entity(entity).insert(UnitMovement {
                         waypoints: waypoints.clone(),

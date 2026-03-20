@@ -21,7 +21,7 @@ pub fn setup_hex_pathfinding(
     mut commands: Commands,
     config: Res<HexMapConfig>,
 ) {
-    let grid = HexPathfindingGrid::new(config.map_radius);
+    let grid = HexPathfindingGrid::new(0);
     commands.insert_resource(grid);
     info!("✓ Hex pathfinding grid initialized");
 }
