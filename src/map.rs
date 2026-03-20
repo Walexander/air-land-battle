@@ -1259,11 +1259,23 @@ fn update_fog_of_war(
     mut visibility_query: Query<&mut Visibility>,
     fog_query: Query<(Entity, &FogOfWar)>,
     health_bar_query: Query<(&crate::units::HealthBar, Entity)>,
+    map_def: Res<crate::map_loader::MapDefinition>,
 ) {
     use std::collections::HashSet;
 
     // Collect all visible hex positions (within 2 hexes of any Red unit, 3 hexes of Red HQs)
     let mut visible_hexes: HashSet<(i32, i32)> = HashSet::new();
+
+    // Always reveal 2-tile radius around Red spawn points so the map isn't dark at start.
+    for &(sq, sr) in &map_def.spawn_red {
+        for dq in -2i32..=2i32 {
+            for dr in -2i32..=2i32 {
+                if dq.abs().max(dr.abs()).max((-dq - dr).abs()) <= 2 {
+                    visible_hexes.insert((sq + dq, sr + dr));
+                }
+            }
+        }
+    }
 
     for (_, unit) in &unit_query {
         // Only Red (player) units reveal fog
