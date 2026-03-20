@@ -594,8 +594,12 @@ fn setup_hex_map(
         Visibility::default(),
         Name::new("HexMap"),
     )).with_children(|parent| {
-        // Iterate only the tiles defined in the TMX tile layer.
-        let tile_map = map_def.tile_map.clone();
+        // Iterate all tiles in the TMX tile layer, plus any launch-pad cells that
+        // weren't present in the tile layer (polygon-derived, GID=0 in the CSV).
+        let mut tile_map = map_def.tile_map.clone();
+        for &cell in &map_def.launch_pad_cells {
+            tile_map.entry(cell).or_insert(0);
+        }
         for (&(q, r), &gid) in &tile_map {
                 let world_pos = axial_to_world_pos(q, r);
 
@@ -603,14 +607,10 @@ fn setup_hex_map(
 
                 let is_obstacle = obstacles.positions.contains(&(q, r));
 
-                let is_launch_pad = gid == crate::map_loader::TILE_LAUNCH_PAD;
-
-                // Check launch pad index for per-pad ownership colouring.
-                let pad_index = if is_launch_pad {
-                    map_def.launch_pads.iter().position(|platform| platform.contains(&(q, r)))
-                } else {
-                    None
-                };
+                // A tile belongs to a launch pad if the polygon step assigned it to a group,
+                // regardless of its GID (the polygon is authoritative).
+                let pad_index = map_def.launch_pads.iter().position(|platform| platform.contains(&(q, r)));
+                let is_launch_pad = pad_index.is_some();
 
                 // Alternate tile colors based on hex coordinates
                 let color = if is_launch_pad {
@@ -850,7 +850,7 @@ fn setup_hex_map(
                 // Debug outline — only for obstacles and crystal fields (no green on regular tiles).
                 let debug_color = if is_obstacle {
                     Some(Color::srgb(0.0, 0.0, 0.0)) // black for obstacles
-                } else if gid == crate::map_loader::TILE_CRYSTAL {
+                } else if map_def.crystal_fields.contains(&(q, r)) {
                     Some(Color::srgb(0.6, 0.0, 0.8)) // purple for crystal fields
                 } else {
                     None
@@ -874,6 +874,68 @@ fn setup_hex_map(
                     ));
                 }
 
+        }
+
+        // Spawn obstacle tiles — their positions have GID=0 in the tile layer so they
+        // never appear in the tile_map loop; we handle them here instead.
+        let obstacle_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
+        for &(q, r) in &map_def.obstacles {
+            let world_pos = axial_to_world_pos(q, r);
+
+            // Backing hex tile (dark grey, same visual language as obstacles)
+            parent.spawn((
+                Mesh3d(filled_hex_mesh.clone()),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.25, 0.22, 0.20),
+                    emissive: Color::srgb(0.05, 0.04, 0.04).into(),
+                    unlit: true,
+                    double_sided: true,
+                    cull_mode: None,
+                    ..default()
+                })),
+                Transform::from_translation(world_pos + Vec3::new(0.0, 0.5, 0.0))
+                    .with_rotation(obstacle_rotation),
+            ));
+
+            // Mountain/obstacle model
+            let is_red_hq = map_def.hq_red == Some((q, r));
+            let is_blue_hq = map_def.hq_blue == Some((q, r));
+            if is_red_hq || is_blue_hq {
+                let hq_model: Handle<Scene> = asset_server.load("JustBuildings.glb#Scene0");
+                let army = if is_red_hq { crate::units::Army::Red } else { crate::units::Army::Blue };
+                parent.spawn((
+                    SceneRoot(hq_model),
+                    Transform::from_translation(world_pos + Vec3::new(0.0, 10.0, 0.0))
+                        .with_rotation(Quat::from_rotation_y(std::f32::consts::PI / 2.0))
+                        .with_scale(Vec3::splat(24.0)),
+                    HQ { army, q, r },
+                ));
+            } else {
+                parent.spawn((
+                    SceneRoot(mountain_model.clone()),
+                    Transform::from_translation(world_pos + Vec3::new(0.0, 10.0, 12.0))
+                        .with_rotation(Quat::from_rotation_y(std::f32::consts::PI / 2.0))
+                        .with_scale(Vec3::splat(21.25)),
+                ));
+            }
+
+            // Debug outline (black, same as tile-loop obstacles)
+            parent.spawn((
+                Mesh3d(hover_outline_mesh.clone()),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.0, 0.0, 0.0),
+                    emissive: Color::srgb(0.0, 0.0, 0.0).into(),
+                    unlit: true,
+                    double_sided: true,
+                    cull_mode: None,
+                    ..default()
+                })),
+                Transform::from_translation(world_pos + Vec3::new(0.0, 9.0, 0.0))
+                    .with_rotation(obstacle_rotation)
+                    .with_scale(Vec3::splat(0.75)),
+                DebugOutline,
+                Visibility::Hidden,
+            ));
         }
 
         // Spawn crystal fields from loaded map definition

@@ -6,20 +6,13 @@ use std::path::Path;
 use crate::loading::LoadingState;
 
 // ---------------------------------------------------------------------------
-// Tile GID constants (from hexagonAll_sheet, firstgid=1)
-// ---------------------------------------------------------------------------
-
-pub const TILE_GRASS: u32 = 51;
-pub const TILE_LAUNCH_PAD: u32 = 66;
-pub const TILE_CRYSTAL: u32 = 36;
-
-// ---------------------------------------------------------------------------
 // Resource
 // ---------------------------------------------------------------------------
 
 #[derive(Resource, Default)]
 pub struct MapDefinition {
     pub tile_map: HashMap<(i32, i32), u32>, // axial → GID; only active (non-zero) tiles
+    pub launch_pad_cells: HashSet<(i32, i32)>, // all cells belonging to any launch pad (may be absent from tile_map)
     pub obstacles: HashSet<(i32, i32)>,     // includes HQ positions
     pub hq_red: Option<(i32, i32)>,
     pub hq_blue: Option<(i32, i32)>,
@@ -78,10 +71,9 @@ fn load_map_data(mut map_def: ResMut<MapDefinition>) {
         Err(e) => error!("map_loader: failed to load TMX objects: {e}"),
     }
 
-    // Step 3: remove tiles whose centres fall inside a boundary polygon, then
-    // re-derive crystal_fields and launch_pads from the filtered tile_map.
+    // Step 3: remove tiles whose centres fall inside a boundary polygon.
     if !map_def.boundary_polygons.is_empty() {
-        let polys = map_def.boundary_polygons.clone(); // avoid split-borrow
+        let polys = map_def.boundary_polygons.clone();
         map_def.tile_map.retain(|&(q, r), _| {
             const HEX_WIDTH: f32 = 128.0;
             const HEX_HEIGHT: f32 = HEX_WIDTH * 0.866_025_4;
@@ -89,18 +81,54 @@ fn load_map_data(mut map_def: ResMut<MapDefinition>) {
             let wz = HEX_WIDTH * 0.75 * r as f32;
             !polys.iter().any(|poly| point_in_polygon(wx, wz, poly))
         });
-        let pad_cells: Vec<(i32, i32)> = map_def.tile_map.iter()
-            .filter(|&(_, &g)| g == TILE_LAUNCH_PAD)
-            .map(|(&pos, _)| pos)
-            .collect();
-        map_def.launch_pads = group_connected_cells(&pad_cells);
-        map_def.crystal_fields = map_def.tile_map.iter()
-            .filter(|&(_, &g)| g == TILE_CRYSTAL)
-            .map(|(&pos, _)| pos)
-            .collect();
+        // Also remove any crystal fields that fell inside a boundary polygon.
+        let live: HashSet<(i32, i32)> = map_def.tile_map.keys().cloned().collect();
+        map_def.crystal_fields.retain(|pos| live.contains(pos));
+        info!("map_loader: after boundary filter → {} tiles", map_def.tile_map.len());
+    }
+
+    // Step 4: derive launch_pads from the launch-pad polygons by enumerating all
+    // hex cells in each polygon's bounding box.  Cells missing from tile_map (GID=0)
+    // are synthesized as TILE_LAUNCH_PAD so they render and are walkable.
+    if !map_def.launch_pad_polygons.is_empty() {
+        let pad_polys = map_def.launch_pad_polygons.clone();
+        const HEX_WIDTH: f32 = 128.0;
+        const HEX_HEIGHT: f32 = HEX_WIDTH * 0.866_025_4;
+
+        let mut groups: Vec<Vec<(i32, i32)>> = Vec::new();
+        for poly in &pad_polys {
+            let min_x = poly.iter().map(|&(x, _)| x).fold(f32::INFINITY, f32::min);
+            let max_x = poly.iter().map(|&(x, _)| x).fold(f32::NEG_INFINITY, f32::max);
+            let min_z = poly.iter().map(|&(_, z)| z).fold(f32::INFINITY, f32::min);
+            let max_z = poly.iter().map(|&(_, z)| z).fold(f32::NEG_INFINITY, f32::max);
+
+            let r_min = (min_z / (HEX_WIDTH * 0.75)).floor() as i32 - 1;
+            let r_max = (max_z / (HEX_WIDTH * 0.75)).ceil() as i32 + 1;
+
+            let mut group: Vec<(i32, i32)> = Vec::new();
+            for r in r_min..=r_max {
+                let base_x = HEX_HEIGHT * r as f32 * 0.5;
+                let q_min = ((min_x - base_x) / HEX_HEIGHT).floor() as i32 - 1;
+                let q_max = ((max_x - base_x) / HEX_HEIGHT).ceil() as i32 + 1;
+                for q in q_min..=q_max {
+                    let wx = HEX_HEIGHT * (q as f32 + r as f32 * 0.5);
+                    let wz = HEX_WIDTH * 0.75 * r as f32;
+                    if point_in_polygon(wx, wz, poly) {
+                        group.push((q, r));
+                    }
+                }
+            }
+            if !group.is_empty() {
+                groups.push(group);
+            }
+        }
+        map_def.launch_pad_cells = groups.iter().flatten().cloned().collect();
+        map_def.launch_pads = groups;
+
         info!(
-            "map_loader: after boundary filter → {} tiles, {} launch pads, {} crystal fields",
-            map_def.tile_map.len(), map_def.launch_pads.len(), map_def.crystal_fields.len(),
+            "map_loader: polygon-derived launch pads → {} groups (sizes: {:?})",
+            map_def.launch_pads.len(),
+            map_def.launch_pads.iter().map(|g| g.len()).collect::<Vec<_>>(),
         );
     }
 }
@@ -125,8 +153,7 @@ fn point_in_polygon(wx: f32, wz: f32, poly: &[(f32, f32)]) -> bool {
 // Step 1: tile layer (CSV)
 // ---------------------------------------------------------------------------
 
-/// Parse "Tile Layer 1" CSV data, populate `tile_map`, derive launch pads and
-/// crystal fields from GID values.
+/// Parse "Tile Layer 1" CSV data and populate `tile_map`.
 fn parse_tile_csv(content: &str, def: &mut MapDefinition) {
     // Locate the first <data encoding="csv"> block.
     let tag = "<data encoding=\"csv\">";
@@ -159,54 +186,9 @@ fn parse_tile_csv(content: &str, def: &mut MapDefinition) {
         }
     }
 
-    // Derive crystal fields from GID=36 cells.
-    def.crystal_fields = def.tile_map.iter()
-        .filter(|&(_, &g)| g == TILE_CRYSTAL)
-        .map(|(&pos, _)| pos)
-        .collect();
-
-    // Derive launch pads: BFS-group connected GID=66 cells.
-    let pad_cells: Vec<(i32, i32)> = def.tile_map.iter()
-        .filter(|&(_, &g)| g == TILE_LAUNCH_PAD)
-        .map(|(&pos, _)| pos)
-        .collect();
-    def.launch_pads = group_connected_cells(&pad_cells);
-
-    info!(
-        "map_loader: tile layer → {} active tiles, {} launch pads, {} crystal fields",
-        def.tile_map.len(),
-        def.launch_pads.len(),
-        def.crystal_fields.len(),
-    );
+    info!("map_loader: tile layer → {} active tiles", def.tile_map.len());
 }
 
-/// BFS connected-component grouping for hex cells (axial neighbours).
-fn group_connected_cells(cells: &[(i32, i32)]) -> Vec<Vec<(i32, i32)>> {
-    let cell_set: HashSet<(i32, i32)> = cells.iter().cloned().collect();
-    let mut visited: HashSet<(i32, i32)> = HashSet::new();
-    let mut groups: Vec<Vec<(i32, i32)>> = Vec::new();
-
-    for &cell in cells {
-        if visited.contains(&cell) {
-            continue;
-        }
-        let mut group = Vec::new();
-        let mut stack = vec![cell];
-        while let Some((q, r)) = stack.pop() {
-            if !visited.insert((q, r)) {
-                continue;
-            }
-            group.push((q, r));
-            for neighbour in [(q+1,r),(q-1,r),(q,r+1),(q,r-1),(q+1,r-1),(q-1,r+1)] {
-                if cell_set.contains(&neighbour) && !visited.contains(&neighbour) {
-                    stack.push(neighbour);
-                }
-            }
-        }
-        groups.push(group);
-    }
-    groups
-}
 
 // ---------------------------------------------------------------------------
 // Step 2: object layers
@@ -280,6 +262,12 @@ fn parse_object_layers(map: &tiled::Map, def: &mut MapDefinition) {
                         _ => {}
                     }
                 }
+            }
+            "Crystals" => {
+                for obj in obj_layer.objects() {
+                    def.crystal_fields.push(tile_obj_to_axial(obj.x, obj.y));
+                }
+                info!("map_loader: {} crystal fields", def.crystal_fields.len());
             }
             "Boundaries" => {
                 for obj in obj_layer.objects() {
