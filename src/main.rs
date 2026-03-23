@@ -28,7 +28,14 @@ use music::MusicPlugin;
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                resolution: bevy::window::WindowResolution::new(1500, 720),
+                title: "Air Land Battle".to_string(),
+                ..default()
+            }),
+            ..default()
+        }))
         .add_plugins(FrameTimeDiagnosticsPlugin::default())
         .add_plugins(EguiPlugin::default())
         .add_plugins(WorldInspectorPlugin::default().run_if(inspector_enabled))

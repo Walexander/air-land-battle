@@ -61,6 +61,9 @@ pub struct CameraSettings {
     pub look_at_y: f32,
     pub look_at_z: f32,
     pub scale: f32,
+    /// Home position set from map center; used by 'R' to reset.
+    pub home_x: f32,
+    pub home_z: f32,
 }
 
 #[derive(Resource)]
@@ -836,14 +839,14 @@ fn handle_keyboard_and_scroll_camera(
     mut settings: ResMut<CameraSettings>,
     time: Res<Time>,
 ) {
-    // Reset camera to original position when 'R' is pressed
+    // Reset camera to map-center home position when 'R' is pressed
     if keyboard.just_pressed(KeyCode::KeyR) {
-        settings.x = 0.0;
+        settings.x = settings.home_x;
         settings.y = 300.0;
-        settings.z = 500.0;
-        settings.look_at_x = 0.0;
+        settings.z = settings.home_z + 500.0;
+        settings.look_at_x = settings.home_x;
         settings.look_at_y = 0.0;
-        settings.look_at_z = 0.0;
+        settings.look_at_z = settings.home_z;
         settings.scale = 0.8;
         return;
     }
@@ -1055,6 +1058,8 @@ impl Plugin for UIPlugin {
             look_at_y: 0.0,
             look_at_z: 100.0,
             scale: 0.8,
+            home_x: 0.0,
+            home_z: 0.0,
         })
         .insert_resource(CameraControlsVisible(false))
         .insert_resource(UIClicked(false))

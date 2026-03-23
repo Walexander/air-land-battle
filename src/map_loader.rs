@@ -44,7 +44,7 @@ impl Plugin for MapLoaderPlugin {
 // ---------------------------------------------------------------------------
 
 fn load_map_data(mut map_def: ResMut<MapDefinition>) {
-    let tmx_path = Path::new("assets/maps/Side By Side By Side.tmx");
+    let tmx_path = Path::new("assets/maps/Topsy Turvy.tmx");
 
     // Step 1: parse tile layer directly from the CSV in the raw file.
     match std::fs::read_to_string(tmx_path) {
@@ -211,13 +211,13 @@ fn parse_object_layers(map: &tiled::Map, def: &mut MapDefinition) {
                         }
                         "Red Base" => {
                             if let tiled::ObjectShape::Polygon { points } = &obj.shape {
-                                def.base_red_polygon = polygon_to_world(obj.x, obj.y, points);
+                                def.base_red_polygon = polygon_to_world(obj.x, obj.y, obj.rotation, points);
                                 info!("map_loader: Red Base polygon {} pts", def.base_red_polygon.len());
                             }
                         }
                         "Blue Base" => {
                             if let tiled::ObjectShape::Polygon { points } = &obj.shape {
-                                def.base_blue_polygon = polygon_to_world(obj.x, obj.y, points);
+                                def.base_blue_polygon = polygon_to_world(obj.x, obj.y, obj.rotation, points);
                                 info!("map_loader: Blue Base polygon {} pts", def.base_blue_polygon.len());
                             }
                         }
@@ -228,7 +228,7 @@ fn parse_object_layers(map: &tiled::Map, def: &mut MapDefinition) {
             "Launch Pads" => {
                 for obj in obj_layer.objects() {
                     if let tiled::ObjectShape::Polygon { points } = &obj.shape {
-                        def.launch_pad_polygons.push(polygon_to_world(obj.x, obj.y, points));
+                        def.launch_pad_polygons.push(polygon_to_world(obj.x, obj.y, obj.rotation, points));
                     }
                 }
                 info!("map_loader: {} launch pad polygons", def.launch_pad_polygons.len());
@@ -272,10 +272,16 @@ fn parse_object_layers(map: &tiled::Map, def: &mut MapDefinition) {
 // ---------------------------------------------------------------------------
 
 /// Convert tiled polygon relative points to world XZ coords, stripping any closing duplicate.
-/// Tiled always repeats the first vertex as the last — ear-clipping requires unique vertices.
-fn polygon_to_world(obj_x: f32, obj_y: f32, points: &[(f32, f32)]) -> Vec<(f32, f32)> {
+/// Applies `rotation_deg` (Tiled clockwise degrees, y-down) before projecting to world space.
+fn polygon_to_world(obj_x: f32, obj_y: f32, rotation_deg: f32, points: &[(f32, f32)]) -> Vec<(f32, f32)> {
+    let (sin, cos) = rotation_deg.to_radians().sin_cos();
     let mut pts: Vec<(f32, f32)> = points.iter()
-        .map(|&(dx, dy)| tiled_pixel_to_world_xz(obj_x + dx, obj_y + dy))
+        .map(|&(dx, dy)| {
+            // Clockwise rotation in Tiled's y-down screen space.
+            let rx = dx * cos + dy * sin;
+            let ry = -dx * sin + dy * cos;
+            tiled_pixel_to_world_xz(obj_x + rx, obj_y + ry)
+        })
         .collect();
     if let (Some(&first), Some(&last)) = (pts.first(), pts.last()) {
         if (first.0 - last.0).abs() < 0.01 && (first.1 - last.1).abs() < 0.01 {

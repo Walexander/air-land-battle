@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 
-use crate::ui::GameCamera;
+use crate::ui::{CameraSettings, GameCamera};
 use crate::launch_pads::{LaunchPadOwner, LaunchPadOwnership};
 use crate::selection::{create_hexagon_outline_mesh, Selected};
 use crate::units::Unit;
@@ -539,6 +539,7 @@ fn setup_hex_map(
     asset_server: Res<AssetServer>,
     mut obstacles: ResMut<Obstacles>,
     mut map_config: ResMut<HexMapConfig>,
+    mut camera_settings: ResMut<CameraSettings>,
     map_def: Res<crate::map_loader::MapDefinition>,
 ) {
     // Populate obstacles from the loaded map definition
@@ -547,9 +548,34 @@ fn setup_hex_map(
     map_config.valid_cells = map_def.tile_map.keys().cloned()
         .chain(map_def.launch_pad_cells.iter().cloned())
         .collect();
+    // Compute map center from all valid cells to center the camera.
+    let mut min_x = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut min_z = f32::INFINITY;
+    let mut max_z = f32::NEG_INFINITY;
+    for &(q, r) in &map_config.valid_cells {
+        let wx = HEX_HEIGHT * (q as f32 + r as f32 * 0.5);
+        let wz = HEX_WIDTH * 0.75 * r as f32;
+        min_x = min_x.min(wx);
+        max_x = max_x.max(wx);
+        min_z = min_z.min(wz);
+        max_z = max_z.max(wz);
+    }
+    let center_x = (min_x + max_x) * 0.5;
+    let center_z = (min_z + max_z) * 0.5;
+    info!("Camera: center=({center_x:.1},{center_z:.1}) map_span=({:.0}x{:.0})", max_x - min_x, max_z - min_z);
+
+    // Push the computed center into CameraSettings so update_camera_from_settings uses it.
+    camera_settings.x = center_x;
+    camera_settings.z = center_z + 500.0;
+    camera_settings.look_at_x = center_x;
+    camera_settings.look_at_z = center_z;
+    camera_settings.home_x = center_x;
+    camera_settings.home_z = center_z;
+
     // Spawn 3D camera with orthographic projection
     let mut orthographic = OrthographicProjection::default_3d();
-    orthographic.scale = 0.8;
+    orthographic.scale = camera_settings.scale;
     // Increase far plane to prevent clipping when camera pans
     orthographic.far = 2000.0;
 
@@ -560,7 +586,8 @@ fn setup_hex_map(
             ..default()
         },
         Projection::Orthographic(orthographic),
-        Transform::from_xyz(0.0, 300.0, 500.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_xyz(center_x, 300.0, center_z + 500.0)
+            .looking_at(Vec3::new(center_x, 0.0, center_z), Vec3::Y),
         GameCamera,
     ));
 
