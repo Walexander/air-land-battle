@@ -44,7 +44,7 @@ impl Plugin for MapLoaderPlugin {
 // ---------------------------------------------------------------------------
 
 fn load_map_data(mut map_def: ResMut<MapDefinition>) {
-    let tmx_path = Path::new("assets/maps/Topsy Turvy.tmx");
+    let tmx_path = Path::new("assets/maps/Frozen Road.tmx");
 
     // Step 1: parse tile layer directly from the CSV in the raw file.
     match std::fs::read_to_string(tmx_path) {
@@ -70,37 +70,28 @@ fn load_map_data(mut map_def: ResMut<MapDefinition>) {
         Err(e) => error!("map_loader: failed to load TMX objects: {e}"),
     }
 
-    // Step 3: derive launch_pads from the launch-pad polygons by enumerating all
+    const HEX_WIDTH: f32 = 128.0;
+    const HEX_HEIGHT: f32 = HEX_WIDTH * 0.866_025_4;
+
+    // Step 3: enumerate hex cells inside each base polygon and add to obstacles.
+    let base_polys = [map_def.base_red_polygon.clone(), map_def.base_blue_polygon.clone()];
+    for poly in &base_polys {
+        if poly.is_empty() { continue; }
+        for cell in cells_in_polygon(poly) {
+            map_def.obstacles.insert(cell);
+        }
+    }
+    info!("map_loader: base polygons → {} total obstacles", map_def.obstacles.len());
+
+    // Step 4: derive launch_pads from the launch-pad polygons by enumerating all
     // hex cells in each polygon's bounding box.  Cells missing from tile_map (GID=0)
     // are synthesized as TILE_LAUNCH_PAD so they render and are walkable.
     if !map_def.launch_pad_polygons.is_empty() {
         let pad_polys = map_def.launch_pad_polygons.clone();
-        const HEX_WIDTH: f32 = 128.0;
-        const HEX_HEIGHT: f32 = HEX_WIDTH * 0.866_025_4;
 
         let mut groups: Vec<Vec<(i32, i32)>> = Vec::new();
         for poly in &pad_polys {
-            let min_x = poly.iter().map(|&(x, _)| x).fold(f32::INFINITY, f32::min);
-            let max_x = poly.iter().map(|&(x, _)| x).fold(f32::NEG_INFINITY, f32::max);
-            let min_z = poly.iter().map(|&(_, z)| z).fold(f32::INFINITY, f32::min);
-            let max_z = poly.iter().map(|&(_, z)| z).fold(f32::NEG_INFINITY, f32::max);
-
-            let r_min = (min_z / (HEX_WIDTH * 0.75)).floor() as i32 - 1;
-            let r_max = (max_z / (HEX_WIDTH * 0.75)).ceil() as i32 + 1;
-
-            let mut group: Vec<(i32, i32)> = Vec::new();
-            for r in r_min..=r_max {
-                let base_x = HEX_HEIGHT * r as f32 * 0.5;
-                let q_min = ((min_x - base_x) / HEX_HEIGHT).floor() as i32 - 1;
-                let q_max = ((max_x - base_x) / HEX_HEIGHT).ceil() as i32 + 1;
-                for q in q_min..=q_max {
-                    let wx = HEX_HEIGHT * (q as f32 + r as f32 * 0.5);
-                    let wz = HEX_WIDTH * 0.75 * r as f32;
-                    if point_in_polygon(wx, wz, poly) {
-                        group.push((q, r));
-                    }
-                }
-            }
+            let group = cells_in_polygon(poly);
             if !group.is_empty() {
                 groups.push(group);
             }
@@ -116,8 +107,37 @@ fn load_map_data(mut map_def: ResMut<MapDefinition>) {
     }
 }
 
+/// Enumerate all hex cells (axial coords) whose centres lie inside a world-space polygon.
+fn cells_in_polygon(poly: &[(f32, f32)]) -> Vec<(i32, i32)> {
+    const HEX_WIDTH: f32 = 128.0;
+    const HEX_HEIGHT: f32 = HEX_WIDTH * 0.866_025_4;
+
+    let min_x = poly.iter().map(|&(x, _)| x).fold(f32::INFINITY, f32::min);
+    let max_x = poly.iter().map(|&(x, _)| x).fold(f32::NEG_INFINITY, f32::max);
+    let min_z = poly.iter().map(|&(_, z)| z).fold(f32::INFINITY, f32::min);
+    let max_z = poly.iter().map(|&(_, z)| z).fold(f32::NEG_INFINITY, f32::max);
+
+    let r_min = (min_z / (HEX_WIDTH * 0.75)).floor() as i32 - 1;
+    let r_max = (max_z / (HEX_WIDTH * 0.75)).ceil() as i32 + 1;
+
+    let mut cells = Vec::new();
+    for r in r_min..=r_max {
+        let base_x = HEX_HEIGHT * r as f32 * 0.5;
+        let q_min = ((min_x - base_x) / HEX_HEIGHT).floor() as i32 - 1;
+        let q_max = ((max_x - base_x) / HEX_HEIGHT).ceil() as i32 + 1;
+        for q in q_min..=q_max {
+            let wx = HEX_HEIGHT * (q as f32 + r as f32 * 0.5);
+            let wz = HEX_WIDTH * 0.75 * r as f32;
+            if point_in_polygon(wx, wz, poly) {
+                cells.push((q, r));
+            }
+        }
+    }
+    cells
+}
+
 /// Ray-cast point-in-polygon test (game world XZ coordinates).
-fn point_in_polygon(wx: f32, wz: f32, poly: &[(f32, f32)]) -> bool {
+pub fn point_in_polygon(wx: f32, wz: f32, poly: &[(f32, f32)]) -> bool {
     let n = poly.len();
     let mut inside = false;
     let mut j = n - 1;

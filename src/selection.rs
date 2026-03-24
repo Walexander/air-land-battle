@@ -3,7 +3,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy_mod_outline::OutlineVolume;
 
-use crate::map::{axial_to_world_pos, HexMapConfig, HoveredHex, Obstacles};
+use crate::map::{axial_to_world_pos, HexMapConfig, HoveredHex, Obstacles, VisibleHexes};
 use crate::units::{find_path_waypoints, Occupancy, ClaimedCellsThisFrame, Unit, UnitMovement, Army, UnitStats};
 use crate::loading::LoadingState;
 
@@ -641,10 +641,11 @@ fn handle_unit_selection(
     occupancy: Res<Occupancy>,
     hex_grid: Res<crate::hex_pathfinding::HexPathfindingGrid>,
     mut claimed_cells: ResMut<ClaimedCellsThisFrame>,
-    unit_query: Query<(Entity, &Unit, Option<&UnitMovement>, &InheritedVisibility), Without<Selected>>,
+    unit_query: Query<(Entity, &Unit, Option<&UnitMovement>), Without<Selected>>,
     selected_query: Query<(Entity, &Unit, &UnitStats, Option<&UnitMovement>, &Transform), With<Selected>>,
     path_viz_query: Query<(Entity, &PathVisualization)>,
     dest_ring_query: Query<(Entity, &DestinationRing)>,
+    visible_hexes: Res<VisibleHexes>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut commands: Commands,
@@ -653,7 +654,7 @@ fn handle_unit_selection(
         // Check if a unit was clicked directly (prioritize direct clicks)
         if let Some(clicked_entity) = clicked_unit.entity {
             // Check if the clicked unit is from the Red army (player controlled)
-            if let Ok((_entity, unit, _, _)) = unit_query.get(clicked_entity)
+            if let Ok((_entity, unit, _)) = unit_query.get(clicked_entity)
                 && unit.army == Army::Red {
                     // Select this unit
                     for (entity, _, _, _, _) in &selected_query {
@@ -664,7 +665,7 @@ fn handle_unit_selection(
                 }
 
             // If clicked unit is an enemy and we have a unit selected, target it
-            if let Ok((_, enemy_unit, _, _)) = unit_query.get(clicked_entity)
+            if let Ok((_, enemy_unit, _)) = unit_query.get(clicked_entity)
                 && enemy_unit.army != Army::Red {
                     if let Ok((selected_entity, selected_unit, stats, existing_movement, _)) = selected_query.single() {
                         let enemy_pos = (enemy_unit.q, enemy_unit.r);
@@ -697,8 +698,8 @@ fn handle_unit_selection(
                                     if occupied_pos != current_cell && occupied_pos != next_cell {
                                         // Check if this position has a visible unit
                                         if let Some(&occupying_entity) = occupancy.position_to_entity.get(&occupied_pos) {
-                                            if let Ok((_, _, _, visibility)) = unit_query.get(occupying_entity) {
-                                                if visibility.get() {
+                                            if let Ok((_, unit, _)) = unit_query.get(occupying_entity) {
+                                                if unit.army == Army::Red || visible_hexes.0.contains(&occupied_pos) {
                                                     blocking_cells.insert(occupied_pos);
                                                 }
                                             }
@@ -800,8 +801,8 @@ fn handle_unit_selection(
                                 for &occupied_pos in &occupancy.positions {
                                     if occupied_pos != start_pos {
                                         if let Some(&occupying_entity) = occupancy.position_to_entity.get(&occupied_pos) {
-                                            if let Ok((_, _, _, visibility)) = unit_query.get(occupying_entity) {
-                                                if visibility.get() {
+                                            if let Ok((_, unit, _)) = unit_query.get(occupying_entity) {
+                                                if unit.army == Army::Red || visible_hexes.0.contains(&occupied_pos) {
                                                     blocking_cells.insert(occupied_pos);
                                                 }
                                             }
@@ -850,8 +851,8 @@ fn handle_unit_selection(
                             for &occupied_pos in &occupancy.positions {
                                 if occupied_pos != start_pos {
                                     if let Some(&occupying_entity) = occupancy.position_to_entity.get(&occupied_pos) {
-                                        if let Ok((_, _, _, visibility)) = unit_query.get(occupying_entity) {
-                                            if visibility.get() {
+                                        if let Ok((_, unit, _)) = unit_query.get(occupying_entity) {
+                                            if unit.army == Army::Red || visible_hexes.0.contains(&occupied_pos) {
                                                 blocking_cells.insert(occupied_pos);
                                             }
                                         }
@@ -920,15 +921,12 @@ fn handle_unit_selection(
                             if occupied_pos != unit_current_pos {
                                 // Check if this position has a visible unit
                                 if let Some(&occupying_entity) = occupancy.position_to_entity.get(&occupied_pos) {
-                                    // Check visibility - only block if visible
-                                    if let Ok((_, _, _, visibility)) = unit_query.get(occupying_entity) {
-                                        if visibility.get() {
+                                    if let Ok((_, unit, _)) = unit_query.get(occupying_entity) {
+                                        if unit.army == Army::Red || visible_hexes.0.contains(&occupied_pos) {
                                             blocking_cells.insert(occupied_pos);
                                         }
-                                        // If not visible (in fog), don't add to blocking_cells
                                     }
                                 } else {
-                                    // No entity at this position, still block it
                                     blocking_cells.insert(occupied_pos);
                                 }
                             }

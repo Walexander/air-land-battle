@@ -91,6 +91,12 @@ pub struct Obstacles {
     pub positions: std::collections::HashSet<(i32, i32)>,
 }
 
+/// Hex cells currently visible to the Red (player) army.
+/// Updated every frame by `update_fog_of_war`. Used by pathfinding to
+/// avoid routing around enemy units that are hidden in fog.
+#[derive(Resource, Default)]
+pub struct VisibleHexes(pub std::collections::HashSet<(i32, i32)>);
+
 pub struct MapPlugin;
 
 impl Plugin for MapPlugin {
@@ -98,6 +104,7 @@ impl Plugin for MapPlugin {
         app.insert_resource(HexMapConfig::default())
             .insert_resource(HoveredHex::default())
             .insert_resource(Obstacles::default())
+            .insert_resource(VisibleHexes::default())
             .insert_resource(DebugOverlay::default())
             .insert_resource(ClearColor(Color::srgb(0.53, 0.81, 0.92))) // Light sky blue
             .add_systems(OnEnter(LoadingState::Playing), (setup_hex_map, crate::hex_pathfinding::setup_hex_pathfinding).chain())
@@ -615,6 +622,7 @@ fn setup_hex_map(
     let filled_hex_mesh = meshes.add(create_filled_hexagon_mesh());
     let hex_border_mesh = meshes.add(create_filled_hexagon_border_mesh());
     let hover_outline_mesh = meshes.add(create_hexagon_outline_mesh(63.0, 4.0)); // Same as destination ring
+    let spawn_center_mesh = meshes.add(create_filled_hexagon_mesh_with_radius(HEX_RADIUS * 0.45));
 
     // Load mountain 3D model
     let mountain_model = asset_server.load("mountains.glb#Scene0");
@@ -644,8 +652,28 @@ fn setup_hex_map(
                 let pad_index = map_def.launch_pads.iter().position(|platform| platform.contains(&(q, r)));
                 let is_launch_pad = pad_index.is_some();
 
+                let is_spawn = map_def.spawn_red.contains(&(q, r))
+                    || map_def.spawn_blue.contains(&(q, r));
+
+                let is_red_base = map_def.base_red_polygon.len() >= 3
+                    && crate::map_loader::point_in_polygon(
+                        HEX_HEIGHT * (q as f32 + r as f32 * 0.5),
+                        HEX_WIDTH * 0.75 * r as f32,
+                        &map_def.base_red_polygon,
+                    );
+                let is_blue_base = map_def.base_blue_polygon.len() >= 3
+                    && crate::map_loader::point_in_polygon(
+                        HEX_HEIGHT * (q as f32 + r as f32 * 0.5),
+                        HEX_WIDTH * 0.75 * r as f32,
+                        &map_def.base_blue_polygon,
+                    );
+
                 // Alternate tile colors based on hex coordinates
-                let color = if is_launch_pad {
+                let color = if is_red_base {
+                    Color::srgb(0.75, 0.2, 0.2) // Red base
+                } else if is_blue_base {
+                    Color::srgb(0.2, 0.35, 0.75) // Blue base
+                } else if is_launch_pad {
                     Color::srgb(0.3, 0.3, 0.3) // Dark grey for launch pads
                 } else if (q + r) % 2 == 0 {
                     Color::srgb(0.35, 0.75, 0.35) // Light green
@@ -692,6 +720,23 @@ fn setup_hex_map(
                     hex_entity_commands.insert(LaunchPadTile {});
                 }
 
+                // White centre dot for spawn tiles
+                if is_spawn {
+                    parent.spawn((
+                        Mesh3d(spawn_center_mesh.clone()),
+                        MeshMaterial3d(materials.add(StandardMaterial {
+                            base_color: Color::srgb(1.0, 1.0, 1.0),
+                            emissive: Color::srgb(1.0, 1.0, 1.0).into(),
+                            unlit: true,
+                            double_sided: true,
+                            cull_mode: None,
+                            ..default()
+                        })),
+                        Transform::from_translation(filled_hex_pos + Vec3::new(0.0, 0.2, 0.0))
+                            .with_rotation(hex_rotation),
+                    ));
+                }
+
                 // Spawn hex outline (skip for obstacles since they use sprites)
                 let base_outline_height = 1.0;
                 let _outline_pos = if is_launch_pad {
@@ -732,13 +777,10 @@ fn setup_hex_map(
                         ));
 
                         println!("Creating {:?} HQ at ({}, {})", army, q, r);
-                    } else {
-                        // Spawn 3D mountain model for regular obstacles
-                        // Mountain is 4x4 in Blender, scale to fill hex cell
-                        let mountain_scale = 21.25; // 25.0 * 0.85
-                        // Raise the mountain so its base sits above the tile, offset slightly in tile
+                    } else if !is_red_base && !is_blue_base {
+                        // Spawn 3D mountain model for regular obstacles (not base cells)
+                        let mountain_scale = 21.25;
                         let mountain_pos = world_pos + Vec3::new(0.0, 10.0, 12.0);
-                        // Rotate to align with hex grid
                         let mountain_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
 
                         parent.spawn((
@@ -912,14 +954,35 @@ fn setup_hex_map(
         // never appear in the tile_map loop; we handle them here instead.
         let obstacle_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
         for &(q, r) in &map_def.obstacles {
-            let world_pos = axial_to_world_pos(q, r);
+            // Skip cells already rendered by the tile_map loop above.
+            if map_def.tile_map.contains_key(&(q, r)) {
+                continue;
+            }
 
-            // Backing hex tile (dark grey, same visual language as obstacles)
+            let world_pos = axial_to_world_pos(q, r);
+            let wx = HEX_HEIGHT * (q as f32 + r as f32 * 0.5);
+            let wz = HEX_WIDTH * 0.75 * r as f32;
+
+            let is_red_hq = map_def.hq_red == Some((q, r));
+            let is_blue_hq = map_def.hq_blue == Some((q, r));
+            let is_red_base = map_def.base_red_polygon.len() >= 3
+                && crate::map_loader::point_in_polygon(wx, wz, &map_def.base_red_polygon);
+            let is_blue_base = map_def.base_blue_polygon.len() >= 3
+                && crate::map_loader::point_in_polygon(wx, wz, &map_def.base_blue_polygon);
+
+            let tile_color = if is_red_base {
+                Color::srgb(0.75, 0.2, 0.2)
+            } else if is_blue_base {
+                Color::srgb(0.2, 0.35, 0.75)
+            } else {
+                Color::srgb(0.25, 0.22, 0.20)
+            };
+
             parent.spawn((
                 Mesh3d(filled_hex_mesh.clone()),
                 MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::srgb(0.25, 0.22, 0.20),
-                    emissive: Color::srgb(0.05, 0.04, 0.04).into(),
+                    base_color: tile_color,
+                    emissive: tile_color.into(),
                     unlit: true,
                     double_sided: true,
                     cull_mode: None,
@@ -929,9 +992,6 @@ fn setup_hex_map(
                     .with_rotation(obstacle_rotation),
             ));
 
-            // Mountain/obstacle model
-            let is_red_hq = map_def.hq_red == Some((q, r));
-            let is_blue_hq = map_def.hq_blue == Some((q, r));
             if is_red_hq || is_blue_hq {
                 let hq_model: Handle<Scene> = asset_server.load("JustBuildings.glb#Scene0");
                 let army = if is_red_hq { crate::units::Army::Red } else { crate::units::Army::Blue };
@@ -942,7 +1002,7 @@ fn setup_hex_map(
                         .with_scale(Vec3::splat(24.0)),
                     HQ { army, q, r },
                 ));
-            } else {
+            } else if !is_red_base && !is_blue_base {
                 parent.spawn((
                     SceneRoot(mountain_model.clone()),
                     Transform::from_translation(world_pos + Vec3::new(0.0, 10.0, 12.0))
@@ -1271,6 +1331,7 @@ fn update_fog_of_war(
     fog_query: Query<(Entity, &FogOfWar)>,
     health_bar_query: Query<(&crate::units::HealthBar, Entity)>,
     map_def: Res<crate::map_loader::MapDefinition>,
+    mut visible_hexes_res: ResMut<VisibleHexes>,
 ) {
     use std::collections::HashSet;
 
@@ -1381,6 +1442,9 @@ fn update_fog_of_war(
                 }
             }
     }
+
+    // Publish the visible hex set for pathfinding systems to consume.
+    visible_hexes_res.0 = visible_hexes;
 }
 
 fn apply_crystal_materials(

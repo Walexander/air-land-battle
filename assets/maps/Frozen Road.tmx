@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.10" tiledversion="1.11.2" orientation="hexagonal" renderorder="right-down" width="11" height="7" tilewidth="120" tileheight="140" infinite="0" hexsidelength="70" staggeraxis="y" staggerindex="odd" nextlayerid="9" nextobjectid="82">
+ <tileset firstgid="1" source="../../../../../Downloads/kenney_hexagon-tiles/Spritesheet/hexagonAll_sheet.tsx"/>
+ <tileset firstgid="225" source="../../../../../Downloads/kenney_hexagon-tiles/Spritesheet/hexagonBuildings_sheet.tsx"/>
+ <layer id="1" name="Tile Layer 1" width="11" height="7">
+  <data encoding="csv">
+0,0,51,51,51,51,51,51,51,0,0,
+51,51,51,51,51,51,51,51,51,51,0,
+0,51,51,66,66,51,66,66,51,51,0,
+0,51,51,66,51,51,66,51,51,0,0,
+0,83,51,51,51,51,51,51,51,54,0,
+83,68,51,51,66,66,51,51,54,54,0,
+83,68,51,51,51,66,51,51,51,54,54
+</data>
+ </layer>
+ <objectgroup id="2" name="Bases">
+  <object id="1" template="Right Base.tx" name="Blue Base" gid="0" x="1140" y="420" rotation="0">
+   <polygon points="0,0 -60,35 -60,105 -120,140 -120,210 -60,245 -60,315 0,350 60,315 120,350 180,315 180,245 120,210 120,140 60,105 60,35"/>
+  </object>
+  <object id="3" template="Left Base.tx" name="Red Base" gid="0" x="180" y="420" rotation="0">
+   <polygon points="0,0 60,35 60,105 120,140 120,210 60,245 60,315 0,350 -60,315 -120,350 -180,315 -180,245 -120,210 -120,140 -60,105 -60,35"/>
+  </object>
+ </objectgroup>
+ <objectgroup id="7" name="Spawn Points">
+  <object id="60" name="Red Spawn" gid="3" x="240" y="560" width="120" height="140"/>
+  <object id="61" name="Blue Spawn" gid="19" x="960" y="560" width="120" height="140"/>
+ </objectgroup>
+ <objectgroup id="6" name="Crystals">
+  <object id="28" gid="36" x="1020" y="245" width="120" height="140"/>
+  <object id="29" gid="36" x="840" y="140" width="120" height="140"/>
+  <object id="32" gid="1073741860" x="960" y="140" width="120" height="140"/>
+  <object id="77" gid="36" x="720" y="140" width="120" height="140"/>
+  <object id="78" gid="2147483684" x="180" y="245" width="120" height="140"/>
+  <object id="79" gid="2147483684" x="360" y="140" width="120" height="140"/>
+  <object id="80" gid="3221225508" x="240" y="140" width="120" height="140"/>
+  <object id="81" gid="2147483684" x="480" y="140" width="120" height="140"/>
+ </objectgroup>
+ <objectgroup id="3" name="Launch Pads">
+  <object id="6" name="Top" x="840" y="455" rotation="-180">
+   <polygon points="0,0 -60,35 -60,105 -120,140 -120,210 -60,245 0,210 60,245 120,210 120,140 60,105 60,35"/>
+  </object>
+  <object id="7" name="Middle" x="480" y="455" rotation="180">
+   <polygon points="0,0 -60,35 -60,105 -120,140 -120,210 -60,245 0,210 60,245 120,210 120,140 60,105 60,35"/>
+  </object>
+  <object id="69" name="Bottom" x="660" y="770" rotation="180">
+   <polygon points="0,0 60,35 60,105 120,140 120,210 60,245 0,210 -60,245 -120,210 -120,140 -60,105 -60,35"/>
+  </object>
+ </objectgroup>
+ <objectgroup id="5" name="Obstacles">
+  <object id="11" name="Silo" gid="237" x="600" y="350" width="120" height="140"/>
+  <object id="73" gid="50" x="540" y="455" width="120" height="140"/>
+  <object id="74" gid="50" x="660" y="455" width="120" height="140"/>
+  <object id="75" gid="50" x="300" y="455" width="120" height="140"/>
+  <object id="76" gid="50" x="900" y="455" width="120" height="140"/>
+ </objectgroup>
+</map>
