@@ -111,14 +111,16 @@ fn load_map_data(mut map_def: ResMut<MapDefinition>) {
 fn cells_in_polygon(poly: &[(f32, f32)]) -> Vec<(i32, i32)> {
     const HEX_WIDTH: f32 = 128.0;
     const HEX_HEIGHT: f32 = HEX_WIDTH * 0.866_025_4;
+    const HEX_Z_STRETCH: f32 = crate::map::HEX_Z_STRETCH;
+    const HEX_Z_STEP: f32 = HEX_WIDTH * HEX_Z_STRETCH * 0.75;
 
     let min_x = poly.iter().map(|&(x, _)| x).fold(f32::INFINITY, f32::min);
     let max_x = poly.iter().map(|&(x, _)| x).fold(f32::NEG_INFINITY, f32::max);
     let min_z = poly.iter().map(|&(_, z)| z).fold(f32::INFINITY, f32::min);
     let max_z = poly.iter().map(|&(_, z)| z).fold(f32::NEG_INFINITY, f32::max);
 
-    let r_min = (min_z / (HEX_WIDTH * 0.75)).floor() as i32 - 1;
-    let r_max = (max_z / (HEX_WIDTH * 0.75)).ceil() as i32 + 1;
+    let r_min = (min_z / HEX_Z_STEP).floor() as i32 - 1;
+    let r_max = (max_z / HEX_Z_STEP).ceil() as i32 + 1;
 
     let mut cells = Vec::new();
     for r in r_min..=r_max {
@@ -127,7 +129,7 @@ fn cells_in_polygon(poly: &[(f32, f32)]) -> Vec<(i32, i32)> {
         let q_max = ((max_x - base_x) / HEX_HEIGHT).ceil() as i32 + 1;
         for q in q_min..=q_max {
             let wx = HEX_HEIGHT * (q as f32 + r as f32 * 0.5);
-            let wz = HEX_WIDTH * 0.75 * r as f32;
+            let wz = HEX_Z_STEP * r as f32;
             if point_in_polygon(wx, wz, poly) {
                 cells.push((q, r));
             }
@@ -207,13 +209,8 @@ fn parse_object_layers(map: &tiled::Map, def: &mut MapDefinition) {
         match layer.name.as_str() {
             "Obstacles" => {
                 for obj in obj_layer.objects() {
-                    match obj.name.as_str() {
-                        "Mountain" | "Silo" => {
-                            let pos = tile_obj_to_axial(obj.x, obj.y);
-                            def.obstacles.insert(pos);
-                        }
-                        _ => {}
-                    }
+                    let pos = tile_obj_to_axial(obj.x, obj.y);
+                    def.obstacles.insert(pos);
                 }
             }
             "Bases" => {
@@ -315,13 +312,14 @@ fn polygon_to_world(obj_x: f32, obj_y: f32, rotation_deg: f32, points: &[(f32, f
 ///
 /// Derived from `tiled_to_axial` + `axial_to_world_pos`:
 ///   wx = (HEX_HEIGHT / 120) * (px − 840)
-///   wz = (96 / 105) * (py − 70) − 288
-/// where 840 is the Tiled x of the center tile (col=6, row=3 odd), and
-/// 288 = 96 * 3 accounts for the r=0 centering.
+///   wz = (z_step / 105) * (py − 70) − z_step * 3
+/// where z_step = HEX_WIDTH * HEX_Z_STRETCH * 0.75, 840 is the Tiled x of
+/// the center tile (col=6, row=3 odd), and z_step*3 accounts for r=0 centering.
 pub fn tiled_pixel_to_world_xz(px: f32, py: f32) -> (f32, f32) {
     const HEX_HEIGHT: f32 = 128.0 * 0.866_025_4;
+    const Z_STEP: f32 = 128.0 * crate::map::HEX_Z_STRETCH * 0.75;
     let wx = (HEX_HEIGHT / 120.0) * (px - 840.0);
-    let wz = (96.0 / 105.0) * (py - 70.0) - 288.0;
+    let wz = (Z_STEP / 105.0) * (py - 70.0) - Z_STEP * 3.0;
     (wx, wz)
 }
 

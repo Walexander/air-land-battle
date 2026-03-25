@@ -9,9 +9,12 @@ use crate::units::Unit;
 use crate::loading::LoadingState;
 
 // Hex grid constants
-const HEX_WIDTH: f32 = 128.0;
+pub const HEX_WIDTH: f32 = 128.0;
 const HEX_HEIGHT: f32 = HEX_WIDTH * 0.866_025_4; // width * sqrt(3)/2
 const HEX_RADIUS: f32 = HEX_WIDTH / 2.0;
+/// Stretches tiles in the Z direction without changing X spacing.
+/// 1.0 = regular hexagons; >1.0 = taller tiles.
+pub const HEX_Z_STRETCH: f32 = 1.25;
 
 // Components
 #[derive(Component)]
@@ -115,16 +118,16 @@ impl Plugin for MapPlugin {
 pub fn axial_to_world_pos(q: i32, r: i32) -> Vec3 {
     // Pointy-top hex coordinates
     let x = HEX_HEIGHT * (q as f32 + r as f32 * 0.5);
-    let z = HEX_WIDTH * 0.75 * r as f32;
+    let z = HEX_WIDTH * HEX_Z_STRETCH * 0.75 * r as f32;
     Vec3::new(x, 0.0, z)
 }
 
 pub fn world_pos_to_axial(x: f32, z: f32) -> (i32, i32) {
     // Inverse of axial_to_world_pos for pointy-top hex coordinates
     // From: x = HEX_HEIGHT * (q + r * 0.5)
-    //       z = HEX_WIDTH * 0.75 * r
+    //       z = HEX_WIDTH * HEX_Z_STRETCH * 0.75 * r
     // Solve for q and r:
-    let r = z / (HEX_WIDTH * 0.75);
+    let r = z / (HEX_WIDTH * HEX_Z_STRETCH * 0.75);
     let q = (x / HEX_HEIGHT) - (r * 0.5);
 
     // Round to nearest integer coordinates
@@ -149,7 +152,7 @@ fn create_hexagon_prism_mesh(height: f32) -> Mesh {
     for i in 0..6 {
         let angle = std::f32::consts::PI / 3.0 * i as f32;
         let x = HEX_RADIUS * angle.cos();
-        let z = HEX_RADIUS * angle.sin();
+        let z = HEX_RADIUS * HEX_Z_STRETCH * angle.sin();
         positions.push([x, top_y, z]);
         normals.push([0.0, 1.0, 0.0]);
         uvs.push([0.5 + x / HEX_WIDTH, 0.5 + z / HEX_WIDTH]);
@@ -170,7 +173,7 @@ fn create_hexagon_prism_mesh(height: f32) -> Mesh {
     for i in 0..6 {
         let angle = std::f32::consts::PI / 3.0 * i as f32;
         let x = HEX_RADIUS * angle.cos();
-        let z = HEX_RADIUS * angle.sin();
+        let z = HEX_RADIUS * HEX_Z_STRETCH * angle.sin();
 
         positions.push([x, base_y, z]);
 
@@ -213,7 +216,7 @@ fn create_filled_hexagon_mesh_with_radius(radius: f32) -> Mesh {
     let center = ([0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.5, 0.5]);
 
     let x = |i: f32| radius * (i * 2.0 * std::f32::consts::PI / 6.0).cos();
-    let z = |i: f32| radius * (i * 2.0 * std::f32::consts::PI / 6.0).sin();
+    let z = |i: f32| radius * HEX_Z_STRETCH * (i * 2.0 * std::f32::consts::PI / 6.0).sin();
 
     let spike0 = ([x(0.0), 0.0, z(0.0)], [0.0, 1.0, 0.0], [1.0, 0.5]);
     let spike1 = ([x(1.0), 0.0, z(1.0)], [0.0, 1.0, 0.0], [0.75, 1.0]);
@@ -562,7 +565,7 @@ fn setup_hex_map(
     let mut max_z = f32::NEG_INFINITY;
     for &(q, r) in &map_config.valid_cells {
         let wx = HEX_HEIGHT * (q as f32 + r as f32 * 0.5);
-        let wz = HEX_WIDTH * 0.75 * r as f32;
+        let wz = HEX_WIDTH * HEX_Z_STRETCH * 0.75 * r as f32;
         min_x = min_x.min(wx);
         max_x = max_x.max(wx);
         min_z = min_z.min(wz);
@@ -658,13 +661,13 @@ fn setup_hex_map(
                 let is_red_base = map_def.base_red_polygon.len() >= 3
                     && crate::map_loader::point_in_polygon(
                         HEX_HEIGHT * (q as f32 + r as f32 * 0.5),
-                        HEX_WIDTH * 0.75 * r as f32,
+                        HEX_WIDTH * HEX_Z_STRETCH * 0.75 * r as f32,
                         &map_def.base_red_polygon,
                     );
                 let is_blue_base = map_def.base_blue_polygon.len() >= 3
                     && crate::map_loader::point_in_polygon(
                         HEX_HEIGHT * (q as f32 + r as f32 * 0.5),
-                        HEX_WIDTH * 0.75 * r as f32,
+                        HEX_WIDTH * HEX_Z_STRETCH * 0.75 * r as f32,
                         &map_def.base_blue_polygon,
                     );
 
@@ -961,7 +964,7 @@ fn setup_hex_map(
 
             let world_pos = axial_to_world_pos(q, r);
             let wx = HEX_HEIGHT * (q as f32 + r as f32 * 0.5);
-            let wz = HEX_WIDTH * 0.75 * r as f32;
+            let wz = HEX_WIDTH * HEX_Z_STRETCH * 0.75 * r as f32;
 
             let is_red_hq = map_def.hq_red == Some((q, r));
             let is_blue_hq = map_def.hq_blue == Some((q, r));
