@@ -14,7 +14,8 @@
             "scaleInEditor": 1
         },
         "/Users/walexander/Downloads/kenney_hexagon-tiles/Spritesheet/hexagonBuildings_sheet.tsx": {
-            "scaleInDock": 1
+            "scaleInDock": 1,
+            "scaleInEditor": 1
         },
         "/Users/walexander/Downloads/kenney_hexagon-tiles/Spritesheet/kenney-tiles.tsx": {
             "scaleInDock": 1,
@@ -28,6 +29,33 @@
                 "y": 320.7070707070708
             }
         },
+        "Down the Middle.tmx": {
+            "expandedObjectLayers": [
+                3,
+                5,
+                6
+            ],
+            "scale": 1.0897,
+            "selectedLayer": 5,
+            "viewCenter": {
+                "x": 641.4609525557494,
+                "y": 384.968339910067
+            }
+        },
+        "Frozen Road.tmx": {
+            "expandedObjectLayers": [
+                3,
+                2,
+                5,
+                7
+            ],
+            "scale": 1.0897,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 620.3542259337434,
+                "y": 351.9317243277967
+            }
+        },
         "Mesa.tmx": {
             "expandedObjectLayers": [
                 2
@@ -35,21 +63,95 @@
             "scale": 1.1869,
             "selectedLayer": 1,
             "viewCenter": {
-                "x": 549.3301878844047,
-                "y": 442.750021063274
+                "x": 624.315443592552,
+                "y": 444.4350829892998
+            }
+        },
+        "Middle Mayhem.tmx": {
+            "expandedObjectLayers": [
+                8,
+                3,
+                2,
+                5,
+                6,
+                7
+            ],
+            "scale": 1.0897,
+            "selectedLayer": 1,
+            "viewCenter": {
+                "x": 672.6622006056713,
+                "y": 430.8525282187759
+            }
+        },
+        "Side By Side By Side.tmx": {
+            "expandedObjectLayers": [
+                8,
+                2,
+                7
+            ],
+            "scale": 1.1004,
+            "selectedLayer": 3,
+            "viewCenter": {
+                "x": 674.3002544529262,
+                "y": 373.95492548164304
             }
         },
         "Side By Side.tmx": {
             "expandedObjectLayers": [
+                8,
                 2,
-                5,
-                6
+                7
             ],
-            "scale": 1.1376543209876542,
+            "scale": 0.8806,
             "selectedLayer": 0,
             "viewCenter": {
-                "x": 769.1264243081932,
-                "y": 345.00813890396097
+                "x": 850.5564387917328,
+                "y": 332.15989098342044
+            }
+        },
+        "The Bullseye.tmx": {
+            "expandedObjectLayers": [
+                3,
+                2,
+                5,
+                6,
+                7
+            ],
+            "scale": 0.7109,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 478.2669855113238,
+                "y": 486.00365733577166
+            }
+        },
+        "Top Down.tmx": {
+            "expandedObjectLayers": [
+                8,
+                3,
+                2,
+                7
+            ],
+            "scale": 0.8806,
+            "selectedLayer": 4,
+            "viewCenter": {
+                "x": 763.1160572337042,
+                "y": 362.82080399727465
+            }
+        },
+        "Topsy Turvy.tmx": {
+            "expandedObjectLayers": [
+                8,
+                3,
+                2,
+                5,
+                6,
+                7
+            ],
+            "scale": 1.0897,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 865.3757915022485,
+                "y": 418.9226392585116
             }
         }
     },
@@ -64,6 +166,9 @@
     ],
     "project": "air-land-battle.tiled-project",
     "recentFiles": [
+        "Top Down.tmx",
+        "/Users/walexander/Downloads/kenney_hexagon-tiles/Spritesheet/hexagonBuildings_sheet.tsx",
+        "Frozen Road.tmx",
         "Side By Side.tmx",
         "/Users/walexander/Downloads/kenney_hexagon-tiles/Spritesheet/hexagonAll_sheet.tsx",
         "/Users/walexander/Downloads/kenney_hexagon-tiles/Spritesheet/untitled.tmx",

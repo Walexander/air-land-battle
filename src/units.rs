@@ -337,6 +337,9 @@ pub struct Occupancy {
 #[derive(Resource, Default)]
 pub struct UnitPositionCache {
     pub positions: HashMap<Entity, (i32, i32)>,
+    /// Live cell→entity map updated within move_units each frame so that
+    /// later-processed units see positions already claimed by earlier ones.
+    pub live_cell_to_entity: HashMap<(i32, i32), Entity>,
 }
 
 #[derive(Resource, Default)]
@@ -842,6 +845,10 @@ fn move_units(
 ) {
     let current_time = time.elapsed_secs();
 
+    // Seed the live cell map from last-frame occupancy so stationary units block
+    // immediately, then update it as each unit moves this frame.
+    position_cache.live_cell_to_entity = occupancy.position_to_entity.clone();
+
     for (entity, children, mut transform, mut unit, mut movement, stats, army, combat_opt) in &mut query {
         if movement.current_waypoint >= movement.waypoints.len() {
             // Update last_movement_time when movement ends
@@ -866,10 +873,10 @@ fn move_units(
             let first_blocked = hex_line(current_cell, target_cell)
                 .into_iter()
                 .skip(1) // skip the cell we're standing on
-                .find(|cell| occupancy.position_to_entity.get(cell).map_or(false, |&e| e != entity));
+                .find(|cell| position_cache.live_cell_to_entity.get(cell).map_or(false, |&e| e != entity));
 
             if let Some(blocked_cell) = first_blocked {
-                let occupying_entity = *occupancy.position_to_entity.get(&blocked_cell).unwrap();
+                let occupying_entity = *position_cache.live_cell_to_entity.get(&blocked_cell).unwrap();
                 if let Ok(occupying_army) = army_query.get(occupying_entity) {
                     let is_intermediate = blocked_cell != target_cell;
                     let is_final_destination = movement.current_waypoint == movement.waypoints.len() - 1;
@@ -1012,6 +1019,11 @@ fn move_units(
                 // Snap to waypoint
                 transform.translation.x = target_wp.x;
                 transform.translation.z = target_wp.z;
+                // Immediately sync unit.q/r so the in-flight check below doesn't
+                // misfire with stale occupancy at the segment boundary.
+                let arrived = crate::map::world_pos_to_axial(target_wp.x, target_wp.z);
+                unit.q = arrived.0;
+                unit.r = arrived.1;
             }
         } else {
             // Interpolate between waypoints
@@ -1020,46 +1032,52 @@ fn move_units(
             transform.translation.z = current_pos.z;
         }
 
-        // Update position cache every frame (fast, no change detection)
+        // Determine where this unit is right now.
         let current_cell = crate::map::world_pos_to_axial(transform.translation.x, transform.translation.z);
-        position_cache.positions.insert(entity, current_cell);
 
-        // Update Unit component position if it has changed (for fog of war and other systems).
-        // Also check in-flight: if the cell we've just entered is occupied by another unit
-        // (e.g. it became visible mid-segment), snap back and repath immediately.
-        if (unit.q, unit.r) != current_cell {
-            if let Some(&occupying_entity) = occupancy.position_to_entity.get(&current_cell) {
-                if occupying_entity != entity {
-                    // Entered an occupied cell — snap back to previous cell and repath.
-                    let prev_cell = (unit.q, unit.r);
-                    let center_pos = crate::map::axial_to_world_pos(prev_cell.0, prev_cell.1);
-                    transform.translation.x = center_pos.x;
-                    transform.translation.z = center_pos.z;
-                    position_cache.positions.insert(entity, prev_cell);
+        // Check for conflict BEFORE claiming the cell.  Another unit processed
+        // earlier this frame may already occupy current_cell.
+        if let Some(&occupying_entity) = position_cache.live_cell_to_entity.get(&current_cell) {
+            if occupying_entity != entity {
+                // Conflict — snap back to previous axial position and repath.
+                let prev_cell = (unit.q, unit.r);
+                let center_pos = crate::map::axial_to_world_pos(prev_cell.0, prev_cell.1);
+                transform.translation.x = center_pos.x;
+                transform.translation.z = center_pos.z;
+                // Restore unit.q/r in case we updated it during the waypoint snap above.
+                unit.q = prev_cell.0;
+                unit.r = prev_cell.1;
+                position_cache.positions.insert(entity, prev_cell);
+                // live_cell_to_entity was not updated for current_cell yet, so no cleanup needed.
 
-                    let final_wp = *movement.waypoints.last().unwrap();
-                    let final_goal = crate::map::world_pos_to_axial(final_wp.x, final_wp.z);
-                    let dummy_grid = crate::hex_pathfinding::HexPathfindingGrid;
+                let final_wp = *movement.waypoints.last().unwrap();
+                let final_goal = crate::map::world_pos_to_axial(final_wp.x, final_wp.z);
+                let dummy_grid = crate::hex_pathfinding::HexPathfindingGrid;
 
-                    let mut blocking = obstacles.positions.clone();
-                    blocking.insert(current_cell); // the cell we just bounced out of
-                    for &pos in &occupancy.positions {
-                        if pos != prev_cell {
-                            if let Some(&occ_e) = occupancy.position_to_entity.get(&pos) {
-                                if let Ok(occ_army) = army_query.get(occ_e) {
-                                    if occ_army == army || visible_hexes.0.contains(&pos) {
-                                        blocking.insert(pos);
-                                    }
-                                } else {
-                                    blocking.insert(pos);
-                                }
-                            } else {
+                let mut blocking = obstacles.positions.clone();
+                blocking.insert(current_cell);
+                for (&pos, &occ_e) in &position_cache.live_cell_to_entity {
+                    if pos != prev_cell {
+                        if let Ok(occ_army) = army_query.get(occ_e) {
+                            if occ_army == army || visible_hexes.0.contains(&pos) {
                                 blocking.insert(pos);
                             }
+                        } else {
+                            blocking.insert(pos);
                         }
                     }
+                }
 
-                    if let Some(waypoints) = find_path_waypoints(prev_cell, final_goal, &config.valid_cells, &blocking, &dummy_grid)
+                if let Some(waypoints) = find_path_waypoints(prev_cell, final_goal, &config.valid_cells, &blocking, &dummy_grid)
+                    && waypoints.len() > 1
+                {
+                    movement.waypoints = waypoints;
+                    movement.current_waypoint = 1;
+                    movement.progress = 0.0;
+                    movement.segment_distance = 0.0;
+                    movement.segment_start = Vec3::ZERO;
+                } else if let Some(adj_goal) = find_closest_adjacent_cell(final_goal, prev_cell, &blocking) {
+                    if let Some(waypoints) = find_path_waypoints(prev_cell, adj_goal, &config.valid_cells, &blocking, &dummy_grid)
                         && waypoints.len() > 1
                     {
                         movement.waypoints = waypoints;
@@ -1067,24 +1085,26 @@ fn move_units(
                         movement.progress = 0.0;
                         movement.segment_distance = 0.0;
                         movement.segment_start = Vec3::ZERO;
-                    } else if let Some(adj_goal) = find_closest_adjacent_cell(final_goal, prev_cell, &blocking) {
-                        if let Some(waypoints) = find_path_waypoints(prev_cell, adj_goal, &config.valid_cells, &blocking, &dummy_grid)
-                            && waypoints.len() > 1
-                        {
-                            movement.waypoints = waypoints;
-                            movement.current_waypoint = 1;
-                            movement.progress = 0.0;
-                            movement.segment_distance = 0.0;
-                            movement.segment_start = Vec3::ZERO;
-                        } else {
-                            commands.entity(entity).remove::<UnitMovement>();
-                        }
                     } else {
                         commands.entity(entity).remove::<UnitMovement>();
                     }
-                    continue;
+                } else {
+                    commands.entity(entity).remove::<UnitMovement>();
                 }
+                continue;
             }
+        }
+
+        // No conflict — claim the cell in the live map.
+        if let Some(&old_cell) = position_cache.positions.get(&entity) {
+            if old_cell != current_cell && position_cache.live_cell_to_entity.get(&old_cell) == Some(&entity) {
+                position_cache.live_cell_to_entity.remove(&old_cell);
+            }
+        }
+        position_cache.positions.insert(entity, current_cell);
+        position_cache.live_cell_to_entity.insert(current_cell, entity);
+
+        if (unit.q, unit.r) != current_cell {
             unit.q = current_cell.0;
             unit.r = current_cell.1;
         }

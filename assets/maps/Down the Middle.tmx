@@ -1,24 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<map version="1.10" tiledversion="1.11.2" orientation="hexagonal" renderorder="right-down" width="11" height="7" tilewidth="120" tileheight="140" infinite="0" hexsidelength="70" staggeraxis="y" staggerindex="odd" nextlayerid="9" nextobjectid="82">
+<map version="1.10" tiledversion="1.11.2" orientation="hexagonal" renderorder="right-down" width="11" height="7" tilewidth="120" tileheight="140" infinite="0" hexsidelength="70" staggeraxis="y" staggerindex="odd" nextlayerid="9" nextobjectid="86">
  <tileset firstgid="1" source="../../../../../Downloads/kenney_hexagon-tiles/Spritesheet/hexagonAll_sheet.tsx"/>
  <tileset firstgid="225" source="../../../../../Downloads/kenney_hexagon-tiles/Spritesheet/hexagonBuildings_sheet.tsx"/>
  <layer id="1" name="Tile Layer 1" width="11" height="7">
   <data encoding="csv">
-0,51,51,51,51,51,51,51,51,51,0,
-51,51,51,51,51,51,51,51,51,51,0,
-0,51,51,66,66,51,66,66,51,51,0,
-0,51,51,66,51,51,66,51,51,0,0,
-0,83,51,51,51,51,51,51,51,54,0,
-83,68,51,51,66,66,51,51,54,54,0,
-83,68,51,51,51,66,51,51,51,54,54
+0,51,0,51,51,51,51,51,51,51,0,
+51,3,51,51,51,51,51,51,51,51,0,
+0,51,146,66,66,51,66,66,146,51,0,
+0,51,51,66,51,51,66,51,51,51,0,
+0,132,51,51,51,51,51,51,51,22,0,
+132,132,51,51,66,66,51,51,22,22,0,
+132,132,51,51,51,66,51,51,51,22,22
 </data>
  </layer>
  <objectgroup id="2" name="Bases">
-  <object id="1" template="Right Base.tx" name="Blue Base" x="1140" y="420" rotation="0">
-   <polygon points="0,0 -60,35 -60,105 -120,140 -120,210 -60,245 -60,315 0,350 60,315 120,350 180,315 180,245 120,210 120,140 60,105 60,35"/>
-  </object>
-  <object id="3" template="Left Base.tx" name="Red Base" x="180" y="420" rotation="0">
+  <object id="3" template="Left Base.tx" name="Red Base" gid="0" x="180" y="420" rotation="0">
    <polygon points="0,0 60,35 60,105 120,140 120,210 60,245 60,315 0,350 -60,315 -120,350 -180,315 -180,245 -120,210 -120,140 -60,105 -60,35"/>
+  </object>
+  <object id="84" x="1200" y="525">
+   <polygon points="0,0 0,-70 -60,-105 -120,-70 -120,0 -180,35 -180,105 -120,140 -120,210 -60,245 0,210 60,245 120,210 120,140 60,105 60,35 0,0"/>
   </object>
  </objectgroup>
  <objectgroup id="7" name="Spawn Points">
@@ -36,13 +36,13 @@
   <object id="81" gid="2147483684" x="480" y="140" width="120" height="140"/>
  </objectgroup>
  <objectgroup id="3" name="Launch Pads">
-  <object id="6" name="Top" x="840" y="455" rotation="-180">
-   <polygon points="0,0 -60,35 -60,105 -120,140 -120,210 -60,245 0,210 60,245 120,210 120,140 60,105 60,35"/>
-  </object>
-  <object id="7" name="Middle" x="480" y="455" rotation="180">
-   <polygon points="0,0 -60,35 -60,105 -120,140 -120,210 -60,245 0,210 60,245 120,210 120,140 60,105 60,35"/>
+  <object id="6" name="Left" x="480" y="455" rotation="180">
+   <polygon points="0,0 60,35 60,105 120,140 120,210 60,245 0,210 -60,245 -120,210 -120,140 -60,105 -60,35"/>
   </object>
   <object id="69" name="Bottom" x="660" y="770" rotation="180">
+   <polygon points="0,0 60,35 60,105 120,140 120,210 60,245 0,210 -60,245 -120,210 -120,140 -60,105 -60,35"/>
+  </object>
+  <object id="85" name="Right" x="840" y="455" rotation="180">
    <polygon points="0,0 60,35 60,105 120,140 120,210 60,245 0,210 -60,245 -120,210 -120,140 -60,105 -60,35"/>
   </object>
  </objectgroup>

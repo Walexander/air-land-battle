@@ -17,11 +17,11 @@
   <object id="1" template="Right Base.tx" name="Blue Base" x="1380" y="0"/>
   <object id="3" template="Left Base.tx" name="Red Base" x="180" y="0"/>
  </objectgroup>
- <objectgroup id="7" name="Spawn Points" locked="1">
+ <objectgroup id="7" name="Spawn Points" visible="0" locked="1">
   <object id="60" name="Red Spawn" gid="3" x="240" y="350" width="120" height="140"/>
   <object id="61" name="Blue Spawn" gid="19" x="1200" y="350" width="120" height="140"/>
  </objectgroup>
- <objectgroup id="6" name="Crystals" locked="1">
+ <objectgroup id="6" name="Crystals" visible="0" locked="1">
   <object id="23" gid="36" x="120" y="560" width="120" height="140"/>
   <object id="24" gid="36" x="180" y="665" width="120" height="140"/>
   <object id="25" gid="36" x="240" y="770" width="120" height="140"/>
@@ -40,11 +40,11 @@
   <object id="7" name="Left Launchpad" x="540" y="420">
    <polygon points="0,0 -60,35 -60,105 -120,140 -120,210 -60,245 0,210 60,245 120,210 120,140 60,105 60,35"/>
   </object>
-  <object id="8" name="Center LaunchPad" x="780" y="560">
+  <object id="8" name="Center LaunchPad" x="720" y="245">
    <polygon points="0,0 -60,-35 -60,-105 -120,-140 -120,-210 -60,-245 0,-210 60,-245 120,-210 120,-140 60,-105 60,-35"/>
   </object>
  </objectgroup>
- <objectgroup id="5" name="Obstacles">
+ <objectgroup id="5" name="Obstacles" visible="0">
   <object id="9" name="Mountain" gid="50" x="840" y="560" width="120" height="140"/>
   <object id="10" name="Mountain" gid="50" x="600" y="560" width="120" height="140"/>
   <object id="11" name="Silo" gid="237" x="720" y="350" width="120" height="140"/>

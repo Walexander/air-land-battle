@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<map version="1.10" tiledversion="1.11.2" orientation="hexagonal" renderorder="right-down" width="9" height="7" tilewidth="120" tileheight="140" infinite="0" hexsidelength="70" staggeraxis="y" staggerindex="odd" nextlayerid="3" nextobjectid="11">
+<map version="1.10" tiledversion="1.11.2" orientation="hexagonal" renderorder="right-down" width="9" height="8" tilewidth="120" tileheight="140" infinite="0" hexsidelength="70" staggeraxis="y" staggerindex="odd" nextlayerid="5" nextobjectid="31">
  <tileset firstgid="1" source="../../../../../Downloads/kenney_hexagon-tiles/Spritesheet/hexagonAll_sheet.tsx"/>
- <layer id="1" name="Tile Layer 1" width="9" height="7">
+ <layer id="1" name="Tile Layer 1" width="9" height="8">
   <data encoding="csv">
+0,0,0,0,0,0,0,0,0,
 0,0,0,0,0,0,0,0,0,
 0,0,0,0,0,0,0,0,0,
 0,0,0,0,0,0,0,0,0,
