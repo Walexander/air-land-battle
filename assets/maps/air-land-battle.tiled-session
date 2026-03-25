@@ -90,10 +90,10 @@
                 7
             ],
             "scale": 1.1798,
-            "selectedLayer": 3,
+            "selectedLayer": -1,
             "viewCenter": {
-                "x": 707.7470757755552,
-                "y": 420.8340396677403
+                "x": 750.9747414816071,
+                "y": 344.5499237158841
             }
         },
         "Side By Side.tmx": {
@@ -111,17 +111,13 @@
         },
         "The Bullseye.tmx": {
             "expandedObjectLayers": [
-                3,
-                2,
-                5,
-                6,
-                7
+                2
             ],
             "scale": 0.7109,
-            "selectedLayer": 0,
+            "selectedLayer": 1,
             "viewCenter": {
-                "x": 478.2669855113238,
-                "y": 486.00365733577166
+                "x": 409.34027289351536,
+                "y": 456.4636376424251
             }
         },
         "Top Down.tmx": {
@@ -148,7 +144,7 @@
                 7
             ],
             "scale": 1.0897,
-            "selectedLayer": 0,
+            "selectedLayer": 5,
             "viewCenter": {
                 "x": 865.3757915022485,
                 "y": 418.9226392585116

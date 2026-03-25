@@ -69,22 +69,13 @@ fn update_minimap_on_hover(
 // Image generation
 // ---------------------------------------------------------------------------
 
-// Pixel dimensions of each hex cell in the minimap image.
-const CELL_W: i32 = 9;
-const CELL_H: i32 = 7; // ≈ 0.75 × CELL_W for hex vertical compression
-const GAP: i32 = 1;
-const STAGGER: i32 = 4; // half of CELL_W for odd-row offset
+// Pixel dimensions of each hex cell in the minimap image (pointy-top hexagons).
+const CELL_W: i32 = 10;
+const CELL_H: i32 = 12;
+const ROW_STEP: i32 = 9; // 3/4 * CELL_H — vertical distance between hex row centres
+const STAGGER: i32 = 5;  // CELL_W / 2 — odd-row horizontal offset
 const MARGIN: i32 = 3;
 
-// Tiled map bounds (all maps in this project use a 13 col × 7 row grid).
-const N_COLS: i32 = 13;
-const N_ROWS: i32 = 7;
-
-fn img_dims() -> (u32, u32) {
-    let w = (MARGIN * 2 + N_COLS * (CELL_W + GAP) + STAGGER) as u32;
-    let h = (MARGIN * 2 + N_ROWS * (CELL_H + GAP)) as u32;
-    (w, h)
-}
 
 // RGBA color palette
 const BG:       [u8; 4] = [12,  15,  25, 255];
@@ -98,25 +89,50 @@ const HQ_B:     [u8; 4] = [28,  48, 240,  255];
 const CRYSTAL:  [u8; 4] = [48, 200, 200,  255];
 
 fn build_minimap(tmx_path: &str) -> Image {
-    let (w, h) = img_dims();
-    // Fill with background colour
-    let mut data: Vec<u8> = BG.iter().cloned().cycle().take((w * h * 4) as usize).collect();
-
     let path = Path::new(tmx_path);
     let Ok(content) = std::fs::read_to_string(path) else {
         warn!("minimap: could not read {tmx_path}");
+        let (w, h) = (141u32, 72u32);
+        let data: Vec<u8> = BG.iter().cloned().cycle().take((w * h * 4) as usize).collect();
         return finish_image(data, w, h);
     };
 
     // Parse tile CSV → (col, row) cells that have tiles
     let tile_cells = parse_csv_cells(&content);
 
+    if tile_cells.is_empty() {
+        let (w, h) = (141u32, 72u32);
+        let data: Vec<u8> = BG.iter().cloned().cycle().take((w * h * 4) as usize).collect();
+        return finish_image(data, w, h);
+    }
+
+    // Row extent (for vertical sizing)
+    let min_row = tile_cells.iter().map(|&(_, r)| r).min().unwrap();
+    let max_row = tile_cells.iter().map(|&(_, r)| r).max().unwrap();
+    let min_col = tile_cells.iter().map(|&(c, _)| c).min().unwrap();
+
+    // Compute each cell's pixel x using the ORIGINAL row parity for correct stagger
+    let cell_xs: Vec<i32> = tile_cells.iter()
+        .map(|&(col, row)| (col - min_col) * CELL_W + if row % 2 != 0 { STAGGER } else { 0 })
+        .collect();
+
+    // Tight horizontal bounds → equal MARGIN on both sides
+    let px_min = *cell_xs.iter().min().unwrap();
+    let px_max = cell_xs.iter().max().unwrap() + CELL_W;
+    let x_base = MARGIN - px_min;
+
+    let n_rows = max_row - min_row + 1;
+    let img_w = (px_max - px_min + 2 * MARGIN) as u32;
+    let img_h = ((n_rows - 1) * ROW_STEP + CELL_H + 2 * MARGIN) as u32;
+
+    let mut data: Vec<u8> = BG.iter().cloned().cycle().take((img_w * img_h * 4) as usize).collect();
+
     // Parse object layers → typed axial sets
     let info = parse_objects(tmx_path);
 
     // Paint each cell
-    for (col, row) in &tile_cells {
-        let axial = crate::map_loader::tiled_to_axial(*col, *row);
+    for (i, &(col, row)) in tile_cells.iter().enumerate() {
+        let axial = crate::map_loader::tiled_to_axial(col, row);
         let color = if info.hq_red == Some(axial) {
             HQ_R
         } else if info.hq_blue == Some(axial) {
@@ -134,23 +150,30 @@ fn build_minimap(tmx_path: &str) -> Image {
         } else {
             TILE
         };
-        paint_cell(&mut data, w, *col, *row, color);
+        let bx = x_base + cell_xs[i];
+        let by = MARGIN + (row - min_row) * ROW_STEP;
+        paint_cell(&mut data, img_w, bx, by, color);
     }
 
-    finish_image(data, w, h)
+    finish_image(data, img_w, img_h)
 }
 
-fn paint_cell(data: &mut [u8], img_w: u32, col: i32, row: i32, color: [u8; 4]) {
-    let px = MARGIN + col * (CELL_W + GAP) + if row % 2 != 0 { STAGGER } else { 0 };
-    let py = MARGIN + row * (CELL_H + GAP);
+fn paint_cell(data: &mut [u8], img_w: u32, bx: i32, by: i32, color: [u8; 4]) {
+    let hw = CELL_W / 2;
+    let hh = CELL_H / 2;
     for dy in 0..CELL_H {
         for dx in 0..CELL_W {
-            let x = (px + dx) as u32;
-            let y = (py + dy) as u32;
-            if x < img_w {
-                let idx = ((y * img_w + x) * 4) as usize;
-                if idx + 3 < data.len() {
-                    data[idx..idx + 4].copy_from_slice(&color);
+            // Pointy-top hex interior test (pixel centre relative to cell centre)
+            let ax = (dx - hw).abs();
+            let ay = (dy - hh).abs();
+            if ax <= hw && 2 * ay * CELL_W + ax * CELL_H <= CELL_H * CELL_W {
+                let x = (bx + dx) as u32;
+                let y = (by + dy) as u32;
+                if x < img_w {
+                    let idx = ((y * img_w + x) * 4) as usize;
+                    if idx + 3 < data.len() {
+                        data[idx..idx + 4].copy_from_slice(&color);
+                    }
                 }
             }
         }

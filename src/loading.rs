@@ -114,8 +114,8 @@ fn setup_title_screen(mut commands: Commands) {
             // Right column: minimap preview panel
             row.spawn((
                 Node {
-                    width: Val::Px(375.0),
-                    height: Val::Px(265.0),
+                    width: Val::Px(423.0),
+                    height: Val::Px(216.0),
                     border: UiRect::all(Val::Px(2.0)),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
