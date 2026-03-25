@@ -70,10 +70,10 @@ fn update_minimap_on_hover(
 // ---------------------------------------------------------------------------
 
 // Pixel dimensions of each hex cell in the minimap image (pointy-top hexagons).
-const CELL_W: i32 = 10;
+const CELL_W: i32 = 12;
 const CELL_H: i32 = 12;
 const ROW_STEP: i32 = 9; // 3/4 * CELL_H — vertical distance between hex row centres
-const STAGGER: i32 = 5;  // CELL_W / 2 — odd-row horizontal offset
+const STAGGER: i32 = 6;  // CELL_W / 2 — odd-row horizontal offset
 const MARGIN: i32 = 3;
 
 

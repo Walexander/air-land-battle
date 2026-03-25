@@ -850,7 +850,7 @@ fn handle_keyboard_and_scroll_camera(
         settings.look_at_x = settings.home_x;
         settings.look_at_y = 0.0;
         settings.look_at_z = settings.home_z;
-        settings.scale = 0.8;
+        settings.scale = 0.85;
         return;
     }
 
@@ -881,7 +881,7 @@ fn handle_keyboard_and_scroll_camera(
         let zoom_delta = -event.y * zoom_speed; // Negative because scroll up should zoom in
 
         settings.scale += zoom_delta * settings.scale; // Scale zoom by current zoom level
-        settings.scale = settings.scale.clamp(0.3, 0.8); // Only allow zooming out from initial scale (smaller = more zoomed out for ortho)
+        settings.scale = settings.scale.clamp(0.3, 0.85); // Only allow zooming out from initial scale (smaller = more zoomed out for ortho)
     }
 }
 
@@ -1059,14 +1059,14 @@ impl Plugin for UIPlugin {
             z: 500.0,
             look_at_x: 0.0,
             look_at_y: 0.0,
-            look_at_z: 100.0,
-            scale: 0.8,
+            look_at_z: 150.0,
+            scale: 0.85,
             home_x: 0.0,
             home_z: 0.0,
         })
         .insert_resource(CameraControlsVisible(false))
         .insert_resource(UIClicked(false))
-        .add_systems(OnEnter(LoadingState::Playing), (setup_ui, setup_camera_controls))
+        .add_systems(OnEnter(LoadingState::Playing), (setup_ui, setup_camera_controls.after(crate::map::setup_hex_map)))
         .add_systems(
             Update,
             (

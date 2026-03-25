@@ -539,7 +539,7 @@ fn create_launch_pad_outline_mesh(perimeter_edges: &[((i32, i32), (i32, i32))], 
         .with_inserted_indices(Indices::U32(indices))
 }
 
-fn setup_hex_map(
+pub fn setup_hex_map(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -574,7 +574,7 @@ fn setup_hex_map(
 
     // Push the computed center into CameraSettings so update_camera_from_settings uses it.
     camera_settings.x = center_x;
-    camera_settings.z = center_z + 500.0;
+    camera_settings.z = center_z + 400.0;
     camera_settings.look_at_x = center_x;
     camera_settings.look_at_z = center_z;
     camera_settings.home_x = center_x;
