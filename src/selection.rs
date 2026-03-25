@@ -49,6 +49,10 @@ pub struct HoverRing {
     pub hovered_entity: Entity,
 }
 
+/// Green outline drawn around the hex cell currently occupied by the selected unit.
+#[derive(Component)]
+struct SelectedCellHighlight;
+
 // Mesh creation functions
 pub fn create_selection_ring_mesh(inner_radius: f32, outer_radius: f32) -> Mesh {
     create_ring_mesh_with_segments(inner_radius, outer_radius, 32)
@@ -1590,6 +1594,49 @@ fn animate_inner_quarter_circles(
     }
 }
 
+fn update_selected_cell_highlight(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    selected_query: Query<Entity, With<Selected>>,
+    position_cache: Res<crate::units::UnitPositionCache>,
+    mut highlight_query: Query<(Entity, &mut Transform), With<SelectedCellHighlight>>,
+) {
+    let occupied_cell = selected_query.single().ok()
+        .and_then(|e| position_cache.positions.get(&e).copied());
+
+    if let Some((q, r)) = occupied_cell {
+        let cell_pos = axial_to_world_pos(q, r);
+        let target = Vec3::new(cell_pos.x, 2.0, cell_pos.z);
+
+        if let Ok((_, mut transform)) = highlight_query.single_mut() {
+            transform.translation = target;
+        } else {
+            let mesh = meshes.add(create_hexagon_outline_mesh(63.0, 3.0));
+            let material = materials.add(StandardMaterial {
+                base_color: Color::linear_rgba(0.0, 8.0, 0.0, 1.0),
+                emissive: LinearRgba::new(0.0, 8.0, 0.0, 1.0),
+                unlit: true,
+                double_sided: true,
+                cull_mode: None,
+                ..default()
+            });
+            commands.spawn((
+                Mesh3d(mesh),
+                MeshMaterial3d(material),
+                Transform::from_translation(target)
+                    .with_rotation(Quat::from_rotation_y(std::f32::consts::PI / 2.0)),
+                SelectedCellHighlight,
+                DespawnOnExit(LoadingState::Playing),
+            ));
+        }
+    } else {
+        for (entity, _) in highlight_query.iter() {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
 impl Plugin for SelectionPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
@@ -1600,6 +1647,7 @@ impl Plugin for SelectionPlugin {
                 animate_destination_rings,
                 update_path_visualizations,
                 animate_inner_quarter_circles,
+                update_selected_cell_highlight,
             ).run_if(in_state(LoadingState::Playing))
         );
         app.add_systems(

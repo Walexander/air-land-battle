@@ -120,15 +120,35 @@ pub fn axial_to_world_pos(q: i32, r: i32) -> Vec3 {
 }
 
 pub fn world_pos_to_axial(x: f32, z: f32) -> (i32, i32) {
-    // Inverse of axial_to_world_pos for pointy-top hex coordinates
-    // From: x = HEX_HEIGHT * (q + r * 0.5)
-    //       z = HEX_WIDTH * 0.75 * r
-    // Solve for q and r:
     let r = z / (HEX_WIDTH * 0.75);
     let q = (x / HEX_HEIGHT) - (r * 0.5);
-
-    // Round to nearest integer coordinates
     (q.round() as i32, r.round() as i32)
+}
+
+/// Converts world position to axial cell with a small hysteresis dead-zone.
+/// Requires the unit's current cell (prev_q, prev_r) so we only cross a
+/// cell boundary when clearly past it, preventing floating-point oscillation
+/// near exact boundary positions.  The threshold is intentionally tiny (3%)
+/// to avoid false conflicts with units that legitimately enter the old cell.
+pub fn world_pos_to_axial_hysteresis(x: f32, z: f32, prev_q: i32, prev_r: i32) -> (i32, i32) {
+    const HYSTERESIS: f32 = 0.03;
+
+    let r_frac = z / (HEX_WIDTH * 0.75);
+    let final_r = if (r_frac - prev_r as f32).abs() > 0.5 + HYSTERESIS {
+        r_frac.round() as i32
+    } else {
+        prev_r
+    };
+
+    // Recompute q in the frame of the committed row.
+    let q_frac = (x / HEX_HEIGHT) - (final_r as f32 * 0.5);
+    let final_q = if (q_frac - prev_q as f32).abs() > 0.5 + HYSTERESIS {
+        q_frac.round() as i32
+    } else {
+        prev_q
+    };
+
+    (final_q, final_r)
 }
 
 fn create_hexagon_prism_mesh(height: f32) -> Mesh {
