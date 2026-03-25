@@ -274,12 +274,12 @@ impl Plugin for LoadingPlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<LoadingState>()
             .add_systems(Startup, setup_persistent_camera)
-            .add_systems(OnEnter(LoadingState::TitleScreen), setup_title_screen)
+            .add_systems(OnEnter(LoadingState::TitleScreen), (setup_title_screen, preload_assets))
             .add_systems(
                 Update,
                 handle_title_screen_buttons.run_if(in_state(LoadingState::TitleScreen)),
             )
-            .add_systems(OnEnter(LoadingState::Loading), (cleanup_title_screen, setup_loading_screen, preload_assets))
+            .add_systems(OnEnter(LoadingState::Loading), (cleanup_title_screen, setup_loading_screen))
             .add_systems(Update, check_assets_ready.run_if(in_state(LoadingState::Loading)))
             .add_systems(OnEnter(LoadingState::Playing), cleanup_loading_screen);
     }
