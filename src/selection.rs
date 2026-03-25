@@ -3,7 +3,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy_mod_outline::OutlineVolume;
 
-use crate::map::{axial_to_world_pos, HexMapConfig, HoveredHex, Obstacles, VisibleHexes, HEX_Z_STRETCH};
+use crate::map::{axial_to_world_pos, HexMapConfig, HoveredHex, Obstacles, VisibleHexes};
 use crate::units::{find_path_waypoints, Occupancy, ClaimedCellsThisFrame, Unit, UnitMovement, Army, UnitStats};
 use crate::loading::LoadingState;
 
@@ -66,11 +66,11 @@ pub fn create_ring_arc_mesh(inner_radius: f32, outer_radius: f32, start_angle: f
         let cos = angle.cos();
         let sin = angle.sin();
 
-        positions.push([outer_radius * cos, 0.1, outer_radius * sin * HEX_Z_STRETCH]);
+        positions.push([outer_radius * cos, 0.1, outer_radius * sin]);
         normals.push([0.0, 1.0, 0.0]);
         uvs.push([0.5 + cos * 0.5, 0.5 + sin * 0.5]);
 
-        positions.push([inner_radius * cos, 0.1, inner_radius * sin * HEX_Z_STRETCH]);
+        positions.push([inner_radius * cos, 0.1, inner_radius * sin]);
         normals.push([0.0, 1.0, 0.0]);
         uvs.push([0.5 + cos * 0.3, 0.5 + sin * 0.3]);
     }
@@ -112,11 +112,11 @@ pub fn create_ring_mesh_with_segments(inner_radius: f32, outer_radius: f32, segm
         let cos = angle.cos();
         let sin = angle.sin();
 
-        positions.push([outer_radius * cos, 0.1, outer_radius * sin * HEX_Z_STRETCH]);
+        positions.push([outer_radius * cos, 0.1, outer_radius * sin]);
         normals.push([0.0, 1.0, 0.0]);
         uvs.push([0.5 + cos * 0.5, 0.5 + sin * 0.5]);
 
-        positions.push([inner_radius * cos, 0.1, inner_radius * sin * HEX_Z_STRETCH]);
+        positions.push([inner_radius * cos, 0.1, inner_radius * sin]);
         normals.push([0.0, 1.0, 0.0]);
         uvs.push([0.5 + cos * 0.3, 0.5 + sin * 0.3]);
     }
@@ -152,7 +152,7 @@ fn create_filled_hexagon_mesh(radius: f32) -> Mesh {
     let center = ([0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.5, 0.5]);
 
     let x = |i: f32| radius * (i * 2.0 * std::f32::consts::PI / 6.0).cos();
-    let z = |i: f32| radius * HEX_Z_STRETCH * (i * 2.0 * std::f32::consts::PI / 6.0).sin();
+    let z = |i: f32| radius * (i * 2.0 * std::f32::consts::PI / 6.0).sin();
 
     let spike0 = ([x(0.0), 0.0, z(0.0)], [0.0, 1.0, 0.0], [1.0, 0.5]);
     let spike1 = ([x(1.0), 0.0, z(1.0)], [0.0, 1.0, 0.0], [0.75, 1.0]);
@@ -202,9 +202,9 @@ pub fn create_hexagon_outline_mesh(radius: f32, line_width: f32) -> Mesh {
         let angle2 = ((i + 1) % 6) as f32 * std::f32::consts::PI / 3.0;
 
         let x1 = radius * angle1.cos();
-        let z1 = radius * HEX_Z_STRETCH * angle1.sin();
+        let z1 = radius * angle1.sin();
         let x2 = radius * angle2.cos();
-        let z2 = radius * HEX_Z_STRETCH * angle2.sin();
+        let z2 = radius * angle2.sin();
 
         // Direction along the edge
         let dx = x2 - x1;
