@@ -187,9 +187,15 @@ impl Plugin for LaunchPadsPlugin {
 fn populate_launch_pads(
     mut launch_pads: ResMut<LaunchPads>,
     map_def: Res<crate::map_loader::MapDefinition>,
+    mut game_timer: ResMut<GameTimer>,
+    mut game_state: ResMut<GameState>,
+    mut pad_ownership: ResMut<LaunchPadOwnership>,
 ) {
     launch_pads.pads = map_def.launch_pads.clone();
     println!("LaunchPads: loaded {} pads from map definition", launch_pads.pads.len());
+    *game_timer = GameTimer::default();
+    *game_state = GameState::default();
+    *pad_ownership = LaunchPadOwnership::default();
 }
 
 fn not_paused(paused: Res<crate::Paused>) -> bool {

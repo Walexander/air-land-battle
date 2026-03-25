@@ -1480,6 +1480,7 @@ fn remove_dead_units(
                 ExplosionVisual {
                     timer: 0.0,
                 },
+                DespawnOnExit(crate::loading::LoadingState::Playing),
             ));
 
             // Spawn dark smoke cloud
@@ -1501,6 +1502,7 @@ fn remove_dead_units(
                     timer: 0.0,
                     rise_speed: 20.0,
                 },
+                DespawnOnExit(crate::loading::LoadingState::Playing),
             ));
 
             // Despawn all children (Infantry models, etc.)
@@ -1603,8 +1605,21 @@ fn reset_game(
         // Reset spawn cooldowns
         *spawn_cooldowns = SpawnCooldowns::default();
 
-        // Respawn units by calling setup_units logic
-        setup_units(commands);
+        // Re-spawn army root entities
+        commands.spawn((
+            RedArmy,
+            Transform::default(),
+            Visibility::default(),
+            Name::new("Red Army"),
+            DespawnOnExit(crate::loading::LoadingState::Playing),
+        ));
+        commands.spawn((
+            BlueArmy,
+            Transform::default(),
+            Visibility::default(),
+            Name::new("Blue Army"),
+            DespawnOnExit(crate::loading::LoadingState::Playing),
+        ));
 
         println!("Game reset complete!");
     }
@@ -2926,13 +2941,16 @@ fn update_collision_spheres(
     }
 }
 
-fn setup_units(mut commands: Commands) {
+fn setup_units(mut commands: Commands, mut spawn_cooldowns: ResMut<SpawnCooldowns>, mut spawn_queue: ResMut<UnitSpawnQueue>) {
+    *spawn_cooldowns = SpawnCooldowns::default();
+    *spawn_queue = UnitSpawnQueue::default();
     // Create Red Army parent - units will be spawned dynamically via spawn_unit_from_request
     commands.spawn((
         RedArmy,
         Transform::default(),
         Visibility::default(),
         Name::new("Red Army"),
+        DespawnOnExit(crate::loading::LoadingState::Playing),
     ));
 
     // Create Blue Army parent - units will be spawned dynamically via spawn_unit_from_request
@@ -2941,6 +2959,7 @@ fn setup_units(mut commands: Commands) {
         Transform::default(),
         Visibility::default(),
         Name::new("Blue Army"),
+        DespawnOnExit(crate::loading::LoadingState::Playing),
     ));
 }
 fn detect_unit_clicks(

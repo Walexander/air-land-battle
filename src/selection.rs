@@ -338,6 +338,7 @@ pub fn spawn_destination_ring(
             animation_timer: 0.0,
             bounce_count: 0,
         },
+        DespawnOnExit(LoadingState::Playing),
     )).with_children(|parent| {
         // Add border slightly below the filled hexagon
         parent.spawn((
@@ -1406,6 +1407,7 @@ fn update_path_visualizations(
                         cached_target_pos: target_pos,
                         last_mesh_update: time.elapsed_secs(),
                     },
+                    DespawnOnExit(LoadingState::Playing),
                 ));
             }
         }
@@ -1460,6 +1462,7 @@ fn visualize_targeting(
                     unit_entity,
                     target_entity,
                 },
+                DespawnOnExit(LoadingState::Playing),
             ));
         }
     }
@@ -1556,6 +1559,7 @@ fn visualize_hover_ring(
                     HoverRing {
                         hovered_entity,
                     },
+                    DespawnOnExit(LoadingState::Playing),
                 ));
             }
     }

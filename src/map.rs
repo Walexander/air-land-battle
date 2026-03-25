@@ -596,6 +596,7 @@ fn setup_hex_map(
         Transform::from_xyz(center_x, 300.0, center_z + 500.0)
             .looking_at(Vec3::new(center_x, 0.0, center_z), Vec3::Y),
         GameCamera,
+        DespawnOnExit(LoadingState::Playing),
     ));
 
     // Add directional light
@@ -606,14 +607,18 @@ fn setup_hex_map(
             ..default()
         },
         Transform::from_xyz(4.0, 8.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
+        DespawnOnExit(LoadingState::Playing),
     ));
 
     // Add ambient light for better illumination
-    commands.spawn(AmbientLight {
-        color: Color::srgb(1.0, 1.0, 1.0),
-        brightness: 500.0,
-        affects_lightmapped_meshes: false,
-    });
+    commands.spawn((
+        AmbientLight {
+            color: Color::srgb(1.0, 1.0, 1.0),
+            brightness: 500.0,
+            affects_lightmapped_meshes: false,
+        },
+        DespawnOnExit(LoadingState::Playing),
+    ));
 
     let prism_height = 20.0;
 
@@ -633,6 +638,7 @@ fn setup_hex_map(
         Transform::default(),
         Visibility::default(),
         Name::new("HexMap"),
+        DespawnOnExit(LoadingState::Playing),
     )).with_children(|parent| {
         // Iterate all tiles in the TMX tile layer, plus any launch-pad cells that
         // weren't present in the tile layer (polygon-derived, GID=0 in the CSV).

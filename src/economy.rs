@@ -250,6 +250,7 @@ impl Plugin for EconomyPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Economy>()
             .init_resource::<PassiveIncomeTimer>()
+            .add_systems(OnEnter(LoadingState::Playing), reset_economy)
             .add_systems(
                 Update,
                 (
@@ -261,6 +262,11 @@ impl Plugin for EconomyPlugin {
                     .run_if(in_state(LoadingState::Playing).and(not_paused)),
             );
     }
+}
+
+fn reset_economy(mut economy: ResMut<Economy>, mut income_timer: ResMut<PassiveIncomeTimer>) {
+    *economy = Economy::default();
+    *income_timer = PassiveIncomeTimer::default();
 }
 
 fn not_paused(paused: Res<crate::Paused>) -> bool {

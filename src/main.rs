@@ -54,7 +54,21 @@ fn main() {
         .insert_resource(Paused(false))
         .add_systems(Startup, (setup_fps_counter, setup_game_speed))
         .add_systems(Update, (update_fps_text, toggle_inspector, toggle_pause, handle_pause_time, show_pause_overlay))
+        .add_systems(Update, quit_to_menu.run_if(in_state(loading::LoadingState::Playing)))
         .run();
+}
+
+fn quit_to_menu(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut next_state: ResMut<NextState<loading::LoadingState>>,
+    mut paused: ResMut<Paused>,
+) {
+    if keyboard.just_pressed(KeyCode::KeyQ) {
+        if paused.0 {
+            paused.0 = false;
+        }
+        next_state.set(loading::LoadingState::TitleScreen);
+    }
 }
 
 fn setup_game_speed(mut time: ResMut<Time<Virtual>>) {

@@ -58,8 +58,9 @@ enum TrackType {
     Intense,
 }
 
-fn setup_music(_commands: Commands, _asset_server: Res<AssetServer>) {
-    // Main music disabled
+fn setup_music(_commands: Commands, _asset_server: Res<AssetServer>, mut music_state: ResMut<MusicState>) {
+    // Main music disabled; reset state for a fresh game
+    *music_state = MusicState::default();
 }
 
 fn check_music_switch(
@@ -90,6 +91,7 @@ fn check_music_switch(
                     track_type: TrackType::Intense,
                     target_volume: 0.025,
                 },
+                DespawnOnExit(crate::loading::LoadingState::Playing),
             ));
         }
     }

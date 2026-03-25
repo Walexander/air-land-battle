@@ -80,7 +80,7 @@ fn reset_ui_clicked(mut ui_clicked: ResMut<UIClicked>) {
 fn setup_ui(mut commands: Commands) {
     // Bottom bar with buttons and money counter
     commands
-        .spawn(Node {
+        .spawn((Node {
             width: Val::Percent(100.0),
             height: Val::Px(90.0),
             position_type: PositionType::Absolute,
@@ -91,7 +91,7 @@ fn setup_ui(mut commands: Commands) {
             justify_content: JustifyContent::Center,
             padding: UiRect::all(Val::Px(7.5)),
             ..default()
-        })
+        }, DespawnOnExit(LoadingState::Playing)))
         .insert(BackgroundColor(Color::srgb(1.0, 1.0, 1.0)))
         .with_children(|parent| {
             // Infantry button
@@ -297,10 +297,11 @@ fn setup_ui(mut commands: Commands) {
             ..default()
         },
         BlueMoneyText,
+        DespawnOnExit(LoadingState::Playing),
     ));
 
     commands
-        .spawn(Node {
+        .spawn((Node {
             width: Val::Percent(100.0),
             height: Val::Px(60.0),
             position_type: PositionType::Absolute,
@@ -308,7 +309,7 @@ fn setup_ui(mut commands: Commands) {
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
             ..default()
-        })
+        }, DespawnOnExit(LoadingState::Playing)))
         .with_children(|parent| {
             parent
                 .spawn((
@@ -378,6 +379,7 @@ fn setup_ui(mut commands: Commands) {
         },
         BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.7)),
         HexCoordinateDisplay,
+        DespawnOnExit(LoadingState::Playing),
     ));
 }
 
@@ -758,6 +760,7 @@ fn setup_camera_controls(mut commands: Commands, settings: Res<CameraSettings>) 
             BackgroundColor(Color::srgba(0.1, 0.1, 0.1, 0.8)),
             ZIndex(1000),
             CameraControlsPanel,
+            DespawnOnExit(LoadingState::Playing),
         ))
         .with_children(|parent| {
             parent.spawn((
