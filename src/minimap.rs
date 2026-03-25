@@ -82,10 +82,9 @@ const BG:       [u8; 4] = [12,  15,  25, 255];
 const TILE:     [u8; 4] = [85,  95, 112, 255];
 const OBSTACLE: [u8; 4] = [52,  46,  36, 255];
 const LAUNCHPAD:[u8; 4] = [200, 168, 42,  255];
-const SPAWN_R:  [u8; 4] = [200, 58,  58,  255];
-const SPAWN_B:  [u8; 4] = [58,  78, 200,  255];
-const HQ_R:     [u8; 4] = [240, 28,  28,  255];
-const HQ_B:     [u8; 4] = [28,  48, 240,  255];
+const SPAWN:    [u8; 4] = [210, 210, 210, 255];
+const HQ_R:     [u8; 4] = [200, 58,  58,  255];
+const HQ_B:     [u8; 4] = [58,  78, 200,  255];
 const CRYSTAL:  [u8; 4] = [48, 200, 200,  255];
 
 fn build_minimap(tmx_path: &str) -> Image {
@@ -133,18 +132,16 @@ fn build_minimap(tmx_path: &str) -> Image {
     // Paint each cell
     for (i, &(col, row)) in tile_cells.iter().enumerate() {
         let axial = crate::map_loader::tiled_to_axial(col, row);
-        let color = if info.hq_red == Some(axial) {
+        let color = if info.base_red.contains(&axial) {
             HQ_R
-        } else if info.hq_blue == Some(axial) {
+        } else if info.base_blue.contains(&axial) {
             HQ_B
         } else if info.obstacles.contains(&axial) {
             OBSTACLE
         } else if info.launch_pads.contains(&axial) {
             LAUNCHPAD
-        } else if info.spawn_red.contains(&axial) {
-            SPAWN_R
-        } else if info.spawn_blue.contains(&axial) {
-            SPAWN_B
+        } else if info.spawn_red.contains(&axial) || info.spawn_blue.contains(&axial) {
+            SPAWN
         } else if info.crystals.contains(&axial) {
             CRYSTAL
         } else {
@@ -226,8 +223,8 @@ struct MapInfo {
     launch_pads: HashSet<(i32, i32)>,
     spawn_red:  HashSet<(i32, i32)>,
     spawn_blue: HashSet<(i32, i32)>,
-    hq_red:     Option<(i32, i32)>,
-    hq_blue:    Option<(i32, i32)>,
+    base_red:   HashSet<(i32, i32)>,
+    base_blue:  HashSet<(i32, i32)>,
     crystals:   HashSet<(i32, i32)>,
 }
 
@@ -250,8 +247,8 @@ fn parse_objects(tmx_path: &str) -> MapInfo {
             launch_pads: HashSet::new(),
             spawn_red: HashSet::new(),
             spawn_blue: HashSet::new(),
-            hq_red: None,
-            hq_blue: None,
+            base_red: HashSet::new(),
+            base_blue: HashSet::new(),
             crystals: HashSet::new(),
         };
     };
@@ -260,9 +257,9 @@ fn parse_objects(tmx_path: &str) -> MapInfo {
     let mut launch_pads: HashSet<(i32, i32)> = HashSet::new();
     let mut spawn_red:   HashSet<(i32, i32)> = HashSet::new();
     let mut spawn_blue:  HashSet<(i32, i32)> = HashSet::new();
-    let mut hq_red:   Option<(i32, i32)> = None;
-    let mut hq_blue:  Option<(i32, i32)> = None;
-    let mut crystals: HashSet<(i32, i32)> = HashSet::new();
+    let mut base_red:    HashSet<(i32, i32)> = HashSet::new();
+    let mut base_blue:   HashSet<(i32, i32)> = HashSet::new();
+    let mut crystals:    HashSet<(i32, i32)> = HashSet::new();
     let mut base_red_poly:  Vec<(f32, f32)> = Vec::new();
     let mut base_blue_poly: Vec<(f32, f32)> = Vec::new();
     let mut pad_polys: Vec<Vec<(f32, f32)>> = Vec::new();
@@ -277,20 +274,13 @@ fn parse_objects(tmx_path: &str) -> MapInfo {
             }
             "Bases" => {
                 for obj in obj_layer.objects() {
-                    match obj.name.as_str() {
-                        "Red HQ"   => { hq_red  = Some(crate::map_loader::tile_obj_to_axial(obj.x, obj.y)); }
-                        "Blue HQ"  => { hq_blue = Some(crate::map_loader::tile_obj_to_axial(obj.x, obj.y)); }
-                        "Red Base" => {
-                            if let tiled::ObjectShape::Polygon { points } = &obj.shape {
-                                base_red_poly = crate::map_loader::polygon_to_world(obj.x, obj.y, obj.rotation, points);
-                            }
+                    if let tiled::ObjectShape::Polygon { points } = &obj.shape {
+                        let poly = crate::map_loader::polygon_to_world(obj.x, obj.y, obj.rotation, points);
+                        match obj.name.as_str() {
+                            "Red Base"  => base_red_poly  = poly,
+                            "Blue Base" => base_blue_poly = poly,
+                            _ => {}
                         }
-                        "Blue Base" => {
-                            if let tiled::ObjectShape::Polygon { points } = &obj.shape {
-                                base_blue_poly = crate::map_loader::polygon_to_world(obj.x, obj.y, obj.rotation, points);
-                            }
-                        }
-                        _ => {}
                     }
                 }
             }
@@ -320,13 +310,12 @@ fn parse_objects(tmx_path: &str) -> MapInfo {
         }
     }
 
-    // Enumerate cells inside base polygons and add as obstacles
-    for poly in &[&base_red_poly, &base_blue_poly] {
-        if !poly.is_empty() {
-            for cell in crate::map_loader::cells_in_polygon(poly) {
-                obstacles.insert(cell);
-            }
-        }
+    // Enumerate cells inside base polygons into their army sets (not obstacles)
+    for cell in crate::map_loader::cells_in_polygon(&base_red_poly) {
+        base_red.insert(cell);
+    }
+    for cell in crate::map_loader::cells_in_polygon(&base_blue_poly) {
+        base_blue.insert(cell);
     }
     // Enumerate cells inside launch pad polygons
     for poly in &pad_polys {
@@ -335,5 +324,5 @@ fn parse_objects(tmx_path: &str) -> MapInfo {
         }
     }
 
-    MapInfo { obstacles, launch_pads, spawn_red, spawn_blue, hq_red, hq_blue, crystals }
+    MapInfo { obstacles, launch_pads, spawn_red, spawn_blue, base_red, base_blue, crystals }
 }
