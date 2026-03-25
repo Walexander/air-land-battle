@@ -28,13 +28,13 @@ pub struct LoadingProgressBar;
 struct TitleScreen;
 
 #[derive(Component)]
-struct MapButton(String);
+pub struct MapButton(pub String);
 
 // ---------------------------------------------------------------------------
 // Title screen
 // ---------------------------------------------------------------------------
 
-const MAPS: &[(&str, &str)] = &[
+pub const MAPS: &[(&str, &str)] = &[
     ("Topsy Turvy",        "assets/maps/Topsy Turvy.tmx"),
     ("The Bullseye",       "assets/maps/The Bullseye.tmx"),
     ("Frozen Road",        "assets/maps/Frozen Road.tmx"),
@@ -49,7 +49,7 @@ fn setup_title_screen(mut commands: Commands) {
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
             flex_direction: FlexDirection::Column,
-            row_gap: Val::Px(16.0),
+            row_gap: Val::Px(32.0),
             ..default()
         },
         BackgroundColor(Color::srgb(0.05, 0.05, 0.1)),
@@ -61,47 +61,83 @@ fn setup_title_screen(mut commands: Commands) {
             Text::new("AIR LAND BATTLE"),
             TextFont { font_size: 72.0, ..default() },
             TextColor(Color::srgb(0.9, 0.85, 0.5)),
-            Node {
-                margin: UiRect::bottom(Val::Px(8.0)),
-                ..default()
-            },
         ));
 
-        // Subtitle
-        parent.spawn((
-            Text::new("Select a Map"),
-            TextFont { font_size: 28.0, ..default() },
-            TextColor(Color::srgb(0.7, 0.7, 0.7)),
-            Node {
-                margin: UiRect::bottom(Val::Px(32.0)),
+        // Row: buttons on left, minimap on right
+        parent.spawn(Node {
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Center,
+            column_gap: Val::Px(48.0),
+            ..default()
+        })
+        .with_children(|row| {
+            // Left column: subtitle + map buttons
+            row.spawn(Node {
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(14.0),
                 ..default()
-            },
-        ));
+            })
+            .with_children(|col| {
+                col.spawn((
+                    Text::new("Select a Map"),
+                    TextFont { font_size: 26.0, ..default() },
+                    TextColor(Color::srgb(0.7, 0.7, 0.7)),
+                    Node { margin: UiRect::bottom(Val::Px(8.0)), ..default() },
+                ));
 
-        // Map buttons
-        for &(label, path) in MAPS {
-            parent.spawn((
-                Button,
+                for &(label, path) in MAPS {
+                    col.spawn((
+                        Button,
+                        Node {
+                            width: Val::Px(340.0),
+                            height: Val::Px(56.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(Val::Px(2.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.15, 0.15, 0.25)),
+                        BorderColor::all(Color::srgb(0.4, 0.4, 0.6)),
+                        MapButton(path.to_string()),
+                    ))
+                    .with_children(|btn| {
+                        btn.spawn((
+                            Text::new(label),
+                            TextFont { font_size: 24.0, ..default() },
+                            TextColor(Color::WHITE),
+                        ));
+                    });
+                }
+            });
+
+            // Right column: minimap preview panel
+            row.spawn((
                 Node {
-                    width: Val::Px(360.0),
-                    height: Val::Px(60.0),
+                    width: Val::Px(375.0),
+                    height: Val::Px(265.0),
+                    border: UiRect::all(Val::Px(2.0)),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
-                    border: UiRect::all(Val::Px(2.0)),
                     ..default()
                 },
-                BackgroundColor(Color::srgb(0.15, 0.15, 0.25)),
-                BorderColor::all(Color::srgb(0.4, 0.4, 0.6)),
-                MapButton(path.to_string()),
+                BackgroundColor(Color::srgb(0.08, 0.08, 0.15)),
+                BorderColor::all(Color::srgb(0.35, 0.35, 0.55)),
+                crate::minimap::MinimapPanel,
             ))
-            .with_children(|btn| {
-                btn.spawn((
-                    Text::new(label),
-                    TextFont { font_size: 26.0, ..default() },
-                    TextColor(Color::WHITE),
+            .with_children(|panel| {
+                // The image node sits inside, sized to fill the panel
+                panel.spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        height: Val::Percent(100.0),
+                        ..default()
+                    },
+                    ImageNode::default(),
+                    crate::minimap::MinimapDisplay,
                 ));
             });
-        }
+        });
     });
 }
 

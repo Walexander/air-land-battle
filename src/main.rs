@@ -5,6 +5,7 @@ use bevy_inspector_egui::bevy_egui::EguiPlugin;
 
 mod map;
 mod map_loader;
+mod minimap;
 mod units;
 mod selection;
 mod launch_pads;
@@ -17,6 +18,7 @@ mod hex_pathfinding;
 
 use map::MapPlugin;
 use map_loader::MapLoaderPlugin;
+use minimap::MinimapPlugin;
 use units::UnitsPlugin;
 use selection::SelectionPlugin;
 use launch_pads::LaunchPadsPlugin;
@@ -41,6 +43,7 @@ fn main() {
         .add_plugins(WorldInspectorPlugin::default().run_if(inspector_enabled))
         .add_plugins(bevy_mod_outline::OutlinePlugin)
         .add_plugins(LoadingPlugin)
+        .add_plugins(MinimapPlugin)
         .add_plugins(MapLoaderPlugin)
         .add_plugins(LaunchPadsPlugin)
         .add_plugins(MapPlugin)

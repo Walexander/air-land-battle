@@ -110,7 +110,7 @@ fn load_map_data(mut map_def: ResMut<MapDefinition>, selected_map: Res<SelectedM
 }
 
 /// Enumerate all hex cells (axial coords) whose centres lie inside a world-space polygon.
-fn cells_in_polygon(poly: &[(f32, f32)]) -> Vec<(i32, i32)> {
+pub fn cells_in_polygon(poly: &[(f32, f32)]) -> Vec<(i32, i32)> {
     const HEX_WIDTH: f32 = 128.0;
     const HEX_HEIGHT: f32 = HEX_WIDTH * 0.866_025_4;
 
@@ -295,7 +295,7 @@ fn parse_object_layers(map: &tiled::Map, def: &mut MapDefinition) {
 
 /// Convert tiled polygon relative points to world XZ coords, stripping any closing duplicate.
 /// Applies `rotation_deg` (Tiled clockwise degrees, y-down) before projecting to world space.
-fn polygon_to_world(obj_x: f32, obj_y: f32, rotation_deg: f32, points: &[(f32, f32)]) -> Vec<(f32, f32)> {
+pub fn polygon_to_world(obj_x: f32, obj_y: f32, rotation_deg: f32, points: &[(f32, f32)]) -> Vec<(f32, f32)> {
     let (sin, cos) = rotation_deg.to_radians().sin_cos();
     let mut pts: Vec<(f32, f32)> = points.iter()
         .map(|&(dx, dy)| {
