@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 use std::path::Path;
 
-use crate::loading::LoadingState;
+use crate::loading::{LoadingState, SelectedMap};
 
 // ---------------------------------------------------------------------------
 // Resource
@@ -43,8 +43,8 @@ impl Plugin for MapLoaderPlugin {
 // Synchronous map loading
 // ---------------------------------------------------------------------------
 
-fn load_map_data(mut map_def: ResMut<MapDefinition>) {
-    let tmx_path = Path::new("assets/maps/Frozen Road.tmx");
+fn load_map_data(mut map_def: ResMut<MapDefinition>, selected_map: Res<SelectedMap>) {
+    let tmx_path = Path::new(&selected_map.0);
 
     // Step 1: parse tile layer directly from the CSV in the raw file.
     match std::fs::read_to_string(tmx_path) {
