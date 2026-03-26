@@ -55,8 +55,12 @@ fn main() {
         .add_plugins(MusicPlugin)
         .insert_resource(InspectorEnabled(false))
         .insert_resource(Paused(false))
+        .insert_resource(Countdown::default())
         .add_systems(Startup, (setup_fps_counter, setup_game_speed))
+        .add_systems(OnEnter(loading::LoadingState::Playing), start_countdown)
+        .add_systems(OnExit(loading::LoadingState::Playing), cleanup_countdown)
         .add_systems(Update, (update_fps_text, toggle_inspector, toggle_pause, handle_pause_time, show_pause_overlay))
+        .add_systems(Update, tick_countdown.run_if(in_state(loading::LoadingState::Playing)))
         .add_systems(Update, quit_to_menu.run_if(in_state(loading::LoadingState::Playing)))
         .run();
 }
@@ -65,11 +69,11 @@ fn quit_to_menu(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut next_state: ResMut<NextState<loading::LoadingState>>,
     mut paused: ResMut<Paused>,
+    mut countdown: ResMut<Countdown>,
 ) {
     if keyboard.just_pressed(KeyCode::KeyQ) {
-        if paused.0 {
-            paused.0 = false;
-        }
+        paused.0 = false;
+        countdown.active = false;
         next_state.set(loading::LoadingState::TitleScreen);
     }
 }
@@ -156,16 +160,189 @@ fn handle_pause_time(
     }
 }
 
+#[derive(Resource, Default)]
+struct Countdown {
+    remaining: f32,
+    active: bool,
+    // Camera intro animation
+    cam_start_x: f32,
+    cam_start_z: f32,
+    cam_start_scale: f32,
+    cam_z_offset: f32,   // fixed distance: camera.z - look_at.z
+    cam_end_at: f32,     // remaining seconds when camera should reach home
+}
+
+#[derive(Component)]
+struct CountdownOverlay;
+
+#[derive(Component)]
+struct CountdownShadow;
+
+#[derive(Component)]
+struct CountdownText;
+
+fn start_countdown(
+    mut commands: Commands,
+    mut paused: ResMut<Paused>,
+    mut countdown: ResMut<Countdown>,
+    mut cam: ResMut<crate::ui::CameraSettings>,
+    map_def: Res<crate::map_loader::MapDefinition>,
+) {
+    countdown.remaining = 6.5;
+    countdown.active = true;
+    paused.0 = true;
+
+    // Compute centroid of Red spawn cells as the intro focus point.
+    let spawn_world: Vec<Vec3> = map_def.spawn_red.iter()
+        .map(|&(q, r)| crate::map::axial_to_world_pos(q, r))
+        .collect();
+    let (focus_x, focus_z) = if spawn_world.is_empty() {
+        (cam.home_x, cam.home_z)
+    } else {
+        let fx = spawn_world.iter().map(|v| v.x).sum::<f32>() / spawn_world.len() as f32;
+        let fz = spawn_world.iter().map(|v| v.z).sum::<f32>() / spawn_world.len() as f32;
+        (fx, fz)
+    };
+
+    let z_offset = cam.z - cam.look_at_z;
+    countdown.cam_start_x = focus_x;
+    countdown.cam_start_z = focus_z;
+    countdown.cam_start_scale = 0.5;
+    countdown.cam_z_offset = z_offset;
+    countdown.cam_end_at = 0.7; // 200 ms before "Go!" at 0.5 s
+
+    // Snap camera to the zoomed-in start position.
+    cam.look_at_x = focus_x;
+    cam.look_at_z = focus_z;
+    cam.x = focus_x;
+    cam.z = focus_z + z_offset;
+    cam.scale = countdown.cam_start_scale;
+
+    // Overlay is present for the full sequence (hold + countdown).
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            flex_direction: FlexDirection::Column,
+            justify_content: JustifyContent::Start,
+            align_items: AlignItems::Center,
+            padding: UiRect::top(Val::Vh(33.0)),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.4)),
+        ZIndex(100),
+        CountdownOverlay,
+    )).with_children(|parent| {
+        // Container for stacking shadow + main text
+        parent.spawn(Node {
+            position_type: PositionType::Relative,
+            ..default()
+        }).with_children(|stack| {
+            // Shadow: absolutely positioned, offset down-right
+            stack.spawn((
+                Text::new(""),
+                TextFont { font_size: 120.0, ..default() },
+                TextColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(5.0),
+                    top: Val::Px(5.0),
+                    ..default()
+                },
+                CountdownShadow,
+            ));
+            // Main text on top
+            stack.spawn((
+                Text::new(""),   // empty during the 3-second hold
+                TextFont { font_size: 120.0, ..default() },
+                TextColor(Color::srgb(1.0, 1.0, 1.0)),
+                CountdownText,
+            ));
+        });
+    });
+}
+
+fn cleanup_countdown(
+    mut commands: Commands,
+    mut countdown: ResMut<Countdown>,
+    overlay_query: Query<Entity, With<CountdownOverlay>>,
+) {
+    countdown.active = false;
+    for entity in &overlay_query {
+        commands.entity(entity).despawn();
+    }
+}
+
+fn tick_countdown(
+    mut commands: Commands,
+    time: Res<Time<Real>>,
+    mut countdown: ResMut<Countdown>,
+    mut paused: ResMut<Paused>,
+    mut cam: ResMut<crate::ui::CameraSettings>,
+    overlay_query: Query<Entity, With<CountdownOverlay>>,
+    mut text_query: Query<&mut Text, With<CountdownText>>,
+    mut shadow_query: Query<&mut Text, (With<CountdownShadow>, Without<CountdownText>)>,
+) {
+    if !countdown.active {
+        return;
+    }
+
+    countdown.remaining -= time.delta_secs();
+
+    // Animate camera from zoomed-in base view to home position.
+    // t goes 0→1 over the intro window; ease-out cubic for a smooth deceleration.
+    let intro_total = 3.5 - countdown.cam_end_at;
+    let elapsed = (intro_total - (countdown.remaining - countdown.cam_end_at)).max(0.0);
+    let t = (elapsed / intro_total).clamp(0.0, 1.0);
+    let t_ease = t.powi(3); // ease-in cubic: starts slowly, accelerates to end
+
+    cam.look_at_x = countdown.cam_start_x + (cam.home_x - countdown.cam_start_x) * t_ease;
+    cam.look_at_z = countdown.cam_start_z + (cam.home_z - countdown.cam_start_z) * t_ease;
+    cam.x = cam.look_at_x;
+    cam.z = cam.look_at_z + countdown.cam_z_offset;
+    cam.scale = countdown.cam_start_scale + (0.85 - countdown.cam_start_scale) * t_ease;
+
+    if countdown.remaining <= 0.0 {
+        countdown.active = false;
+        for entity in &overlay_query {
+            commands.entity(entity).despawn();
+        }
+        paused.0 = false;
+        return;
+    }
+
+    let label = if countdown.remaining > 3.5 {
+        ""       // 3-second hold — overlay visible, no number yet
+    } else if countdown.remaining > 2.5 {
+        "3"
+    } else if countdown.remaining > 1.5 {
+        "2"
+    } else if countdown.remaining > 0.5 {
+        "1"
+    } else {
+        "Go!"
+    };
+
+    for mut text in &mut text_query {
+        text.0 = label.to_string();
+    }
+    for mut text in &mut shadow_query {
+        text.0 = label.to_string();
+    }
+}
+
 #[derive(Component)]
 struct PauseOverlay;
 
 fn show_pause_overlay(
     mut commands: Commands,
     paused: Res<Paused>,
+    countdown: Res<Countdown>,
     overlay_query: Query<Entity, With<PauseOverlay>>,
     children_query: Query<&Children>,
 ) {
-    if paused.is_changed() {
+    if paused.is_changed() && !countdown.active {
         if paused.0 {
             // Show pause overlay
             if overlay_query.is_empty() {
