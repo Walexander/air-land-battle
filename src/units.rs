@@ -2791,6 +2791,7 @@ fn spawn_unit_from_request(
                 Transform::from_translation(bar_pos_world),
                 HealthBar { unit_entity: health_bar_config.unit_entity },
                 HealthBarBorder,
+                bevy::light::NotShadowCaster,
             ));
 
             // Background (dark gray)
@@ -2806,6 +2807,7 @@ fn spawn_unit_from_request(
                 })),
                 Transform::from_translation(bar_pos_world + Vec3::new(0.0, 0.1, 0.0)),
                 HealthBar { unit_entity: health_bar_config.unit_entity },
+                bevy::light::NotShadowCaster,
             ));
 
             // Fill (color based on army)
@@ -2822,6 +2824,7 @@ fn spawn_unit_from_request(
                 Transform::from_translation(bar_pos_world + Vec3::new(0.0, 0.2, 0.0)),
                 HealthBar { unit_entity: health_bar_config.unit_entity },
                 HealthBarFill,
+                bevy::light::NotShadowCaster,
             ));
 
             // Spawn selection ring

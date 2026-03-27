@@ -1,3 +1,7 @@
+use std::f32::consts::PI;
+
+use bevy::light::CascadeShadowConfigBuilder;
+use bevy::light::light_consts::lux;
 use bevy::prelude::*;
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
@@ -262,11 +266,13 @@ fn create_filled_hexagon_mesh_with_radius(radius: f32) -> Mesh {
         0, 6, 1
     ]);
 
-    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
         .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
-        .with_inserted_indices(indices)
+        .with_inserted_indices(indices);
+    let _ = mesh.generate_tangents();
+    mesh
 }
 
 fn create_filled_hexagon_mesh() -> Mesh {
@@ -594,7 +600,7 @@ pub fn setup_hex_map(
 
     // Push the computed center into CameraSettings so update_camera_from_settings uses it.
     camera_settings.x = center_x;
-    camera_settings.z = center_z + 400.0;
+    camera_settings.z = center_z + 350.0;
     camera_settings.look_at_x = center_x;
     camera_settings.look_at_z = center_z;
     camera_settings.home_x = center_x;
@@ -619,26 +625,36 @@ pub fn setup_hex_map(
         DespawnOnExit(LoadingState::Playing),
     ));
 
-    // Add directional light
+    // Add point light
     commands.spawn((
         DirectionalLight {
-            illuminance: 10000.0,
-            shadows_enabled: false,
+            illuminance: 8000.0,
+            shadows_enabled: true,
+            shadow_depth_bias: 0.0,
+            shadow_normal_bias: 0.0,
             ..default()
         },
-        Transform::from_xyz(4.0, 8.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
+        // Light from bottom-left toward player: -X, +Z (toward camera), above
+        Transform::from_xyz(-1.0, 1.5, 2.0).looking_at(Vec3::ZERO, Vec3::Y),
+        CascadeShadowConfigBuilder {
+            num_cascades: 1,
+            maximum_distance: 1200.0,
+            ..default()
+        }
+        .build(),
         DespawnOnExit(LoadingState::Playing),
     ));
 
-    // Add ambient light for better illumination
+    // Add ambient light for fill/shadow softness
     commands.spawn((
         AmbientLight {
             color: Color::srgb(1.0, 1.0, 1.0),
-            brightness: 500.0,
+            brightness: 600.0,
             affects_lightmapped_meshes: false,
         },
         DespawnOnExit(LoadingState::Playing),
     ));
+
 
     let prism_height = 20.0;
 
@@ -730,12 +746,15 @@ pub fn setup_hex_map(
                     Mesh3d(filled_hex_mesh.clone()),
                     MeshMaterial3d(materials.add(StandardMaterial {
                         base_color: color,
-                        emissive: color.into(),
-                        unlit: true,
+                        emissive: LinearRgba::from(color) * 0.5,
+                        unlit: false,
+                        perceptual_roughness: 1.0,
+                        metallic: 0.0,
                         double_sided: true,
                         cull_mode: None,
                         ..default()
                     })),
+                    bevy::light::NotShadowCaster,
                     Transform::from_translation(filled_hex_pos).with_rotation(hex_rotation),
                     HexTile { q, r, _height: height },
                     Name::new(format!("Hex ({}, {})", q, r)),

@@ -53,6 +53,7 @@ fn main() {
         .add_plugins(SelectionPlugin)
         .add_plugins(UIPlugin)
         .add_plugins(MusicPlugin)
+        .insert_resource(bevy::light::PointLightShadowMap { size: 2048 })
         .insert_resource(InspectorEnabled(false))
         .insert_resource(Paused(false))
         .insert_resource(Countdown::default())
