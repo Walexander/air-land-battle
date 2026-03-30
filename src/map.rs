@@ -634,8 +634,8 @@ pub fn setup_hex_map(
             shadow_normal_bias: 0.0,
             ..default()
         },
-        // Light from bottom-left toward player: -X, +Z (toward camera), above
-        Transform::from_xyz(-1.0, 1.5, 2.0).looking_at(Vec3::ZERO, Vec3::Y),
+        // Nearly overhead, slight left lean — shadows fall right and slightly down
+        Transform::from_xyz(-0.4, 4.0, -0.3).looking_at(Vec3::ZERO, Vec3::Y),
         CascadeShadowConfigBuilder {
             num_cascades: 1,
             maximum_distance: 1200.0,
@@ -649,7 +649,7 @@ pub fn setup_hex_map(
     commands.spawn((
         AmbientLight {
             color: Color::srgb(1.0, 1.0, 1.0),
-            brightness: 600.0,
+            brightness: 1200.0,
             affects_lightmapped_meshes: false,
         },
         DespawnOnExit(LoadingState::Playing),
