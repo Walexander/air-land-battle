@@ -14,6 +14,7 @@ pub struct MapDefinition {
     pub tile_map: HashMap<(i32, i32), u32>, // axial → GID; only active (non-zero) tiles
     pub launch_pad_cells: HashSet<(i32, i32)>, // all cells belonging to any launch pad (may be absent from tile_map)
     pub obstacles: HashSet<(i32, i32)>,     // includes HQ positions
+    pub silos: HashSet<(i32, i32)>,
     pub hq_red: Option<(i32, i32)>,
     pub hq_blue: Option<(i32, i32)>,
     pub spawn_red: Vec<(i32, i32)>,
@@ -210,9 +211,14 @@ fn parse_object_layers(map: &tiled::Map, def: &mut MapDefinition) {
             "Obstacles" => {
                 for obj in obj_layer.objects() {
                     match obj.name.as_str() {
-                        "Mountain" | "Silo" => {
+                        "Mountain" => {
                             let pos = tile_obj_to_axial(obj.x, obj.y);
                             def.obstacles.insert(pos);
+                        }
+                        "Silo" => {
+                            let pos = tile_obj_to_axial(obj.x, obj.y);
+                            def.obstacles.insert(pos);
+                            def.silos.insert(pos);
                         }
                         _ => {}
                     }

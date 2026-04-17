@@ -3,7 +3,7 @@
         "height": 4300,
         "width": 2
     },
-    "activeFile": "",
+    "activeFile": "Down the Middle.tmx",
     "expandedProjectPaths": [
         "."
     ],
@@ -35,25 +35,25 @@
                 5,
                 6
             ],
-            "scale": 1.0897,
+            "scale": 1.08,
             "selectedLayer": 5,
             "viewCenter": {
-                "x": 641.4609525557494,
-                "y": 384.968339910067
+                "x": 628.7037037037037,
+                "y": 475.46296296296293
             }
         },
         "Frozen Road.tmx": {
             "expandedObjectLayers": [
                 3,
                 2,
-                5,
-                7
+                7,
+                5
             ],
             "scale": 1.0897,
-            "selectedLayer": 0,
+            "selectedLayer": 5,
             "viewCenter": {
-                "x": 620.3542259337434,
-                "y": 351.9317243277967
+                "x": 631.3664311278335,
+                "y": 480.4074515921814
             }
         },
         "Mesa.tmx": {
@@ -69,18 +69,18 @@
         },
         "Middle Mayhem.tmx": {
             "expandedObjectLayers": [
-                8,
                 3,
                 2,
+                7,
                 5,
-                6,
-                7
+                8,
+                6
             ],
             "scale": 1.0897,
-            "selectedLayer": 1,
+            "selectedLayer": 5,
             "viewCenter": {
-                "x": 672.6622006056713,
-                "y": 430.8525282187759
+                "x": 1023.2173992842067,
+                "y": 470.3129301642654
             }
         },
         "Side By Side By Side.tmx": {
@@ -91,8 +91,8 @@
             "scale": 1.1798,
             "selectedLayer": 0,
             "viewCenter": {
-                "x": 750.9747414816071,
-                "y": 344.5499237158841
+                "x": 903.5429733853194,
+                "y": 356.41634175283946
             }
         },
         "Side By Side.tmx": {
@@ -115,37 +115,36 @@
             "scale": 0.7109,
             "selectedLayer": 1,
             "viewCenter": {
-                "x": 652.6937684625125,
-                "y": 521.1703474468983
+                "x": 666.760444506963,
+                "y": 450.8369672246448
             }
         },
         "Top Down.tmx": {
             "expandedObjectLayers": [
-                8,
                 3,
                 2,
-                7
+                7,
+                8
             ],
             "scale": 0.8806,
             "selectedLayer": 4,
             "viewCenter": {
-                "x": 763.1160572337042,
+                "x": 763.1160572337044,
                 "y": 362.82080399727465
             }
         },
         "Topsy Turvy.tmx": {
             "expandedObjectLayers": [
-                8,
                 3,
                 2,
+                7,
                 5,
-                6,
-                7
+                6
             ],
             "scale": 1.0897,
             "selectedLayer": 5,
             "viewCenter": {
-                "x": 865.3757915022485,
+                "x": 865.3757915022484,
                 "y": 418.9226392585116
             }
         }
@@ -158,14 +157,20 @@
     "map.tileWidth": 120,
     "map.width": 9,
     "openFiles": [
+        "Top Down.tmx",
+        "Down the Middle.tmx",
+        "/Users/walexander/Downloads/kenney_hexagon-tiles/Spritesheet/hexagonAll_sheet.tsx",
+        "Side By Side By Side.tmx"
     ],
     "project": "air-land-battle.tiled-project",
     "recentFiles": [
         "Top Down.tmx",
+        "Side By Side By Side.tmx",
+        "/Users/walexander/Downloads/kenney_hexagon-tiles/Spritesheet/hexagonAll_sheet.tsx",
+        "Down the Middle.tmx",
         "/Users/walexander/Downloads/kenney_hexagon-tiles/Spritesheet/hexagonBuildings_sheet.tsx",
         "Frozen Road.tmx",
         "Side By Side.tmx",
-        "/Users/walexander/Downloads/kenney_hexagon-tiles/Spritesheet/hexagonAll_sheet.tsx",
         "/Users/walexander/Downloads/kenney_hexagon-tiles/Spritesheet/untitled.tmx",
         "/Users/walexander/Downloads/kenney_hexagon-tiles/Spritesheet/kenney-tiles.tsx"
     ],

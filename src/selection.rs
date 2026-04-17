@@ -646,7 +646,7 @@ fn handle_unit_selection(
     occupancy: Res<Occupancy>,
     hex_grid: Res<crate::hex_pathfinding::HexPathfindingGrid>,
     mut claimed_cells: ResMut<ClaimedCellsThisFrame>,
-    unit_query: Query<(Entity, &Unit, Option<&UnitMovement>), Without<Selected>>,
+    unit_query: Query<(Entity, &Unit, Option<&UnitMovement>)>,
     selected_query: Query<(Entity, &Unit, &UnitStats, Option<&UnitMovement>, &Transform), With<Selected>>,
     path_viz_query: Query<(Entity, &PathVisualization)>,
     dest_ring_query: Query<(Entity, &DestinationRing)>,
@@ -1667,7 +1667,9 @@ impl Plugin for SelectionPlugin {
         );
         app.add_systems(
             Update,
-            handle_unit_selection.run_if(in_state(crate::loading::LoadingState::Playing))
+            handle_unit_selection
+                .after(crate::units::detect_unit_clicks)
+                .run_if(in_state(crate::loading::LoadingState::Playing))
         );
     }
 }

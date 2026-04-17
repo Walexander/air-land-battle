@@ -7,7 +7,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 
 use crate::ui::{CameraSettings, GameCamera};
-use crate::launch_pads::{LaunchPadOwner, LaunchPadOwnership};
+use crate::launch_pads::{LaunchPadOwner, LaunchPadOwnership, GameTimer, GameState};
 use crate::selection::{create_hexagon_outline_mesh, Selected};
 use crate::units::Unit;
 use crate::loading::LoadingState;
@@ -39,6 +39,35 @@ pub struct DebugOverlay(pub bool);
 
 #[derive(Component)]
 pub struct ObstacleSprite;
+
+#[derive(Component)]
+pub struct SiloRoot;
+
+#[derive(Component)]
+pub struct SiloCover;
+
+#[derive(Component)]
+pub struct SiloMissile {
+    base_translation: Vec3,
+    base_rotation: Quat,
+}
+
+#[derive(Default, PartialEq, Clone, Copy)]
+enum MissilePhase {
+    #[default]
+    Rising,
+    Flying,
+    Done,
+}
+
+#[derive(Component, Default)]
+struct MissileLaunch {
+    phase: MissilePhase,
+    elapsed: f32,
+    launch_world_pos: Vec3,
+    launch_world_rot: Quat,
+    target_pos: Vec3,
+}
 
 #[derive(Component)]
 pub struct HQ {
@@ -112,7 +141,7 @@ impl Plugin for MapPlugin {
             .insert_resource(DebugOverlay::default())
             .insert_resource(ClearColor(Color::srgb(0.53, 0.81, 0.92))) // Light sky blue
             .add_systems(OnEnter(LoadingState::Playing), (setup_hex_map, crate::hex_pathfinding::setup_hex_pathfinding).chain())
-            .add_systems(Update, (hex_hover_system, update_outline_colors, update_launch_pad_colors, billboard_sprites, apply_crystal_materials, animate_crystal_sparkle, update_fog_of_war, update_crystal_visuals, toggle_debug_overlay).run_if(in_state(LoadingState::Playing)));
+            .add_systems(Update, (hex_hover_system, update_outline_colors, update_launch_pad_colors, billboard_sprites, apply_crystal_materials, animate_crystal_sparkle, update_fog_of_war, update_crystal_visuals, toggle_debug_overlay, tag_silo_missiles, tag_silo_covers, rotate_silo_missiles, trigger_missile_launch, animate_missile_launch, check_missile_animation_complete).run_if(in_state(LoadingState::Playing)));
     }
 }
 
@@ -667,6 +696,7 @@ pub fn setup_hex_map(
 
     // Load mountain 3D model
     let mountain_model = asset_server.load("mountains.glb#Scene0");
+    let silo_model: Handle<Scene> = asset_server.load("Missile Silo.glb#Scene0");
 
     // Create parent HexMap entity
     commands.spawn((
@@ -682,6 +712,9 @@ pub fn setup_hex_map(
         for &cell in &map_def.launch_pad_cells {
             tile_map.entry(cell).or_insert(0);
         }
+        let sand_texture: Handle<Image> = asset_server.load("maps/Tiles/sand_01.png");
+        let cement_texture: Handle<Image> = asset_server.load("maps/Tiles/cement_01.jpg");
+
         for (&(q, r), &gid) in &tile_map {
                 let world_pos = axial_to_world_pos(q, r);
 
@@ -716,11 +749,14 @@ pub fn setup_hex_map(
                 } else if is_blue_base {
                     Color::srgb(0.2, 0.35, 0.75) // Blue base
                 } else if is_launch_pad {
-                    Color::srgb(0.3, 0.3, 0.3) // Dark grey for launch pads
-                } else if (q + r) % 2 == 0 {
-                    Color::srgb(0.35, 0.75, 0.35) // Light green
+                    Color::WHITE
                 } else {
-                    Color::srgb(0.3, 0.65, 0.3) // Lighter medium green
+                    Color::WHITE
+                };
+                let emissive = if is_red_base || is_blue_base {
+                    LinearRgba::from(color) * 0.5
+                } else {
+                    LinearRgba::BLACK
                 };
 
                 let hex_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
@@ -746,7 +782,8 @@ pub fn setup_hex_map(
                     Mesh3d(filled_hex_mesh.clone()),
                     MeshMaterial3d(materials.add(StandardMaterial {
                         base_color: color,
-                        emissive: LinearRgba::from(color) * 0.5,
+                        base_color_texture: Some(if is_launch_pad { cement_texture.clone() } else { sand_texture.clone() }),
+                        emissive,
                         unlit: false,
                         perceptual_roughness: 1.0,
                         metallic: 0.0,
@@ -823,17 +860,23 @@ pub fn setup_hex_map(
 
                         println!("Creating {:?} HQ at ({}, {})", army, q, r);
                     } else if !is_red_base && !is_blue_base {
-                        // Spawn 3D mountain model for regular obstacles (not base cells)
-                        let mountain_scale = 21.25;
-                        let mountain_pos = world_pos + Vec3::new(0.0, 10.0, 12.0);
-                        let mountain_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
-
-                        parent.spawn((
-                            SceneRoot(mountain_model.clone()),
-                            Transform::from_translation(mountain_pos)
-                                .with_rotation(mountain_rotation)
-                                .with_scale(Vec3::splat(mountain_scale)),
-                        ));
+                        let is_silo = map_def.silos.contains(&(q, r));
+                        if is_silo {
+                            parent.spawn((
+                                SceneRoot(silo_model.clone()),
+                                Transform::from_translation(world_pos + Vec3::new(0.0, 0.5, 0.0))
+                                    .with_rotation(Quat::from_rotation_y(std::f32::consts::PI / 2.0))
+                                    .with_scale(Vec3::splat(20.0)),
+                                SiloRoot,
+                            ));
+                        } else {
+                            parent.spawn((
+                                SceneRoot(mountain_model.clone()),
+                                Transform::from_translation(world_pos + Vec3::new(0.0, 10.0, 12.0))
+                                    .with_rotation(Quat::from_rotation_y(std::f32::consts::PI / 2.0))
+                                    .with_scale(Vec3::splat(21.25)),
+                            ));
+                        }
                     }
                 } else if is_launch_pad {
                     // Only process this once per pad (only for the first hex in the pad)
@@ -945,7 +988,7 @@ pub fn setup_hex_map(
 
                     // Spawn fog of war overlay (visible by default until units reveal the area)
                     let fog_pos = world_pos + Vec3::new(0.0, 3.0, 0.0);
-                    let fog_color = Color::srgba(0.0, 0.0, 0.0, 0.7); // Dark semi-transparent overlay
+                    let fog_color = Color::srgba(0.0, 0.0, 0.0, 0.2); // Dark semi-transparent overlay
                     parent.spawn((
                         Mesh3d(filled_hex_mesh.clone()),
                         MeshMaterial3d(materials.add(StandardMaterial {
@@ -1010,6 +1053,7 @@ pub fn setup_hex_map(
 
             let is_red_hq = map_def.hq_red == Some((q, r));
             let is_blue_hq = map_def.hq_blue == Some((q, r));
+            let is_silo = map_def.silos.contains(&(q, r));
             let is_red_base = map_def.base_red_polygon.len() >= 3
                 && crate::map_loader::point_in_polygon(wx, wz, &map_def.base_red_polygon);
             let is_blue_base = map_def.base_blue_polygon.len() >= 3
@@ -1020,15 +1064,16 @@ pub fn setup_hex_map(
             } else if is_blue_base {
                 Color::srgb(0.2, 0.35, 0.75)
             } else {
-                Color::srgb(0.25, 0.22, 0.20)
+                Color::WHITE
             };
 
             parent.spawn((
                 Mesh3d(filled_hex_mesh.clone()),
                 MeshMaterial3d(materials.add(StandardMaterial {
                     base_color: tile_color,
-                    emissive: tile_color.into(),
-                    unlit: true,
+                    base_color_texture: if is_silo { Some(cement_texture.clone()) } else { None },
+                    unlit: false,
+                    perceptual_roughness: 1.0,
                     double_sided: true,
                     cull_mode: None,
                     ..default()
@@ -1048,12 +1093,23 @@ pub fn setup_hex_map(
                     HQ { army, q, r },
                 ));
             } else if !is_red_base && !is_blue_base {
-                parent.spawn((
-                    SceneRoot(mountain_model.clone()),
-                    Transform::from_translation(world_pos + Vec3::new(0.0, 10.0, 12.0))
-                        .with_rotation(Quat::from_rotation_y(std::f32::consts::PI / 2.0))
-                        .with_scale(Vec3::splat(21.25)),
-                ));
+                let is_silo = map_def.silos.contains(&(q, r));
+                if is_silo {
+                    parent.spawn((
+                        SceneRoot(silo_model.clone()),
+                        Transform::from_translation(world_pos + Vec3::new(0.0, 0.5, 0.0))
+                            .with_rotation(Quat::from_rotation_y(std::f32::consts::PI / 2.0))
+                            .with_scale(Vec3::splat(20.0)),
+                        SiloRoot,
+                    ));
+                } else {
+                    parent.spawn((
+                        SceneRoot(mountain_model.clone()),
+                        Transform::from_translation(world_pos + Vec3::new(0.0, 10.0, 12.0))
+                            .with_rotation(Quat::from_rotation_y(std::f32::consts::PI / 2.0))
+                            .with_scale(Vec3::splat(21.25)),
+                    ));
+                }
             }
 
             // Debug outline (black, same as tile-loop obstacles)
@@ -1617,3 +1673,154 @@ fn toggle_debug_overlay(
     }
 }
 
+
+fn tag_silo_missiles(
+    mut commands: Commands,
+    names: Query<(Entity, &Name, &Transform), Without<SiloMissile>>,
+) {
+    for (entity, name, transform) in &names {
+        if name.as_str() == "Missile" {
+            commands.entity(entity).insert(SiloMissile {
+                base_translation: transform.translation,
+                base_rotation: transform.rotation,
+            });
+        }
+    }
+}
+
+fn tag_silo_covers(
+    mut commands: Commands,
+    names: Query<(Entity, &Name), Without<SiloCover>>,
+) {
+    for (entity, name) in &names {
+        if name.as_str() == "Cover" {
+            commands.entity(entity).insert(SiloCover);
+        }
+    }
+}
+
+fn rotate_silo_missiles(
+    mut missiles: Query<(&mut Transform, &SiloMissile)>,
+    game_timer: Res<crate::launch_pads::GameTimer>,
+    time: Res<Time>,
+) {
+    let target_angle = match game_timer.winning_army {
+        Some(crate::units::Army::Red) => 15.0_f32.to_radians(),
+        Some(crate::units::Army::Blue) => -15.0_f32.to_radians(),
+        None => 0.0,
+    };
+
+    let x_rot = Quat::from_rotation_x(target_angle);
+    for (mut transform, missile) in &mut missiles {
+        let target = missile.base_rotation * x_rot;
+        transform.rotation = transform.rotation.slerp(target, time.delta_secs() * 2.0);
+    }
+}
+
+fn trigger_missile_launch(
+    mut commands: Commands,
+    mut game_state: ResMut<GameState>,
+    map_def: Res<crate::map_loader::MapDefinition>,
+    untriggered: Query<Entity, (With<SiloMissile>, Without<MissileLaunch>)>,
+    active: Query<&MissileLaunch>,
+    _covers: Query<Entity, With<SiloCover>>,
+) {
+    if !game_state.game_over || game_state.missile_animation_complete { return; }
+
+    let (hq, base_polygon) = match game_state.winner {
+        Some(crate::units::Army::Red) => (map_def.hq_blue, &map_def.base_blue_polygon),
+        Some(crate::units::Army::Blue) => (map_def.hq_red, &map_def.base_red_polygon),
+        None => {
+            game_state.missile_animation_complete = true;
+            return;
+        }
+    };
+
+    let target_pos = if let Some((tq, tr)) = hq {
+        axial_to_world_pos(tq, tr)
+    } else if base_polygon.len() >= 3 {
+        let n = base_polygon.len() as f32;
+        let cx = base_polygon.iter().map(|(x, _)| x).sum::<f32>() / n;
+        let cz = base_polygon.iter().map(|(_, z)| z).sum::<f32>() / n;
+        Vec3::new(cx, 0.0, cz)
+    } else {
+        game_state.missile_animation_complete = true;
+        return;
+    };
+
+    let mut launched = false;
+    for entity in &untriggered {
+        commands.entity(entity).insert(MissileLaunch { target_pos, ..default() });
+        launched = true;
+    }
+
+
+    if !launched && active.is_empty() {
+        game_state.missile_animation_complete = true;
+    }
+}
+
+fn check_missile_animation_complete(
+    mut game_state: ResMut<GameState>,
+    missiles: Query<&MissileLaunch>,
+) {
+    if !game_state.game_over || game_state.missile_animation_complete { return; }
+    if missiles.iter().all(|m| m.phase == MissilePhase::Done) && !missiles.is_empty() {
+        game_state.missile_animation_complete = true;
+    }
+}
+
+fn animate_missile_launch(
+    mut missiles: Query<(&mut Transform, &GlobalTransform, &mut MissileLaunch, &bevy::ecs::hierarchy::ChildOf, &SiloMissile)>,
+    parent_transforms: Query<&GlobalTransform, Without<SiloMissile>>,
+    time: Res<Time>,
+) {
+    for (mut transform, global_tf, mut launch, child_of, missile) in &mut missiles {
+        let dt = time.delta_secs();
+        let Ok(parent_gt) = parent_transforms.get(child_of.0) else { continue; };
+
+        match launch.phase {
+            MissilePhase::Rising => {
+                transform.translation.y += dt * 40.0;
+                launch.elapsed += dt;
+                if launch.elapsed >= 1.2 {
+                    launch.launch_world_pos = global_tf.translation();
+                    launch.launch_world_rot = global_tf.to_scale_rotation_translation().1;
+                    launch.elapsed = 0.0;
+                    launch.phase = MissilePhase::Flying;
+                }
+            }
+            MissilePhase::Flying => {
+                let duration = 4.0;
+                launch.elapsed = (launch.elapsed + dt).min(duration);
+                let t = launch.elapsed / duration;
+
+                let p0 = launch.launch_world_pos;
+                let p2 = launch.target_pos;
+                let apex = (p0 + p2) * 0.5 + Vec3::Y * 300.0;
+
+                let it = 1.0 - t;
+                let world_pos = it * it * p0 + 2.0 * it * t * apex + t * t * p2;
+                let vel = 2.0 * it * (apex - p0) + 2.0 * t * (p2 - apex);
+
+                // Convert world position to local space via parent's inverse transform
+                let local_pos = parent_gt.affine().inverse().transform_point3(world_pos);
+                transform.translation = local_pos;
+
+                if vel.length_squared() > 0.001 {
+                    let world_rot = Quat::from_rotation_arc(Vec3::Y, vel.normalize());
+                    let parent_rot = parent_gt.to_scale_rotation_translation().1;
+                    transform.rotation = parent_rot.inverse() * world_rot;
+                }
+
+                if launch.elapsed >= duration {
+                    launch.phase = MissilePhase::Done;
+                }
+            }
+            MissilePhase::Done => {
+                transform.translation = missile.base_translation;
+                transform.rotation = missile.base_rotation;
+            }
+        }
+    }
+}

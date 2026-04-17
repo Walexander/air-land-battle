@@ -14,7 +14,7 @@
 </data>
  </layer>
  <objectgroup id="2" name="Bases">
-  <object id="3" template="Left Base.tx" name="Red Base" gid="0" x="180" y="420" rotation="0">
+  <object id="3" template="Left Base.tx" name="Red Base" x="180" y="420" rotation="0">
    <polygon points="0,0 60,35 60,105 120,140 120,210 60,245 60,315 0,350 -60,315 -120,350 -180,315 -180,245 -120,210 -120,140 -60,105 -60,35"/>
   </object>
   <object id="84" x="1200" y="525">
@@ -35,7 +35,7 @@
   <object id="80" gid="3221225508" x="240" y="140" width="120" height="140"/>
   <object id="81" gid="2147483684" x="480" y="140" width="120" height="140"/>
  </objectgroup>
- <objectgroup id="3" name="Launch Pads">
+ <objectgroup id="3" name="Launch Pads" visible="0">
   <object id="6" name="Left" x="480" y="455" rotation="180">
    <polygon points="0,0 60,35 60,105 120,140 120,210 60,245 0,210 -60,245 -120,210 -120,140 -60,105 -60,35"/>
   </object>
@@ -46,7 +46,7 @@
    <polygon points="0,0 60,35 60,105 120,140 120,210 60,245 0,210 -60,245 -120,210 -120,140 -60,105 -60,35"/>
   </object>
  </objectgroup>
- <objectgroup id="5" name="Obstacles">
+ <objectgroup id="5" name="Obstacles" visible="0">
   <object id="11" name="Silo" gid="237" x="600" y="350" width="120" height="140"/>
   <object id="73" name="Mountain" gid="50" x="540" y="455" width="120" height="140"/>
   <object id="74" name="Mountain" gid="50" x="660" y="455" width="120" height="140"/>

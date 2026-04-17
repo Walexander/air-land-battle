@@ -1610,6 +1610,7 @@ fn reset_game(
         // Reset game state
         game_state.game_over = false;
         game_state.winner = None;
+        game_state.missile_animation_complete = false;
 
         // Reset game timer
         game_timer.time_remaining = GAME_DURATION;
@@ -2983,7 +2984,7 @@ fn setup_units(mut commands: Commands, mut spawn_cooldowns: ResMut<SpawnCooldown
         DespawnOnExit(crate::loading::LoadingState::Playing),
     ));
 }
-fn detect_unit_clicks(
+pub fn detect_unit_clicks(
     mouse_button: Res<ButtonInput<MouseButton>>,
     camera_query: Query<(&Camera, &GlobalTransform), With<crate::ui::GameCamera>>,
     windows: Query<&Window>,

@@ -42,6 +42,7 @@ impl Default for GameTimer {
 pub struct GameState {
     pub winner: Option<Army>,
     pub game_over: bool,
+    pub missile_animation_complete: bool,
 }
 
 #[derive(Resource, Default)]

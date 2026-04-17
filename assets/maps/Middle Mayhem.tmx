@@ -14,13 +14,13 @@
 0,0,51,51,51,66,51,51,51,51,0,0
 </data>
  </layer>
- <objectgroup id="2" name="Bases">
-  <object id="1" template="Right Base.tx" name="Blue Base" gid="0" x="1320" y="875" rotation="0">
+ <objectgroup id="2" name="Bases" visible="0">
+  <object id="1" template="Right Base.tx" name="Blue Base" x="1320" y="875" rotation="0">
    <polygon points="0,0 -60,-35 -60,-105 -120,-140 -120,-210 -60,-245 -60,-315 0,-350 60,-315 120,-350 180,-315 180,-245 120,-210 120,-140 60,-105 60,-35"/>
   </object>
   <object id="3" template="Left Base.tx" name="Red Base" x="300" y="0"/>
  </objectgroup>
- <objectgroup id="7" name="Spawn Points">
+ <objectgroup id="7" name="Spawn Points" visible="0">
   <object id="60" name="Red Spawn" gid="3" x="360" y="350" width="120" height="140"/>
   <object id="61" name="Blue Spawn" gid="19" x="1140" y="665" width="120" height="140"/>
  </objectgroup>
@@ -32,7 +32,7 @@
   <object id="29" gid="36" x="1200" y="350" width="120" height="140"/>
   <object id="32" gid="1073741860" x="1260" y="245" width="120" height="140"/>
  </objectgroup>
- <objectgroup id="3" name="Launch Pads">
+ <objectgroup id="3" name="Launch Pads" visible="0">
   <object id="6" name="Top" x="840" y="245" rotation="-180">
    <polygon points="0,0 -60,35 -60,105 -120,140 -120,210 -60,245 0,210 60,245 120,210 120,140 60,105 60,35"/>
   </object>

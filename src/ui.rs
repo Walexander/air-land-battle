@@ -589,7 +589,7 @@ fn show_game_over_screen(
     mut paused: ResMut<crate::Paused>,
     asset_server: Res<AssetServer>,
 ) {
-    if game_state.game_over && game_over_query.is_empty() {
+    if game_state.game_over && game_state.missile_animation_complete && game_over_query.is_empty() {
         paused.0 = true;
         println!("⏸️  Game PAUSED (Game Over)");
 
@@ -714,6 +714,7 @@ fn handle_restart(
 
         game_state.game_over = false;
         game_state.winner = None;
+        game_state.missile_animation_complete = false;
         paused.0 = false;
         println!("⏸️  Game RESUMED");
 
