@@ -3,7 +3,7 @@ use bevy::input::mouse::MouseWheel;
 
 use crate::launch_pads::{GameState, GameTimer, GAME_DURATION};
 use crate::economy::Economy;
-use crate::units::{Army, Unit, UnitClass, UnitSpawnRequest, UnitSpawnQueue, SpawnCooldowns, UnitDefinitions};
+use crate::units::{Army, Unit, UnitClass, UnitSpawnRequest, UnitSpawnQueue, SpawnCooldowns, UnitDefinitions, LocalPlayerArmy};
 use crate::loading::LoadingState;
 
 // Components
@@ -449,7 +449,11 @@ fn handle_unit_spawn_buttons(
     mut spawn_queue: ResMut<UnitSpawnQueue>,
     mut ui_clicked: ResMut<UIClicked>,
     unit_definitions: Res<UnitDefinitions>,
+    player_army: Res<LocalPlayerArmy>,
 ) {
+    let player = player_army.0;
+    let player_money = match player { Army::Red => economy.red_money, Army::Blue => economy.blue_money };
+
     for (interaction, button, mut border_color, mut node) in &mut interaction_query {
         // Mark that UI was clicked
         if *interaction == Interaction::Pressed {
@@ -463,18 +467,18 @@ fn handle_unit_spawn_buttons(
             UnitSpawnButton::Harvester => UnitClass::Harvester,
         };
 
-        // Count current Red army units (including harvesters)
-        let red_unit_count = unit_query.iter()
-            .filter(|u| u.army == Army::Red)
+        // Count current player army units (including harvesters)
+        let player_unit_count = unit_query.iter()
+            .filter(|u| u.army == player)
             .count();
 
         match *interaction {
             Interaction::Pressed => {
                 let cost = unit_class.cost(&unit_definitions);
-                let can_afford = economy.red_money >= cost;
-                let red_cooldowns = spawn_cooldowns.get_army_cooldowns(Army::Red);
+                let can_afford = player_money >= cost;
+                let player_cooldowns = spawn_cooldowns.get_army_cooldowns(player);
                 // Check cooldown for the count AFTER spawning (current + 1)
-                let cooldown_ready = red_cooldowns.is_ready(unit_class, red_unit_count + 1);
+                let cooldown_ready = player_cooldowns.is_ready(unit_class, player_unit_count + 1);
 
                 // Visual: make button look pressed
                 node.border = UiRect {
@@ -487,7 +491,7 @@ fn handle_unit_spawn_buttons(
                 if can_afford && cooldown_ready {
                     spawn_queue.requests.push(UnitSpawnRequest {
                         unit_class,
-                        army: Army::Red,
+                        army: player,
                     });
                     *border_color = BorderColor::all(Color::srgb(0.1, 0.1, 0.1));
                 } else if !can_afford {
@@ -502,9 +506,9 @@ fn handle_unit_spawn_buttons(
                 // Reset border to uniform
                 node.border = UiRect::all(Val::Px(3.0));
 
-                let red_cooldowns = spawn_cooldowns.get_army_cooldowns(Army::Red);
+                let player_cooldowns = spawn_cooldowns.get_army_cooldowns(player);
                 // Highlight border when hovered - check for count after spawning
-                if red_cooldowns.is_ready(unit_class, red_unit_count + 1) {
+                if player_cooldowns.is_ready(unit_class, player_unit_count + 1) {
                     *border_color = BorderColor::all(Color::srgb(0.6, 0.6, 0.6));
                 } else {
                     *border_color = BorderColor::all(Color::srgb(0.2, 0.2, 0.2));
@@ -528,12 +532,15 @@ fn update_spawn_button_visuals(
     mut button_query: Query<(&UnitSpawnButton, &mut BackgroundColor), Without<SpawnButtonFill>>,
     mut fill_query: Query<(&SpawnButtonFill, &mut Node, &mut BackgroundColor), Without<UnitSpawnButton>>,
     unit_definitions: Res<UnitDefinitions>,
+    player_army: Res<LocalPlayerArmy>,
 ) {
-    let red_cooldowns = spawn_cooldowns.get_army_cooldowns(Army::Red);
+    let player = player_army.0;
+    let player_cooldowns = spawn_cooldowns.get_army_cooldowns(player);
+    let player_money = match player { Army::Red => economy.red_money, Army::Blue => economy.blue_money };
 
-    // Count current Red army units (including harvesters)
-    let red_unit_count = unit_query.iter()
-        .filter(|u| u.army == Army::Red)
+    // Count current player army units (including harvesters)
+    let player_unit_count = unit_query.iter()
+        .filter(|u| u.army == player)
         .count();
 
     // Update button backgrounds
@@ -545,8 +552,8 @@ fn update_spawn_button_visuals(
             UnitSpawnButton::Harvester => UnitClass::Harvester,
         };
 
-        let can_afford = economy.red_money >= unit_class.cost(&unit_definitions);
-        let is_ready = red_cooldowns.is_ready(unit_class, red_unit_count + 1);
+        let can_afford = player_money >= unit_class.cost(&unit_definitions);
+        let is_ready = player_cooldowns.is_ready(unit_class, player_unit_count + 1);
 
         if is_ready && !can_afford {
             // Not affordable but ready - red background
@@ -566,8 +573,8 @@ fn update_spawn_button_visuals(
             UnitSpawnButton::Harvester => UnitClass::Harvester,
         };
 
-        let can_afford = economy.red_money >= unit_class.cost(&unit_definitions);
-        let _is_ready = red_cooldowns.is_ready(unit_class, red_unit_count + 1);
+        let can_afford = player_money >= unit_class.cost(&unit_definitions);
+        let _is_ready = player_cooldowns.is_ready(unit_class, player_unit_count + 1);
 
         // Set fill bar color based on affordability (regardless of cooldown status)
         if !can_afford {
@@ -576,7 +583,7 @@ fn update_spawn_button_visuals(
             *fill_color = BackgroundColor(Color::srgb(0.0, 0.6, 0.0)); // Green when affordable
         }
 
-        let progress = red_cooldowns.get_progress(unit_class, red_unit_count + 1);
+        let progress = player_cooldowns.get_progress(unit_class, player_unit_count + 1);
         let height_percent = progress * 100.0;
         node.height = Val::Percent(height_percent);
     }
@@ -588,16 +595,20 @@ fn show_game_over_screen(
     game_over_query: Query<Entity, With<GameOverScreen>>,
     mut paused: ResMut<crate::Paused>,
     asset_server: Res<AssetServer>,
+    player_army: Res<LocalPlayerArmy>,
 ) {
     if game_state.game_over && game_state.missile_animation_complete && game_over_query.is_empty() {
         paused.0 = true;
         println!("⏸️  Game PAUSED (Game Over)");
 
+        let player = player_army.0;
+        let player_won = game_state.winner == Some(player);
+
         // Play first sound immediately, then second sound after delay
-        let (first_sound, second_sound) = match game_state.winner {
-            Some(Army::Red) => ("sounds/announcer/dominating.ogg", "sounds/announcer/youwin.ogg"),
-            Some(Army::Blue) => ("sounds/announcer/fragged.ogg", "sounds/announcer/youlose.ogg"),
-            None => ("sounds/announcer/fragged.ogg", "sounds/announcer/youlose.ogg"), // Draw counts as lose
+        let (first_sound, second_sound) = if player_won {
+            ("sounds/announcer/dominating.ogg", "sounds/announcer/youwin.ogg")
+        } else {
+            ("sounds/announcer/fragged.ogg", "sounds/announcer/youlose.ogg")
         };
 
         // Play first sound immediately
@@ -626,9 +637,8 @@ fn show_game_over_screen(
         };
 
         let result_text = match game_state.winner {
-            Some(Army::Red) => "VICTORY!",
-            Some(Army::Blue) => "DEFEAT!",
             None => "DRAW!",
+            Some(_) => if player_won { "VICTORY!" } else { "DEFEAT!" },
         };
 
         commands

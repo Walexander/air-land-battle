@@ -112,6 +112,26 @@ pub enum Army {
     Blue,
 }
 
+impl Army {
+    pub fn opponent(self) -> Army {
+        match self {
+            Army::Red => Army::Blue,
+            Army::Blue => Army::Red,
+        }
+    }
+}
+
+/// Which army the local player controls. Default is Red.
+/// Change this before entering Playing state to swap sides.
+#[derive(Resource, Clone, Copy)]
+pub struct LocalPlayerArmy(pub Army);
+
+impl Default for LocalPlayerArmy {
+    fn default() -> Self {
+        LocalPlayerArmy(Army::Red)
+    }
+}
+
 #[derive(Component, Clone)]
 pub struct Unit {
     pub q: i32,
@@ -3135,6 +3155,7 @@ impl Plugin for UnitsPlugin {
             .insert_resource(ClickedUnit::default())
             .insert_resource(HoveredUnit::default())
             .insert_resource(UnitPositionCache::default())
+            .insert_resource(LocalPlayerArmy::default())
             .add_systems(OnEnter(LoadingState::Playing), (load_unit_definitions, setup_selection_ring_assets, setup_units).chain())
             .add_systems(
                 Update,

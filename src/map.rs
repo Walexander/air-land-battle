@@ -1433,14 +1433,19 @@ fn update_fog_of_war(
     health_bar_query: Query<(&crate::units::HealthBar, Entity)>,
     map_def: Res<crate::map_loader::MapDefinition>,
     mut visible_hexes_res: ResMut<VisibleHexes>,
+    player_army: Res<crate::units::LocalPlayerArmy>,
 ) {
     use std::collections::HashSet;
+    let player = player_army.0;
 
-    // Collect all visible hex positions (within 2 hexes of any Red unit, 3 hexes of Red HQs)
     let mut visible_hexes: HashSet<(i32, i32)> = HashSet::new();
 
-    // Always reveal 2-tile radius around Red spawn points so the map isn't dark at start.
-    for &(sq, sr) in &map_def.spawn_red {
+    // Reveal 2-tile radius around player spawn points at start.
+    let player_spawns = match player {
+        crate::units::Army::Red => &map_def.spawn_red,
+        crate::units::Army::Blue => &map_def.spawn_blue,
+    };
+    for &(sq, sr) in player_spawns {
         for dq in -2i32..=2i32 {
             for dr in -2i32..=2i32 {
                 if dq.abs().max(dr.abs()).max((-dq - dr).abs()) <= 2 {
@@ -1451,8 +1456,8 @@ fn update_fog_of_war(
     }
 
     for (_, unit) in &unit_query {
-        // Only Red (player) units reveal fog
-        if unit.army != crate::units::Army::Red {
+        // Only player units reveal fog
+        if unit.army != player {
             continue;
         }
 
@@ -1471,10 +1476,9 @@ fn update_fog_of_war(
         }
     }
 
-    // Add visibility from Red HQs (3-hex radius)
+    // Add visibility from player HQs (3-hex radius)
     for hq in &hq_query {
-        // Only Red (player) HQs reveal fog
-        if hq.army != crate::units::Army::Red {
+        if hq.army != player {
             continue;
         }
 
@@ -1509,8 +1513,8 @@ fn update_fog_of_war(
 
     // Check each unit and update visibility
     for (entity, unit) in &unit_query {
-        // Only hide enemy units (not player's Red units)
-        if unit.army == crate::units::Army::Red {
+        // Only hide enemy units, not the player's own units
+        if unit.army == player {
             continue;
         }
 
@@ -1532,7 +1536,7 @@ fn update_fog_of_war(
     for (health_bar, bar_entity) in &health_bar_query {
         // Check if this bar belongs to an enemy unit
         if let Ok((_, unit)) = unit_query.get(health_bar.unit_entity)
-            && unit.army != crate::units::Army::Red {
+            && unit.army != player {
                 // This is an enemy unit's bar
                 if let Ok(mut visibility) = visibility_query.get_mut(bar_entity) {
                     if visible_enemy_units.contains(&health_bar.unit_entity) {

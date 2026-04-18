@@ -1,10 +1,11 @@
 use bevy::prelude::*;
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::ecs::system::SystemParam;
 use bevy_mod_outline::OutlineVolume;
 
 use crate::map::{axial_to_world_pos, HexMapConfig, HoveredHex, Obstacles, VisibleHexes};
-use crate::units::{find_path_waypoints, Occupancy, ClaimedCellsThisFrame, Unit, UnitMovement, Army, UnitStats};
+use crate::units::{find_path_waypoints, Occupancy, ClaimedCellsThisFrame, Unit, UnitMovement, Army, UnitStats, LocalPlayerArmy};
 use crate::loading::LoadingState;
 
 // Components
@@ -636,6 +637,13 @@ fn create_path_line_mesh(
     mesh
 }
 
+// SystemParam bundle to stay within Bevy's 16-param limit
+#[derive(SystemParam)]
+struct SelectionRenderAssets<'w> {
+    meshes: ResMut<'w, Assets<Mesh>>,
+    materials: ResMut<'w, Assets<StandardMaterial>>,
+}
+
 // Systems
 fn handle_unit_selection(
     mouse_button: Res<ButtonInput<MouseButton>>,
@@ -651,16 +659,17 @@ fn handle_unit_selection(
     path_viz_query: Query<(Entity, &PathVisualization)>,
     dest_ring_query: Query<(Entity, &DestinationRing)>,
     visible_hexes: Res<VisibleHexes>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut render: SelectionRenderAssets,
     mut commands: Commands,
+    player_army: Res<LocalPlayerArmy>,
 ) {
+    let player = player_army.0;
     if mouse_button.just_pressed(MouseButton::Left) {
         // Check if a unit was clicked directly (prioritize direct clicks)
         if let Some(clicked_entity) = clicked_unit.entity {
             // Check if the clicked unit is from the Red army (player controlled)
             if let Ok((_entity, unit, _)) = unit_query.get(clicked_entity)
-                && unit.army == Army::Red {
+                && unit.army == player {
                     // Select this unit
                     for (entity, _, _, _, _) in &selected_query {
                         commands.entity(entity).remove::<Selected>();
@@ -671,7 +680,7 @@ fn handle_unit_selection(
 
             // If clicked unit is an enemy and we have a unit selected, target it
             if let Ok((_, enemy_unit, _)) = unit_query.get(clicked_entity)
-                && enemy_unit.army != Army::Red {
+                && enemy_unit.army != player {
                     if let Ok((selected_entity, selected_unit, stats, existing_movement, _)) = selected_query.single() {
                         let enemy_pos = (enemy_unit.q, enemy_unit.r);
 
@@ -704,7 +713,7 @@ fn handle_unit_selection(
                                         // Check if this position has a visible unit
                                         if let Some(&occupying_entity) = occupancy.position_to_entity.get(&occupied_pos) {
                                             if let Ok((_, unit, _)) = unit_query.get(occupying_entity) {
-                                                if unit.army == Army::Red || visible_hexes.0.contains(&occupied_pos) {
+                                                if unit.army == player || visible_hexes.0.contains(&occupied_pos) {
                                                     blocking_cells.insert(occupied_pos);
                                                 }
                                             }
@@ -807,7 +816,7 @@ fn handle_unit_selection(
                                     if occupied_pos != start_pos {
                                         if let Some(&occupying_entity) = occupancy.position_to_entity.get(&occupied_pos) {
                                             if let Ok((_, unit, _)) = unit_query.get(occupying_entity) {
-                                                if unit.army == Army::Red || visible_hexes.0.contains(&occupied_pos) {
+                                                if unit.army == player || visible_hexes.0.contains(&occupied_pos) {
                                                     blocking_cells.insert(occupied_pos);
                                                 }
                                             }
@@ -857,7 +866,7 @@ fn handle_unit_selection(
                                 if occupied_pos != start_pos {
                                     if let Some(&occupying_entity) = occupancy.position_to_entity.get(&occupied_pos) {
                                         if let Ok((_, unit, _)) = unit_query.get(occupying_entity) {
-                                            if unit.army == Army::Red || visible_hexes.0.contains(&occupied_pos) {
+                                            if unit.army == player || visible_hexes.0.contains(&occupied_pos) {
                                                 blocking_cells.insert(occupied_pos);
                                             }
                                         }
@@ -927,7 +936,7 @@ fn handle_unit_selection(
                                 // Check if this position has a visible unit
                                 if let Some(&occupying_entity) = occupancy.position_to_entity.get(&occupied_pos) {
                                     if let Ok((_, unit, _)) = unit_query.get(occupying_entity) {
-                                        if unit.army == Army::Red || visible_hexes.0.contains(&occupied_pos) {
+                                        if unit.army == player || visible_hexes.0.contains(&occupied_pos) {
                                             blocking_cells.insert(occupied_pos);
                                         }
                                     }
@@ -978,8 +987,8 @@ fn handle_unit_selection(
 
                                         spawn_destination_ring(
                                             &mut commands,
-                                            &mut meshes,
-                                            &mut materials,
+                                            &mut render.meshes,
+                                            &mut render.materials,
                                             selected_entity,
                                             goal,
                                             selected_unit.army,
@@ -1007,8 +1016,8 @@ fn handle_unit_selection(
 
                                         spawn_destination_ring(
                                             &mut commands,
-                                            &mut meshes,
-                                            &mut materials,
+                                            &mut render.meshes,
+                                            &mut render.materials,
                                             selected_entity,
                                             goal,
                                             selected_unit.army,
@@ -1040,8 +1049,8 @@ fn handle_unit_selection(
 
                                     spawn_destination_ring(
                                         &mut commands,
-                                        &mut meshes,
-                                        &mut materials,
+                                        &mut render.meshes,
+                                        &mut render.materials,
                                         selected_entity,
                                         goal,
                                         selected_unit.army,
@@ -1513,15 +1522,17 @@ fn visualize_hover_ring(
     selected_query: Query<&Unit, With<Selected>>,
     unit_query: Query<(&Unit, &Transform)>,
     existing_hover_rings: Query<(Entity, &HoverRing)>,
+    player_army: Res<crate::units::LocalPlayerArmy>,
 ) {
+    let player = player_army.0;
     // Check if we have a friendly unit selected
-    let has_friendly_selected = selected_query.iter().any(|u| u.army == Army::Red);
+    let has_friendly_selected = selected_query.iter().any(|u| u.army == player);
 
     // Determine which entity should have a hover ring
     let should_have_ring = if has_friendly_selected {
         hovered_unit.entity.and_then(|entity| {
             unit_query.get(entity).ok().and_then(|(unit, _)| {
-                if unit.army != Army::Red {
+                if unit.army != player {
                     Some(entity)
                 } else {
                     None

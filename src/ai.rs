@@ -6,7 +6,7 @@ use crate::loading::LoadingState;
 use crate::launch_pads::{GameTimer, LaunchPadOwner, LaunchPadOwnership, LaunchPads};
 use crate::map::{HexMapConfig, Obstacles};
 use crate::units::{
-    find_path_waypoints, hex_distance, Army, ClaimedCellsThisFrame, Occupancy,
+    find_path_waypoints, hex_distance, Army, ClaimedCellsThisFrame, LocalPlayerArmy, Occupancy,
     OccupancyIntent, Unit, UnitClass, UnitMovement, UnitSpawnQueue, UnitSpawnRequest, UnitStats, SpawnCooldowns, UnitDefinitions,
 };
 use crate::Paused;
@@ -59,7 +59,9 @@ fn ai_spawn_units(
     launch_pads: Res<LaunchPads>,
     game_timer: Res<GameTimer>,
     unit_definitions: Res<UnitDefinitions>,
+    player_army: Res<LocalPlayerArmy>,
 ) {
+    let ai_army = player_army.0.opponent();
     ai_controller.spawn_timer += time.delta_secs();
     ai_controller.strategy_timer += time.delta_secs();
     ai_controller.strategy_commitment_timer += time.delta_secs();
@@ -100,14 +102,14 @@ fn ai_spawn_units(
         }
     }
 
-    // Count blue units by type and army
+    // Count AI units by type
     let mut blue_infantry = 0;
     let mut blue_cavalry = 0;
     let mut blue_artillery = 0;
     let mut blue_harvesters = 0;
 
     for (unit, unit_class) in unit_query.iter() {
-        if unit.army == Army::Blue {
+        if unit.army == ai_army {
             match unit_class {
                 UnitClass::Infantry => blue_infantry += 1,
                 UnitClass::Cavalry => blue_cavalry += 1,
@@ -118,7 +120,7 @@ fn ai_spawn_units(
     }
 
     let blue_combat_units = blue_infantry + blue_cavalry + blue_artillery;
-    let blue_money = economy.blue_money;
+    let blue_money = match ai_army { Army::Blue => economy.blue_money, Army::Red => economy.red_money };
 
     // Decide what to spawn based on strategy
     let unit_to_spawn = match ai_controller.strategy {
@@ -174,15 +176,14 @@ fn ai_spawn_units(
     if let Some(unit_class) = unit_to_spawn {
         // Count current Blue army units (including harvesters)
         let blue_unit_count = unit_query.iter()
-            .filter(|(u, _uc)| u.army == Army::Blue)
+            .filter(|(u, _uc)| u.army == ai_army)
             .count();
 
-        let blue_cooldowns = spawn_cooldowns.get_army_cooldowns(Army::Blue);
-        // Check cooldown for count after spawning (current + 1)
+        let blue_cooldowns = spawn_cooldowns.get_army_cooldowns(ai_army);
         if blue_cooldowns.is_ready(unit_class, blue_unit_count + 1) {
             spawn_queue.requests.push(UnitSpawnRequest {
                 unit_class,
-                army: Army::Blue,
+                army: ai_army,
             });
             println!("AI ({:?} strategy): Spawning {:?}", ai_controller.strategy, unit_class);
         }
@@ -392,7 +393,11 @@ fn ai_command_units(
     hex_grid: Res<crate::hex_pathfinding::HexPathfindingGrid>,
     mut claimed_cells: ResMut<ClaimedCellsThisFrame>,
     unit_query: Query<(Entity, &Unit, &UnitStats, &UnitClass, Option<&UnitMovement>)>,
+    player_army: Res<LocalPlayerArmy>,
 ) {
+    let ai_army = player_army.0.opponent();
+    let player = player_army.0;
+
     ai_controller.command_timer += time.delta_secs();
 
     if ai_controller.command_timer < ai_controller.command_interval {
@@ -401,19 +406,17 @@ fn ai_command_units(
 
     ai_controller.command_timer = 0.0;
 
-    // Find all idle blue units (units without movement or who have reached destination)
     let mut idle_blue_units = Vec::new();
     let mut all_red_units = Vec::new();
 
     for (entity, unit, stats, unit_class, movement) in unit_query.iter() {
-        if unit.army == Army::Blue {
-            // Unit is idle if it has no movement component or has reached end of path
+        if unit.army == ai_army {
             let is_idle = movement.is_none()
                 || movement.is_some_and(|m| m.current_waypoint >= m.waypoints.len());
             if is_idle {
                 idle_blue_units.push((entity, unit, stats, unit_class));
             }
-        } else if unit.army == Army::Red {
+        } else if unit.army == player {
             all_red_units.push((unit.q, unit.r, unit_class));
         }
     }
