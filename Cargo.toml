@@ -4,10 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = { version = "0.17", features = ["jpeg"] }
-bevy-inspector-egui = "0.35"
-bevy_mod_outline = { git = "https://github.com/komadori/bevy_mod_outline.git", branch = "bevy-0.17" }
-bevy_northstar = "0.5"
+bevy = { version = "0.18", features = ["jpeg"] }
+bevy-inspector-egui = "0.36"
+bevy_mod_outline = "0.12"
 tiled = "0.15"
 ndarray = "0.17"
 pathfinding = "4.14"

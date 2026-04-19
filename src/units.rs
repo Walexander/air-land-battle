@@ -2303,7 +2303,7 @@ fn play_animation_when_loaded(
             if is_descendant {
                 // Stagger animation start time based on entity ID to desynchronize infantry models
                 // Use entity bits to generate a pseudo-random offset between 0-2 seconds
-                let entity_bits = player_entity.index() as u32;
+                let entity_bits = player_entity.index().index();
                 let offset_secs = ((entity_bits % 100) as f32) / 50.0; // 0.0 to 2.0 seconds
 
                 let mut transitions = AnimationTransitions::new();
