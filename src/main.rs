@@ -34,6 +34,7 @@ fn main() {
             primary_window: Some(Window {
                 resolution: bevy::window::WindowResolution::new(1500, 720),
                 title: "Air Land Battle".to_string(),
+                present_mode: bevy::window::PresentMode::AutoVsync,
                 ..default()
             }),
             ..default()

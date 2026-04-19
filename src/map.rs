@@ -130,6 +130,11 @@ pub struct Obstacles {
 #[derive(Resource, Default)]
 pub struct VisibleHexes(pub std::collections::HashSet<(i32, i32)>);
 
+/// Shared material handle for all fog-of-war overlay tiles.
+/// Stored as a resource so bevy_inspector_egui can find it by name.
+#[derive(Resource)]
+pub struct FogMaterial(pub Handle<StandardMaterial>);
+
 pub struct MapPlugin;
 
 impl Plugin for MapPlugin {
@@ -604,6 +609,18 @@ pub fn setup_hex_map(
     mut camera_settings: ResMut<CameraSettings>,
     map_def: Res<crate::map_loader::MapDefinition>,
 ) {
+    // Create the shared fog material once and store it as a named resource
+    // so bevy_inspector_egui can find it under "FogMaterial" in the Resources panel.
+    let fog_material_handle = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.0, 0.0, 0.0, 0.55),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+
+        double_sided: true,
+        cull_mode: None,
+        ..default()
+    });
+    commands.insert_resource(FogMaterial(fog_material_handle.clone()));
     // Populate obstacles from the loaded map definition
     obstacles.positions = map_def.obstacles.clone();
     // Build valid_cells from all rendered tiles (tile_map + launch_pad_cells).
@@ -691,6 +708,7 @@ pub fn setup_hex_map(
     let _hex_mesh = meshes.add(create_hexagon_prism_mesh(prism_height));
     let filled_hex_mesh = meshes.add(create_filled_hexagon_mesh());
     let hex_border_mesh = meshes.add(create_filled_hexagon_border_mesh());
+    let fog_hex_mesh = meshes.add(create_filled_hexagon_border_mesh()); // same size as the border
     let hover_outline_mesh = meshes.add(create_hexagon_outline_mesh(63.0, 4.0)); // Same as destination ring
     let spawn_center_mesh = meshes.add(create_filled_hexagon_mesh_with_radius(HEX_RADIUS * 0.45));
 
@@ -761,7 +779,6 @@ pub fn setup_hex_map(
 
                 let hex_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
 
-                // Spawn border hexagon (light gray, slightly larger and below the tile)
                 let border_pos = world_pos + Vec3::new(0.0, 0.4, 0.0);
                 parent.spawn((
                     Mesh3d(hex_border_mesh.clone()),
@@ -986,19 +1003,12 @@ pub fn setup_hex_map(
                         Visibility::Hidden,
                     ));
 
-                    // Spawn fog of war overlay (visible by default until units reveal the area)
-                    let fog_pos = world_pos + Vec3::new(0.0, 3.0, 0.0);
-                    let fog_color = Color::srgba(0.0, 0.0, 0.0, 0.2); // Dark semi-transparent overlay
+                    // Fog sits just above the colored tile (Y+0.51 vs tile Y+0.5).
+                    let fog_pos = world_pos + Vec3::new(0.0, 0.51, 0.0);
                     parent.spawn((
-                        Mesh3d(filled_hex_mesh.clone()),
-                        MeshMaterial3d(materials.add(StandardMaterial {
-                            base_color: fog_color,
-                            alpha_mode: AlphaMode::Blend,
-                            unlit: true,
-                            double_sided: true,
-                            cull_mode: None,
-                            ..default()
-                        })),
+                        Name::new("FogOfWar"),
+                        Mesh3d(fog_hex_mesh.clone()),
+                        MeshMaterial3d(fog_material_handle.clone()),
                         Transform::from_translation(fog_pos)
                             .with_rotation(hex_rotation),
                         FogOfWar {
@@ -1798,14 +1808,16 @@ fn animate_missile_launch(
                 let duration = 4.0;
                 launch.elapsed = (launch.elapsed + dt).min(duration);
                 let t = launch.elapsed / duration;
+                // Ease-in cubic: slow launch, fast fall
+                let t_eased = t * t * t;
 
                 let p0 = launch.launch_world_pos;
                 let p2 = launch.target_pos;
                 let apex = (p0 + p2) * 0.5 + Vec3::Y * 300.0;
 
-                let it = 1.0 - t;
-                let world_pos = it * it * p0 + 2.0 * it * t * apex + t * t * p2;
-                let vel = 2.0 * it * (apex - p0) + 2.0 * t * (p2 - apex);
+                let it = 1.0 - t_eased;
+                let world_pos = it * it * p0 + 2.0 * it * t_eased * apex + t_eased * t_eased * p2;
+                let vel = 2.0 * it * (apex - p0) + 2.0 * t_eased * (p2 - apex);
 
                 // Convert world position to local space via parent's inverse transform
                 let local_pos = parent_gt.affine().inverse().transform_point3(world_pos);
