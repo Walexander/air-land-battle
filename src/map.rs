@@ -599,6 +599,21 @@ fn create_launch_pad_outline_mesh(perimeter_edges: &[((i32, i32), (i32, i32))], 
         .with_inserted_indices(Indices::U32(indices))
 }
 
+/// Shared mesh/texture/model handles bundled so helpers don't need a dozen individual parameters.
+struct TileAssets {
+    filled_hex_mesh: Handle<Mesh>,
+    hex_border_mesh: Handle<Mesh>,
+    fog_hex_mesh: Handle<Mesh>,
+    hover_outline_mesh: Handle<Mesh>,
+    spawn_center_mesh: Handle<Mesh>,
+    sand_texture: Handle<Image>,
+    cement_texture: Handle<Image>,
+    fog_material: Handle<StandardMaterial>,
+    mountain_model: Handle<Scene>,
+    silo_model: Handle<Scene>,
+    hq_model: Handle<Scene>,
+}
+
 pub fn setup_hex_map(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -701,22 +716,25 @@ pub fn setup_hex_map(
         DespawnOnExit(LoadingState::Playing),
     ));
 
-
     let prism_height = 20.0;
 
-    // Reuse meshes
+    // Build shared handles bundled into TileAssets.
     let _hex_mesh = meshes.add(create_hexagon_prism_mesh(prism_height));
-    let filled_hex_mesh = meshes.add(create_filled_hexagon_mesh());
-    let hex_border_mesh = meshes.add(create_filled_hexagon_border_mesh());
-    let fog_hex_mesh = meshes.add(create_filled_hexagon_border_mesh()); // same size as the border
-    let hover_outline_mesh = meshes.add(create_hexagon_outline_mesh(63.0, 4.0)); // Same as destination ring
-    let spawn_center_mesh = meshes.add(create_filled_hexagon_mesh_with_radius(HEX_RADIUS * 0.45));
+    let assets = TileAssets {
+        filled_hex_mesh: meshes.add(create_filled_hexagon_mesh()),
+        hex_border_mesh: meshes.add(create_filled_hexagon_border_mesh()),
+        fog_hex_mesh: meshes.add(create_filled_hexagon_border_mesh()), // same size as the border
+        hover_outline_mesh: meshes.add(create_hexagon_outline_mesh(63.0, 4.0)), // Same as destination ring
+        spawn_center_mesh: meshes.add(create_filled_hexagon_mesh_with_radius(HEX_RADIUS * 0.45)),
+        sand_texture: asset_server.load("maps/Tiles/sand_01.png"),
+        cement_texture: asset_server.load("maps/Tiles/cement_01.jpg"),
+        fog_material: fog_material_handle,
+        mountain_model: asset_server.load("mountains.glb#Scene0"),
+        silo_model: asset_server.load("Missile Silo.glb#Scene0"),
+        hq_model: asset_server.load("JustBuildings.glb#Scene0"),
+    };
 
-    // Load mountain 3D model
-    let mountain_model = asset_server.load("mountains.glb#Scene0");
-    let silo_model: Handle<Scene> = asset_server.load("Missile Silo.glb#Scene0");
-
-    // Create parent HexMap entity
+    // Create parent HexMap entity; delegate children to helpers.
     commands.spawn((
         HexMap,
         Transform::default(),
@@ -724,581 +742,619 @@ pub fn setup_hex_map(
         Name::new("HexMap"),
         DespawnOnExit(LoadingState::Playing),
     )).with_children(|parent| {
-        // Iterate all tiles in the TMX tile layer, plus any launch-pad cells that
-        // weren't present in the tile layer (polygon-derived, GID=0 in the CSV).
-        let mut tile_map = map_def.tile_map.clone();
-        for &cell in &map_def.launch_pad_cells {
-            tile_map.entry(cell).or_insert(0);
-        }
-        let sand_texture: Handle<Image> = asset_server.load("maps/Tiles/sand_01.png");
-        let cement_texture: Handle<Image> = asset_server.load("maps/Tiles/cement_01.jpg");
+        setup_tiles(parent, &map_def, &assets, &mut *materials, &mut *meshes, &obstacles);
+        setup_hq(parent, &map_def, &assets, &mut *materials);
+        setup_obstacles(parent, &map_def, &assets, &mut *materials);
+        setup_crystals(parent, &map_def, &asset_server);
+    });
+}
 
-        for (&(q, r), &gid) in &tile_map {
-                let world_pos = axial_to_world_pos(q, r);
+/// Draws all non-obstacle hex tiles from the tile_map + launch_pad_cells.
+/// For each tile: border ring, filled hex, fog of war, hover outline, optional spawn dot,
+/// optional launch-pad outline (first cell only), and debug outlines.
+/// Also emits the spawn-cell debug outlines and polygon outlines at the end.
+fn setup_tiles(
+    parent: &mut bevy::ecs::hierarchy::ChildSpawnerCommands,
+    map_def: &crate::map_loader::MapDefinition,
+    assets: &TileAssets,
+    materials: &mut Assets<StandardMaterial>,
+    meshes: &mut Assets<Mesh>,
+    obstacles: &Obstacles,
+) {
+    // Merge tile_map with any launch-pad cells not already present.
+    let mut tile_map = map_def.tile_map.clone();
+    for &cell in &map_def.launch_pad_cells {
+        tile_map.entry(cell).or_insert(0);
+    }
 
-                let height = prism_height;
+    let prism_height = 20.0;
+    let hex_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
+    let outline_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
 
-                let is_obstacle = obstacles.positions.contains(&(q, r));
+    for (&(q, r), &_gid) in &tile_map {
+        let world_pos = axial_to_world_pos(q, r);
+        let height = prism_height;
 
-                // A tile belongs to a launch pad if the polygon step assigned it to a group,
-                // regardless of its GID (the polygon is authoritative).
-                let pad_index = map_def.launch_pads.iter().position(|platform| platform.contains(&(q, r)));
-                let is_launch_pad = pad_index.is_some();
+        let is_obstacle = obstacles.positions.contains(&(q, r));
 
-                let is_spawn = map_def.spawn_red.contains(&(q, r))
-                    || map_def.spawn_blue.contains(&(q, r));
+        // A tile belongs to a launch pad if the polygon step assigned it to a group,
+        // regardless of its GID (the polygon is authoritative).
+        let pad_index = map_def.launch_pads.iter().position(|platform| platform.contains(&(q, r)));
+        let is_launch_pad = pad_index.is_some();
 
-                let is_red_base = map_def.base_red_polygon.len() >= 3
-                    && crate::map_loader::point_in_polygon(
-                        HEX_HEIGHT * (q as f32 + r as f32 * 0.5),
-                        HEX_WIDTH * 0.75 * r as f32,
-                        &map_def.base_red_polygon,
-                    );
-                let is_blue_base = map_def.base_blue_polygon.len() >= 3
-                    && crate::map_loader::point_in_polygon(
-                        HEX_HEIGHT * (q as f32 + r as f32 * 0.5),
-                        HEX_WIDTH * 0.75 * r as f32,
-                        &map_def.base_blue_polygon,
-                    );
+        let is_spawn = map_def.spawn_red.contains(&(q, r))
+            || map_def.spawn_blue.contains(&(q, r));
 
-                // Alternate tile colors based on hex coordinates
-                let color = if is_red_base {
-                    Color::srgb(0.75, 0.2, 0.2) // Red base
-                } else if is_blue_base {
-                    Color::srgb(0.2, 0.35, 0.75) // Blue base
-                } else if is_launch_pad {
-                    Color::WHITE
+        let wx = HEX_HEIGHT * (q as f32 + r as f32 * 0.5);
+        let wz = HEX_WIDTH * 0.75 * r as f32;
+        let is_red_base = map_def.base_red_polygon.len() >= 3
+            && crate::map_loader::point_in_polygon(wx, wz, &map_def.base_red_polygon);
+        let is_blue_base = map_def.base_blue_polygon.len() >= 3
+            && crate::map_loader::point_in_polygon(wx, wz, &map_def.base_blue_polygon);
+
+        // Tile fill color.
+        let color = if is_red_base {
+            Color::srgb(0.75, 0.2, 0.2)
+        } else if is_blue_base {
+            Color::srgb(0.2, 0.35, 0.75)
+        } else if is_launch_pad {
+            Color::WHITE
+        } else {
+            Color::WHITE
+        };
+        let emissive = if is_red_base || is_blue_base {
+            LinearRgba::from(color) * 0.5
+        } else {
+            LinearRgba::BLACK
+        };
+
+        // --- Border ring ---
+        let border_pos = world_pos + Vec3::new(0.0, 0.4, 0.0);
+        parent.spawn((
+            Mesh3d(assets.hex_border_mesh.clone()),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgb(0.7, 0.7, 0.7),
+                emissive: Color::srgb(0.7, 0.7, 0.7).into(),
+                unlit: true,
+                double_sided: true,
+                cull_mode: None,
+                ..default()
+            })),
+            Transform::from_translation(border_pos).with_rotation(hex_rotation),
+        ));
+
+        // --- Filled hexagon ---
+        let filled_hex_pos = world_pos + Vec3::new(0.0, 0.5, 0.0);
+        let mut hex_entity_commands = parent.spawn((
+            Mesh3d(assets.filled_hex_mesh.clone()),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: color,
+                base_color_texture: Some(if is_launch_pad {
+                    assets.cement_texture.clone()
                 } else {
-                    Color::WHITE
-                };
-                let emissive = if is_red_base || is_blue_base {
-                    LinearRgba::from(color) * 0.5
-                } else {
-                    LinearRgba::BLACK
-                };
+                    assets.sand_texture.clone()
+                }),
+                emissive,
+                unlit: false,
+                perceptual_roughness: 1.0,
+                metallic: 0.0,
+                double_sided: true,
+                cull_mode: None,
+                ..default()
+            })),
+            bevy::light::NotShadowCaster,
+            Transform::from_translation(filled_hex_pos).with_rotation(hex_rotation),
+            HexTile { q, r, _height: height },
+            Name::new(format!("Hex ({}, {})", q, r)),
+        ));
 
-                let hex_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
-
-                let border_pos = world_pos + Vec3::new(0.0, 0.4, 0.0);
-                parent.spawn((
-                    Mesh3d(hex_border_mesh.clone()),
-                    MeshMaterial3d(materials.add(StandardMaterial {
-                        base_color: Color::srgb(0.7, 0.7, 0.7),
-                        emissive: Color::srgb(0.7, 0.7, 0.7).into(),
-                        unlit: true,
-                        double_sided: true,
-                        cull_mode: None,
-                        ..default()
-                    })),
-                    Transform::from_translation(border_pos).with_rotation(hex_rotation),
-                ));
-
-                // Spawn filled hexagon (no prism for now)
-                let filled_hex_pos = world_pos + Vec3::new(0.0, 0.5, 0.0);
-                let mut hex_entity_commands = parent.spawn((
-                    Mesh3d(filled_hex_mesh.clone()),
-                    MeshMaterial3d(materials.add(StandardMaterial {
-                        base_color: color,
-                        base_color_texture: Some(if is_launch_pad { cement_texture.clone() } else { sand_texture.clone() }),
-                        emissive,
-                        unlit: false,
-                        perceptual_roughness: 1.0,
-                        metallic: 0.0,
-                        double_sided: true,
-                        cull_mode: None,
-                        ..default()
-                    })),
-                    bevy::light::NotShadowCaster,
-                    Transform::from_translation(filled_hex_pos).with_rotation(hex_rotation),
-                    HexTile { q, r, _height: height },
-                    Name::new(format!("Hex ({}, {})", q, r)),
-                ));
-
-                // Add LaunchPadTile component if this is a launch pad
-                if pad_index.is_some() {
-                    hex_entity_commands.insert(LaunchPadTile {});
-                }
-
-                // White centre dot for spawn tiles
-                if is_spawn {
-                    parent.spawn((
-                        Mesh3d(spawn_center_mesh.clone()),
-                        MeshMaterial3d(materials.add(StandardMaterial {
-                            base_color: Color::srgb(1.0, 1.0, 1.0),
-                            emissive: Color::srgb(1.0, 1.0, 1.0).into(),
-                            unlit: true,
-                            double_sided: true,
-                            cull_mode: None,
-                            ..default()
-                        })),
-                        Transform::from_translation(filled_hex_pos + Vec3::new(0.0, 0.2, 0.0))
-                            .with_rotation(hex_rotation),
-                    ));
-                }
-
-                // Spawn hex outline (skip for obstacles since they use sprites)
-                let base_outline_height = 1.0;
-                let _outline_pos = if is_launch_pad {
-                    world_pos + Vec3::new(0.0, base_outline_height + 0.2, 0.0)
-                } else {
-                    world_pos + Vec3::new(0.0, base_outline_height, 0.0)
-                };
-
-                let _outline_color = Color::srgb(1.0, 1.0, 1.0); // White
-                let outline_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
-
-                if is_obstacle {
-                    // Check if this is an HQ position using loaded map definition
-                    let is_red_hq = map_def.hq_red == Some((q, r));
-                    let is_blue_hq = map_def.hq_blue == Some((q, r));
-                    let is_hq = is_red_hq || is_blue_hq;
-
-                    if is_hq {
-                        // Spawn HQ building using HexBase from JustBuildings.glb
-                        let hq_model: Handle<Scene> = asset_server.load("JustBuildings.glb#Scene0");
-                        let hq_scale = 24.0; // 20% larger than original 20.0
-                        let hq_pos = world_pos + Vec3::new(0.0, 10.0, 0.0);
-                        let hq_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
-
-                        let army = if is_red_hq {
-                            crate::units::Army::Red
-                        } else {
-                            crate::units::Army::Blue
-                        };
-
-                        parent.spawn((
-                            SceneRoot(hq_model),
-                            Transform::from_translation(hq_pos)
-                                .with_rotation(hq_rotation)
-                                .with_scale(Vec3::splat(hq_scale)),
-                            HQ { army, q, r },
-                            Name::new(format!("{:?} HQ", army)),
-                        ));
-
-                        println!("Creating {:?} HQ at ({}, {})", army, q, r);
-                    } else if !is_red_base && !is_blue_base {
-                        let is_silo = map_def.silos.contains(&(q, r));
-                        if is_silo {
-                            parent.spawn((
-                                SceneRoot(silo_model.clone()),
-                                Transform::from_translation(world_pos + Vec3::new(0.0, 0.5, 0.0))
-                                    .with_rotation(Quat::from_rotation_y(std::f32::consts::PI / 2.0))
-                                    .with_scale(Vec3::splat(20.0)),
-                                SiloRoot,
-                            ));
-                        } else {
-                            parent.spawn((
-                                SceneRoot(mountain_model.clone()),
-                                Transform::from_translation(world_pos + Vec3::new(0.0, 10.0, 12.0))
-                                    .with_rotation(Quat::from_rotation_y(std::f32::consts::PI / 2.0))
-                                    .with_scale(Vec3::splat(21.25)),
-                            ));
-                        }
-                    }
-                } else if is_launch_pad {
-                    // Only process this once per pad (only for the first hex in the pad)
-                    let pad_idx = pad_index.unwrap();
-                    let pad_cells = &map_def.launch_pads[pad_idx];
-                    let is_first_cell = pad_cells.first() == Some(&(q, r));
-
-                    if is_first_cell {
-                        // Build hull by collecting all edges and removing duplicates
-                        use std::collections::HashMap;
-
-                        // Edge represented as sorted pair of axial coordinates
-                        type Edge = ((i32, i32), (i32, i32));
-                        let mut edge_counts: HashMap<Edge, usize> = HashMap::new();
-
-                        // For each cell in the pad, add all 6 edges
-                        for &(cell_q, cell_r) in pad_cells {
-                            // 6 neighbors define the 6 edges
-                            let neighbors = [
-                                (cell_q + 1, cell_r),
-                                (cell_q + 1, cell_r - 1),
-                                (cell_q, cell_r - 1),
-                                (cell_q - 1, cell_r),
-                                (cell_q - 1, cell_r + 1),
-                                (cell_q, cell_r + 1),
-                            ];
-
-                            // Each edge is between this cell and a neighbor
-                            for neighbor in neighbors {
-                                // Normalize edge representation (smaller coord first)
-                                let edge = if (cell_q, cell_r) < neighbor {
-                                    ((cell_q, cell_r), neighbor)
-                                } else {
-                                    (neighbor, (cell_q, cell_r))
-                                };
-                                *edge_counts.entry(edge).or_insert(0) += 1;
-                            }
-                        }
-
-                        // Edges that appear exactly once are on the perimeter
-                        let perimeter_edges: Vec<Edge> = edge_counts
-                            .into_iter()
-                            .filter(|(_, count)| *count == 1)
-                            .map(|(edge, _)| edge)
-                            .collect();
-
-                        // Calculate the center of the launch pad
-                        let mut center_x = 0.0;
-                        let mut center_z = 0.0;
-                        for &(cell_q, cell_r) in pad_cells {
-                            let pos = axial_to_world_pos(cell_q, cell_r);
-                            center_x += pos.x;
-                            center_z += pos.z;
-                        }
-                        center_x /= pad_cells.len() as f32;
-                        center_z /= pad_cells.len() as f32;
-                        let pad_center = Vec3::new(center_x, 0.0, center_z);
-
-                        // Create outline mesh from perimeter edges
-                        println!("Launch pad {} has {} perimeter edges", pad_idx, perimeter_edges.len());
-                        if !perimeter_edges.is_empty() {
-                            let outline_mesh = create_launch_pad_outline_mesh(&perimeter_edges, pad_center);
-                            let outline_mesh_handle = meshes.add(outline_mesh);
-
-                            // Position at Y height
-                            let outline_y = 1.2;
-
-                            parent.spawn((
-                                Mesh3d(outline_mesh_handle),
-                                MeshMaterial3d(materials.add(StandardMaterial {
-                                    base_color: Color::srgb(0.7, 0.7, 0.7), // Start with light gray
-                                    emissive: Color::srgb(0.7, 0.7, 0.7).into(),
-                                    unlit: true,
-                                    double_sided: true,
-                                    cull_mode: None,
-                                    ..default()
-                                })),
-                                Transform::from_translation(Vec3::new(pad_center.x, outline_y, pad_center.z))
-                                    .with_scale(Vec3::splat(1.0)),
-                                LaunchPadOutline {
-                                    pad_index: pad_idx,
-                                },
-                            ));
-                        }
-                    }
-                }
-
-                // Always spawn hover highlight for all tiles (not obstacles)
-                if !is_obstacle {
-                    // Hover highlight positioned higher to be visible above UI
-                    let hover_pos = world_pos + Vec3::new(0.0, 8.0, 0.0);
-                    let hover_color = Color::srgb(0.7, 0.7, 0.7); // Light grey to match destination ring
-                    parent.spawn((
-                        Mesh3d(hover_outline_mesh.clone()),
-                        MeshMaterial3d(materials.add(StandardMaterial {
-                            base_color: hover_color,
-                            emissive: hover_color.into(),
-                            unlit: true,
-                            double_sided: true,
-                            cull_mode: None,
-                            ..default()
-                        })),
-                        Transform::from_translation(hover_pos)
-                            .with_rotation(outline_rotation)
-                            .with_scale(Vec3::splat(0.75)), // Match destination ring resting scale
-                        HexOutline {},
-                        Visibility::Hidden,
-                    ));
-
-                    // Fog sits just above the colored tile (Y+0.51 vs tile Y+0.5).
-                    let fog_pos = world_pos + Vec3::new(0.0, 0.51, 0.0);
-                    parent.spawn((
-                        Name::new("FogOfWar"),
-                        Mesh3d(fog_hex_mesh.clone()),
-                        MeshMaterial3d(fog_material_handle.clone()),
-                        Transform::from_translation(fog_pos)
-                            .with_rotation(hex_rotation),
-                        FogOfWar {
-                            hex_q: q,
-                            hex_r: r,
-                        },
-                        Visibility::Visible,
-                    ));
-                }
-
-                // Debug outline — only for obstacles and crystal fields (no green on regular tiles).
-                let debug_color = if is_obstacle {
-                    Some(Color::srgb(0.0, 0.0, 0.0)) // black for obstacles
-                } else if map_def.crystal_fields.contains(&(q, r)) {
-                    Some(Color::srgb(0.6, 0.0, 0.8)) // purple for crystal fields
-                } else {
-                    None
-                };
-                if let Some(debug_color) = debug_color {
-                    parent.spawn((
-                        Mesh3d(hover_outline_mesh.clone()),
-                        MeshMaterial3d(materials.add(StandardMaterial {
-                            base_color: debug_color,
-                            emissive: debug_color.into(),
-                            unlit: true,
-                            double_sided: true,
-                            cull_mode: None,
-                            ..default()
-                        })),
-                        Transform::from_translation(world_pos + Vec3::new(0.0, 9.0, 0.0))
-                            .with_rotation(outline_rotation)
-                            .with_scale(Vec3::splat(0.75)),
-                        DebugOutline,
-                        Visibility::Hidden,
-                    ));
-                }
-
+        // Add LaunchPadTile component if this is a launch pad.
+        if pad_index.is_some() {
+            hex_entity_commands.insert(LaunchPadTile {});
         }
 
-        // Spawn obstacle tiles — their positions have GID=0 in the tile layer so they
-        // never appear in the tile_map loop; we handle them here instead.
-        let obstacle_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
-        for &(q, r) in &map_def.obstacles {
-            // Skip cells already rendered by the tile_map loop above.
-            if map_def.tile_map.contains_key(&(q, r)) {
-                continue;
-            }
-
-            let world_pos = axial_to_world_pos(q, r);
-            let wx = HEX_HEIGHT * (q as f32 + r as f32 * 0.5);
-            let wz = HEX_WIDTH * 0.75 * r as f32;
-
-            let is_red_hq = map_def.hq_red == Some((q, r));
-            let is_blue_hq = map_def.hq_blue == Some((q, r));
-            let is_silo = map_def.silos.contains(&(q, r));
-            let is_red_base = map_def.base_red_polygon.len() >= 3
-                && crate::map_loader::point_in_polygon(wx, wz, &map_def.base_red_polygon);
-            let is_blue_base = map_def.base_blue_polygon.len() >= 3
-                && crate::map_loader::point_in_polygon(wx, wz, &map_def.base_blue_polygon);
-
-            let tile_color = if is_red_base {
-                Color::srgb(0.75, 0.2, 0.2)
-            } else if is_blue_base {
-                Color::srgb(0.2, 0.35, 0.75)
-            } else {
-                Color::WHITE
-            };
-
+        // --- White centre dot for spawn tiles ---
+        if is_spawn {
             parent.spawn((
-                Mesh3d(filled_hex_mesh.clone()),
+                Mesh3d(assets.spawn_center_mesh.clone()),
                 MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: tile_color,
-                    base_color_texture: if is_silo { Some(cement_texture.clone()) } else { None },
-                    unlit: false,
-                    perceptual_roughness: 1.0,
+                    base_color: Color::srgb(1.0, 1.0, 1.0),
+                    emissive: Color::srgb(1.0, 1.0, 1.0).into(),
+                    unlit: true,
                     double_sided: true,
                     cull_mode: None,
                     ..default()
                 })),
-                Transform::from_translation(world_pos + Vec3::new(0.0, 0.5, 0.0))
-                    .with_rotation(obstacle_rotation),
+                Transform::from_translation(filled_hex_pos + Vec3::new(0.0, 0.2, 0.0))
+                    .with_rotation(hex_rotation),
             ));
+        }
 
-            if is_red_hq || is_blue_hq {
-                let hq_model: Handle<Scene> = asset_server.load("JustBuildings.glb#Scene0");
-                let army = if is_red_hq { crate::units::Army::Red } else { crate::units::Army::Blue };
-                parent.spawn((
-                    SceneRoot(hq_model),
-                    Transform::from_translation(world_pos + Vec3::new(0.0, 10.0, 0.0))
-                        .with_rotation(Quat::from_rotation_y(std::f32::consts::PI / 2.0))
-                        .with_scale(Vec3::splat(24.0)),
-                    HQ { army, q, r },
-                ));
-            } else if !is_red_base && !is_blue_base {
-                let is_silo = map_def.silos.contains(&(q, r));
-                if is_silo {
-                    parent.spawn((
-                        SceneRoot(silo_model.clone()),
-                        Transform::from_translation(world_pos + Vec3::new(0.0, 0.5, 0.0))
-                            .with_rotation(Quat::from_rotation_y(std::f32::consts::PI / 2.0))
-                            .with_scale(Vec3::splat(20.0)),
-                        SiloRoot,
-                    ));
-                } else {
-                    parent.spawn((
-                        SceneRoot(mountain_model.clone()),
-                        Transform::from_translation(world_pos + Vec3::new(0.0, 10.0, 12.0))
-                            .with_rotation(Quat::from_rotation_y(std::f32::consts::PI / 2.0))
-                            .with_scale(Vec3::splat(21.25)),
-                    ));
+        // Unused outline position variables kept for parity with original.
+        let base_outline_height = 1.0;
+        let _outline_pos = if is_launch_pad {
+            world_pos + Vec3::new(0.0, base_outline_height + 0.2, 0.0)
+        } else {
+            world_pos + Vec3::new(0.0, base_outline_height, 0.0)
+        };
+        let _outline_color = Color::srgb(1.0, 1.0, 1.0); // White
+
+        // --- Launch-pad perimeter outline (first cell of each pad only) ---
+        if !is_obstacle {
+            if let Some(pad_idx) = pad_index {
+                let pad_cells = &map_def.launch_pads[pad_idx];
+                if pad_cells.first() == Some(&(q, r)) {
+                    spawn_launch_pad_outline(parent, pad_idx, pad_cells, materials, meshes);
                 }
             }
+        }
 
-            // Debug outline (black, same as tile-loop obstacles)
+        // --- Hover highlight and fog (non-obstacle tiles only) ---
+        if !is_obstacle {
+            let hover_pos = world_pos + Vec3::new(0.0, 8.0, 0.0);
+            let hover_color = Color::srgb(0.7, 0.7, 0.7);
             parent.spawn((
-                Mesh3d(hover_outline_mesh.clone()),
+                Mesh3d(assets.hover_outline_mesh.clone()),
                 MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::srgb(0.0, 0.0, 0.0),
-                    emissive: Color::srgb(0.0, 0.0, 0.0).into(),
+                    base_color: hover_color,
+                    emissive: hover_color.into(),
+                    unlit: true,
+                    double_sided: true,
+                    cull_mode: None,
+                    ..default()
+                })),
+                Transform::from_translation(hover_pos)
+                    .with_rotation(outline_rotation)
+                    .with_scale(Vec3::splat(0.75)),
+                HexOutline {},
+                Visibility::Hidden,
+            ));
+
+            // Fog sits just above the colored tile (Y+0.51 vs tile Y+0.5).
+            let fog_pos = world_pos + Vec3::new(0.0, 0.51, 0.0);
+            parent.spawn((
+                Name::new("FogOfWar"),
+                Mesh3d(assets.fog_hex_mesh.clone()),
+                MeshMaterial3d(assets.fog_material.clone()),
+                Transform::from_translation(fog_pos).with_rotation(hex_rotation),
+                FogOfWar { hex_q: q, hex_r: r },
+                Visibility::Visible,
+            ));
+        }
+
+        // --- Debug outline (obstacles → black, crystal fields → purple) ---
+        let debug_color = if is_obstacle {
+            Some(Color::srgb(0.0, 0.0, 0.0))
+        } else if map_def.crystal_fields.contains(&(q, r)) {
+            Some(Color::srgb(0.6, 0.0, 0.8))
+        } else {
+            None
+        };
+        if let Some(debug_color) = debug_color {
+            parent.spawn((
+                Mesh3d(assets.hover_outline_mesh.clone()),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: debug_color,
+                    emissive: debug_color.into(),
                     unlit: true,
                     double_sided: true,
                     cull_mode: None,
                     ..default()
                 })),
                 Transform::from_translation(world_pos + Vec3::new(0.0, 9.0, 0.0))
-                    .with_rotation(obstacle_rotation)
-                    .with_scale(Vec3::splat(0.75)),
-                DebugOutline,
-                Visibility::Hidden,
-            ));
-        }
-
-        // Spawn crystal fields from loaded map definition
-        let crystal_positions = map_def.crystal_fields.clone();
-
-        for (q, r) in crystal_positions {
-            let world_pos = axial_to_world_pos(q, r);
-
-            // Load crystal model
-            let crystal_scene: Handle<Scene> = asset_server.load("Lighthing Crystal.glb#Scene0");
-
-            // Random crystal count between 200-400
-            let crystals = 200 + (((q + r) * 73) % 201).abs(); // Pseudo-random based on position
-
-            println!("Creating CRYSTAL FIELD at ({}, {}) with {} crystals", q, r, crystals);
-
-            // Spawn parent entity for the crystal field
-            parent.spawn((
-                Transform::from_translation(world_pos),
-                Visibility::default(),
-                CrystalField {
-                    q,
-                    r,
-                    crystals_remaining: crystals,
-                    max_crystals: crystals,
-                },
-                Name::new(format!("Crystal Field ({}, {})", q, r)),
-            )).with_children(|field_parent| {
-                // Spawn crystal models - number based on max_crystals (1 visual per 10 crystals)
-                let num_crystals = ((crystals as f32 / 10.0).ceil() as usize).max(1).min(8);
-
-                for i in 0..num_crystals {
-                    let i_i32 = i as i32;
-                    // Pseudo-random position within the hex (radius ~40)
-                    let angle = (i as f32 * 2.5 + (q + r) as f32 * 0.7) * std::f32::consts::PI;
-                    let radius = 25.0 + ((i_i32 * 13 + q * 7) % 20) as f32;
-                    let offset_x = angle.cos() * radius;
-                    let offset_z = angle.sin() * radius;
-
-                    // Random rotation
-                    let rotation_y = (i as f32 * 1.3 + (q + r) as f32 * 0.5) * std::f32::consts::PI;
-
-                    // Random rotation speed and pulse offset for sparkle effect
-                    let rotation_speed = 0.3 + (i as f32 * 0.1);
-                    let pulse_offset = i as f32 * 2.0;
-
-                    field_parent.spawn((
-                        SceneRoot(crystal_scene.clone()),
-                        Transform::from_translation(Vec3::new(offset_x, 8.0, offset_z))
-                            .with_scale(Vec3::splat(4.0)) // Smaller crystals
-                            .with_rotation(Quat::from_rotation_y(rotation_y)),
-                        CrystalVisual {
-                            rotation_speed,
-                            pulse_offset,
-                            index: i,
-                        },
-                        Name::new(format!("Crystal {}", i)),
-                    ));
-                }
-            });
-        }
-
-
-        // Debug outlines for spawn cells — raised to y=11 to sit above tile outlines (y=9).
-        info!("debug: spawn_red={} spawn_blue={}", map_def.spawn_red.len(), map_def.spawn_blue.len());
-        let outline_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
-        for &(q, r) in &map_def.spawn_red {
-            let world_pos = axial_to_world_pos(q, r);
-            parent.spawn((
-                Mesh3d(hover_outline_mesh.clone()),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::srgb(1.0, 0.1, 0.1),
-                    emissive: Color::srgb(1.0, 0.1, 0.1).into(),
-                    unlit: true,
-                    double_sided: true,
-                    cull_mode: None,
-                    ..default()
-                })),
-                Transform::from_translation(world_pos + Vec3::new(0.0, 11.0, 0.0))
                     .with_rotation(outline_rotation)
                     .with_scale(Vec3::splat(0.75)),
                 DebugOutline,
                 Visibility::Hidden,
             ));
         }
-        for &(q, r) in &map_def.spawn_blue {
-            let world_pos = axial_to_world_pos(q, r);
-            parent.spawn((
-                Mesh3d(hover_outline_mesh.clone()),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::srgb(0.1, 0.3, 1.0),
-                    emissive: Color::srgb(0.1, 0.3, 1.0).into(),
-                    unlit: true,
-                    double_sided: true,
-                    cull_mode: None,
-                    ..default()
-                })),
-                Transform::from_translation(world_pos + Vec3::new(0.0, 11.0, 0.0))
-                    .with_rotation(outline_rotation)
-                    .with_scale(Vec3::splat(0.75)),
-                DebugOutline,
-                Visibility::Hidden,
-            ));
+    }
+
+    // --- Debug outlines for spawn cells (raised to y=11, above tile outlines at y=9) ---
+    info!("debug: spawn_red={} spawn_blue={}", map_def.spawn_red.len(), map_def.spawn_blue.len());
+    for &(q, r) in &map_def.spawn_red {
+        let world_pos = axial_to_world_pos(q, r);
+        parent.spawn((
+            Mesh3d(assets.hover_outline_mesh.clone()),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgb(1.0, 0.1, 0.1),
+                emissive: Color::srgb(1.0, 0.1, 0.1).into(),
+                unlit: true,
+                double_sided: true,
+                cull_mode: None,
+                ..default()
+            })),
+            Transform::from_translation(world_pos + Vec3::new(0.0, 11.0, 0.0))
+                .with_rotation(outline_rotation)
+                .with_scale(Vec3::splat(0.75)),
+            DebugOutline,
+            Visibility::Hidden,
+        ));
+    }
+    for &(q, r) in &map_def.spawn_blue {
+        let world_pos = axial_to_world_pos(q, r);
+        parent.spawn((
+            Mesh3d(assets.hover_outline_mesh.clone()),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgb(0.1, 0.3, 1.0),
+                emissive: Color::srgb(0.1, 0.3, 1.0).into(),
+                unlit: true,
+                double_sided: true,
+                cull_mode: None,
+                ..default()
+            })),
+            Transform::from_translation(world_pos + Vec3::new(0.0, 11.0, 0.0))
+                .with_rotation(outline_rotation)
+                .with_scale(Vec3::splat(0.75)),
+            DebugOutline,
+            Visibility::Hidden,
+        ));
+    }
+
+    // --- Launch pad polygon outlines (black, toggled by F1 debug overlay) ---
+    for poly in &map_def.launch_pad_polygons {
+        let mesh = create_polygon_outline_mesh(poly, 13.0, 8.0);
+        parent.spawn((
+            Mesh3d(meshes.add(mesh)),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgb(0.0, 0.0, 0.0),
+                emissive: Color::srgb(0.0, 0.0, 0.0).into(),
+                unlit: true,
+                double_sided: true,
+                cull_mode: None,
+                ..default()
+            })),
+            Transform::default(),
+            DebugOutline,
+            Visibility::Hidden,
+        ));
+    }
+
+    // --- Base polygon outlines (toggled by F1 debug overlay) ---
+    if !map_def.base_red_polygon.is_empty() {
+        let mesh = create_polygon_outline_mesh(&map_def.base_red_polygon, 13.0, 8.0);
+        parent.spawn((
+            Mesh3d(meshes.add(mesh)),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgb(1.0, 0.1, 0.1),
+                emissive: Color::srgb(1.0, 0.1, 0.1).into(),
+                unlit: true,
+                double_sided: true,
+                cull_mode: None,
+                ..default()
+            })),
+            Transform::default(),
+            DebugOutline,
+            Visibility::Hidden,
+        ));
+    }
+    if !map_def.base_blue_polygon.is_empty() {
+        let mesh = create_polygon_outline_mesh(&map_def.base_blue_polygon, 13.0, 8.0);
+        parent.spawn((
+            Mesh3d(meshes.add(mesh)),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgb(0.1, 0.3, 1.0),
+                emissive: Color::srgb(0.1, 0.3, 1.0).into(),
+                unlit: true,
+                double_sided: true,
+                cull_mode: None,
+                ..default()
+            })),
+            Transform::default(),
+            DebugOutline,
+            Visibility::Hidden,
+        ));
+    }
+}
+
+/// Builds the perimeter outline mesh for a single launch pad and spawns it.
+/// Extracted from the tile loop to reduce nesting; called only for the first cell of each pad.
+fn spawn_launch_pad_outline(
+    parent: &mut bevy::ecs::hierarchy::ChildSpawnerCommands,
+    pad_idx: usize,
+    pad_cells: &[(i32, i32)],
+    materials: &mut Assets<StandardMaterial>,
+    meshes: &mut Assets<Mesh>,
+) {
+    use std::collections::HashMap;
+
+    type Edge = ((i32, i32), (i32, i32));
+    let mut edge_counts: HashMap<Edge, usize> = HashMap::new();
+
+    for &(cell_q, cell_r) in pad_cells {
+        let neighbors = [
+            (cell_q + 1, cell_r),
+            (cell_q + 1, cell_r - 1),
+            (cell_q, cell_r - 1),
+            (cell_q - 1, cell_r),
+            (cell_q - 1, cell_r + 1),
+            (cell_q, cell_r + 1),
+        ];
+        for neighbor in neighbors {
+            let edge = if (cell_q, cell_r) < neighbor {
+                ((cell_q, cell_r), neighbor)
+            } else {
+                (neighbor, (cell_q, cell_r))
+            };
+            *edge_counts.entry(edge).or_insert(0) += 1;
+        }
+    }
+
+    let perimeter_edges: Vec<Edge> = edge_counts
+        .into_iter()
+        .filter(|(_, count)| *count == 1)
+        .map(|(edge, _)| edge)
+        .collect();
+
+    let mut center_x = 0.0f32;
+    let mut center_z = 0.0f32;
+    for &(cell_q, cell_r) in pad_cells {
+        let pos = axial_to_world_pos(cell_q, cell_r);
+        center_x += pos.x;
+        center_z += pos.z;
+    }
+    center_x /= pad_cells.len() as f32;
+    center_z /= pad_cells.len() as f32;
+    let pad_center = Vec3::new(center_x, 0.0, center_z);
+
+    println!("Launch pad {} has {} perimeter edges", pad_idx, perimeter_edges.len());
+    if !perimeter_edges.is_empty() {
+        let outline_mesh = create_launch_pad_outline_mesh(&perimeter_edges, pad_center);
+        let outline_mesh_handle = meshes.add(outline_mesh);
+        let outline_y = 1.2;
+
+        parent.spawn((
+            Mesh3d(outline_mesh_handle),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgb(0.7, 0.7, 0.7),
+                emissive: Color::srgb(0.7, 0.7, 0.7).into(),
+                unlit: true,
+                double_sided: true,
+                cull_mode: None,
+                ..default()
+            })),
+            Transform::from_translation(Vec3::new(pad_center.x, outline_y, pad_center.z))
+                .with_scale(Vec3::splat(1.0)),
+            LaunchPadOutline { pad_index: pad_idx },
+        ));
+    }
+}
+
+/// Draws tile floor (border + filled hex) and HQ model for each HQ position.
+/// HQ tiles may or may not be present in tile_map; this handles both cases uniformly.
+fn setup_hq(
+    parent: &mut bevy::ecs::hierarchy::ChildSpawnerCommands,
+    map_def: &crate::map_loader::MapDefinition,
+    assets: &TileAssets,
+    materials: &mut Assets<StandardMaterial>,
+) {
+    let hq_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
+
+    let hq_entries: &[(Option<(i32, i32)>, crate::units::Army)] = &[
+        (map_def.hq_red, crate::units::Army::Red),
+        (map_def.hq_blue, crate::units::Army::Blue),
+    ];
+
+    for &(pos_opt, army) in hq_entries {
+        let Some((q, r)) = pos_opt else { continue };
+
+        let world_pos = axial_to_world_pos(q, r);
+        let wx = HEX_HEIGHT * (q as f32 + r as f32 * 0.5);
+        let wz = HEX_WIDTH * 0.75 * r as f32;
+
+        let is_red_base = map_def.base_red_polygon.len() >= 3
+            && crate::map_loader::point_in_polygon(wx, wz, &map_def.base_red_polygon);
+        let is_blue_base = map_def.base_blue_polygon.len() >= 3
+            && crate::map_loader::point_in_polygon(wx, wz, &map_def.base_blue_polygon);
+
+        let tile_color = if is_red_base {
+            Color::srgb(0.75, 0.2, 0.2)
+        } else if is_blue_base {
+            Color::srgb(0.2, 0.35, 0.75)
+        } else {
+            Color::WHITE
+        };
+        let emissive = if is_red_base || is_blue_base {
+            LinearRgba::from(tile_color) * 0.5
+        } else {
+            LinearRgba::BLACK
+        };
+
+        // Border ring
+        parent.spawn((
+            Mesh3d(assets.hex_border_mesh.clone()),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgb(0.7, 0.7, 0.7),
+                emissive: Color::srgb(0.7, 0.7, 0.7).into(),
+                unlit: true,
+                double_sided: true,
+                cull_mode: None,
+                ..default()
+            })),
+            Transform::from_translation(world_pos + Vec3::new(0.0, 0.4, 0.0))
+                .with_rotation(hq_rotation),
+        ));
+
+        // Filled hex floor
+        parent.spawn((
+            Mesh3d(assets.filled_hex_mesh.clone()),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: tile_color,
+                base_color_texture: Some(assets.sand_texture.clone()),
+                emissive,
+                unlit: false,
+                perceptual_roughness: 1.0,
+                metallic: 0.0,
+                double_sided: true,
+                cull_mode: None,
+                ..default()
+            })),
+            bevy::light::NotShadowCaster,
+            Transform::from_translation(world_pos + Vec3::new(0.0, 0.5, 0.0))
+                .with_rotation(hq_rotation),
+        ));
+
+        // HQ model
+        parent.spawn((
+            SceneRoot(assets.hq_model.clone()),
+            Transform::from_translation(world_pos + Vec3::new(0.0, 10.0, 0.0))
+                .with_rotation(hq_rotation)
+                .with_scale(Vec3::splat(24.0)),
+            HQ { army, q, r },
+            Name::new(format!("{:?} HQ", army)),
+        ));
+
+        println!("Creating {:?} HQ at ({}, {})", army, q, r);
+    }
+}
+
+/// Draws tile floor + silo/mountain model for every obstacle that is not an HQ.
+/// Skips positions already rendered by setup_tiles (those in tile_map).
+/// Also spawns black debug outlines for each obstacle.
+fn setup_obstacles(
+    parent: &mut bevy::ecs::hierarchy::ChildSpawnerCommands,
+    map_def: &crate::map_loader::MapDefinition,
+    assets: &TileAssets,
+    materials: &mut Assets<StandardMaterial>,
+) {
+    let obstacle_rotation = Quat::from_rotation_y(std::f32::consts::PI / 2.0);
+
+    for &(q, r) in &map_def.obstacles {
+        // HQ positions are handled entirely by setup_hq.
+        if map_def.hq_red == Some((q, r)) || map_def.hq_blue == Some((q, r)) {
+            continue;
         }
 
-        // Launch pad polygon outlines (black, toggled by F1 debug overlay).
-        for poly in &map_def.launch_pad_polygons {
-            let mesh = create_polygon_outline_mesh(poly, 13.0, 8.0);
-            parent.spawn((
-                Mesh3d(meshes.add(mesh)),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::srgb(0.0, 0.0, 0.0),
-                    emissive: Color::srgb(0.0, 0.0, 0.0).into(),
-                    unlit: true,
-                    double_sided: true,
-                    cull_mode: None,
-                    ..default()
-                })),
-                Transform::default(),
-                DebugOutline,
-                Visibility::Hidden,
-            ));
+        let world_pos = axial_to_world_pos(q, r);
+        let wx = HEX_HEIGHT * (q as f32 + r as f32 * 0.5);
+        let wz = HEX_WIDTH * 0.75 * r as f32;
+
+        let is_silo = map_def.silos.contains(&(q, r));
+        let is_red_base = map_def.base_red_polygon.len() >= 3
+            && crate::map_loader::point_in_polygon(wx, wz, &map_def.base_red_polygon);
+        let is_blue_base = map_def.base_blue_polygon.len() >= 3
+            && crate::map_loader::point_in_polygon(wx, wz, &map_def.base_blue_polygon);
+
+        let tile_color = if is_red_base {
+            Color::srgb(0.75, 0.2, 0.2)
+        } else if is_blue_base {
+            Color::srgb(0.2, 0.35, 0.75)
+        } else {
+            Color::WHITE
+        };
+
+        // Tile floor
+        parent.spawn((
+            Mesh3d(assets.filled_hex_mesh.clone()),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: tile_color,
+                base_color_texture: if is_silo { Some(assets.cement_texture.clone()) } else { None },
+                unlit: false,
+                perceptual_roughness: 1.0,
+                double_sided: true,
+                cull_mode: None,
+                ..default()
+            })),
+            Transform::from_translation(world_pos + Vec3::new(0.0, 0.5, 0.0))
+                .with_rotation(obstacle_rotation),
+        ));
+
+        if !is_red_base && !is_blue_base {
+            if is_silo {
+                parent.spawn((
+                    SceneRoot(assets.silo_model.clone()),
+                    Transform::from_translation(world_pos + Vec3::new(0.0, 0.5, 0.0))
+                        .with_rotation(Quat::from_rotation_y(std::f32::consts::PI / 2.0))
+                        .with_scale(Vec3::splat(20.0)),
+                    SiloRoot,
+                ));
+            } else {
+                parent.spawn((
+                    SceneRoot(assets.mountain_model.clone()),
+                    Transform::from_translation(world_pos + Vec3::new(0.0, 10.0, 12.0))
+                        .with_rotation(Quat::from_rotation_y(std::f32::consts::PI / 2.0))
+                        .with_scale(Vec3::splat(21.25)),
+                ));
+            }
         }
 
-        // Base polygon outlines (toggled by F1 debug overlay).
-        if !map_def.base_red_polygon.is_empty() {
-            let mesh = create_polygon_outline_mesh(&map_def.base_red_polygon, 13.0, 8.0);
-            parent.spawn((
-                Mesh3d(meshes.add(mesh)),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::srgb(1.0, 0.1, 0.1),
-                    emissive: Color::srgb(1.0, 0.1, 0.1).into(),
-                    unlit: true,
-                    double_sided: true,
-                    cull_mode: None,
-                    ..default()
-                })),
-                Transform::default(),
-                DebugOutline,
-                Visibility::Hidden,
-            ));
-        }
-        if !map_def.base_blue_polygon.is_empty() {
-            let mesh = create_polygon_outline_mesh(&map_def.base_blue_polygon, 13.0, 8.0);
-            parent.spawn((
-                Mesh3d(meshes.add(mesh)),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::srgb(0.1, 0.3, 1.0),
-                    emissive: Color::srgb(0.1, 0.3, 1.0).into(),
-                    unlit: true,
-                    double_sided: true,
-                    cull_mode: None,
-                    ..default()
-                })),
-                Transform::default(),
-                DebugOutline,
-                Visibility::Hidden,
-            ));
-        }
-    });
+        // Debug outline (black)
+        parent.spawn((
+            Mesh3d(assets.hover_outline_mesh.clone()),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgb(0.0, 0.0, 0.0),
+                emissive: Color::srgb(0.0, 0.0, 0.0).into(),
+                unlit: true,
+                double_sided: true,
+                cull_mode: None,
+                ..default()
+            })),
+            Transform::from_translation(world_pos + Vec3::new(0.0, 9.0, 0.0))
+                .with_rotation(obstacle_rotation)
+                .with_scale(Vec3::splat(0.75)),
+            DebugOutline,
+            Visibility::Hidden,
+        ));
+    }
+}
+
+/// Spawns CrystalField entities with their crystal-model children.
+fn setup_crystals(
+    parent: &mut bevy::ecs::hierarchy::ChildSpawnerCommands,
+    map_def: &crate::map_loader::MapDefinition,
+    asset_server: &AssetServer,
+) {
+    for &(q, r) in &map_def.crystal_fields {
+        let world_pos = axial_to_world_pos(q, r);
+
+        // Load crystal model
+        let crystal_scene: Handle<Scene> = asset_server.load("Lighthing Crystal.glb#Scene0");
+
+        // Pseudo-random crystal count between 200–400 based on position.
+        let crystals = 200 + (((q + r) * 73) % 201).abs();
+
+        println!("Creating CRYSTAL FIELD at ({}, {}) with {} crystals", q, r, crystals);
+
+        parent.spawn((
+            Transform::from_translation(world_pos),
+            Visibility::default(),
+            CrystalField {
+                q,
+                r,
+                crystals_remaining: crystals,
+                max_crystals: crystals,
+            },
+            Name::new(format!("Crystal Field ({}, {})", q, r)),
+        )).with_children(|field_parent: &mut bevy::ecs::hierarchy::ChildSpawnerCommands| {
+            // 1 visual crystal per 10 crystals, clamped 1–8.
+            let num_crystals = ((crystals as f32 / 10.0).ceil() as usize).max(1).min(8);
+
+            for i in 0..num_crystals {
+                let i_i32 = i as i32;
+                let angle = (i as f32 * 2.5 + (q + r) as f32 * 0.7) * std::f32::consts::PI;
+                let radius = 25.0 + ((i_i32 * 13 + q * 7) % 20) as f32;
+                let offset_x = angle.cos() * radius;
+                let offset_z = angle.sin() * radius;
+
+                let rotation_y = (i as f32 * 1.3 + (q + r) as f32 * 0.5) * std::f32::consts::PI;
+                let rotation_speed = 0.3 + (i as f32 * 0.1);
+                let pulse_offset = i as f32 * 2.0;
+
+                field_parent.spawn((
+                    SceneRoot(crystal_scene.clone()),
+                    Transform::from_translation(Vec3::new(offset_x, 8.0, offset_z))
+                        .with_scale(Vec3::splat(4.0))
+                        .with_rotation(Quat::from_rotation_y(rotation_y)),
+                    CrystalVisual {
+                        rotation_speed,
+                        pulse_offset,
+                        index: i,
+                    },
+                    Name::new(format!("Crystal {}", i)),
+                ));
+            }
+        });
+    }
 }
 
 fn hex_hover_system(
