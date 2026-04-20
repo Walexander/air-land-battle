@@ -146,7 +146,7 @@ impl Plugin for MapPlugin {
             .insert_resource(DebugOverlay::default())
             .insert_resource(ClearColor(Color::srgb(0.53, 0.81, 0.92))) // Light sky blue
             .add_systems(OnEnter(LoadingState::Playing), (setup_hex_map, crate::hex_pathfinding::setup_hex_pathfinding).chain())
-            .add_systems(Update, (hex_hover_system, update_outline_colors, update_launch_pad_colors, billboard_sprites, apply_crystal_materials, animate_crystal_sparkle, update_fog_of_war, update_crystal_visuals, toggle_debug_overlay, tag_silo_missiles, tag_silo_covers, rotate_silo_missiles, trigger_missile_launch, animate_missile_launch, check_missile_animation_complete).run_if(in_state(LoadingState::Playing)));
+            .add_systems(Update, (hex_hover_system, update_outline_colors, update_launch_pad_colors, billboard_sprites, apply_crystal_materials, animate_crystal_sparkle, update_fog_of_war, update_crystal_visuals, toggle_debug_overlay, tag_silo_missiles, tag_silo_covers, rotate_silo_missiles, trigger_missile_launch, debug_trigger_missile_launch, animate_missile_launch, check_missile_animation_complete).run_if(in_state(LoadingState::Playing)));
     }
 }
 
@@ -435,161 +435,110 @@ fn create_filled_polygon_mesh(points: &[(f32, f32)], y: f32) -> Mesh {
 }
 
 fn create_launch_pad_outline_mesh(perimeter_edges: &[((i32, i32), (i32, i32))], pad_center: Vec3) -> Mesh {
-    // Create a mesh from the perimeter edges
-    // All positions are relative to pad_center so scaling works correctly
-    let mut positions = Vec::new();
-    let mut normals = Vec::new();
-    let mut uvs = Vec::new();
-    let mut indices = Vec::new();
+    // Proper polygon offset: shift each edge inward by INSET along its own perpendicular,
+    // then find corner vertices by intersecting adjacent shifted edge lines.
+    const INSET: f32 = 10.0;
+    const HALF_THICK: f32 = 3.0;
+    const EPS: f32 = 2.0; // endpoint matching tolerance
 
-    let y = 0.0;
-    let line_width = 4.0; // Line thickness
+    let n = perimeter_edges.len();
+    if n == 0 {
+        return Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    }
 
-    // Collect all unique corner positions (in 3D world space)
-    let mut corner_positions: Vec<[f32; 3]> = Vec::new();
+    let half_len = HEX_RADIUS / 2.0;
 
-    // For each edge, create a quad representing the shared boundary between two hexes
-    for (cell1, cell2) in perimeter_edges {
-        // Convert axial coords to world positions
+    // Per-edge geometry
+    let mut mids      = vec![Vec3::ZERO; n];
+    let mut perp_dirs = vec![Vec3::ZERO; n]; // direction along the hex edge
+    let mut inward    = vec![Vec3::ZERO; n]; // perpendicular, pointing toward pad interior
+    let mut ep_a      = vec![Vec3::ZERO; n]; // one endpoint of the edge segment
+    let mut ep_b      = vec![Vec3::ZERO; n]; // other endpoint
+
+    for (i, (cell1, cell2)) in perimeter_edges.iter().enumerate() {
         let pos1 = axial_to_world_pos(cell1.0, cell1.1);
         let pos2 = axial_to_world_pos(cell2.0, cell2.1);
-
-        // The edge is at the midpoint between the two hex centers
-        let midpoint = Vec3::new(
-            (pos1.x + pos2.x) / 2.0,
-            0.0,
-            (pos1.z + pos2.z) / 2.0,
-        );
-
-        // Make positions relative to pad center
-        let midpoint_relative = midpoint - pad_center;
-
-        // Direction from cell1 to cell2
-        let edge_vec = Vec3::new(pos2.x - pos1.x, 0.0, pos2.z - pos1.z);
-        let edge_len = edge_vec.length();
-        if edge_len < 0.001 {
-            continue;
-        }
-        let edge_dir = edge_vec / edge_len;
-
-        // The actual edge is perpendicular to the direction between centers
-        let perp = Vec3::new(-edge_dir.z, 0.0, edge_dir.x);
-
-        // For a pointy-top hex, the edge length is HEX_RADIUS
-        let half_edge_len = HEX_RADIUS / 2.0;
-
-        let base_idx = positions.len() as u32;
-
-        // Store the actual geometric corners (without line_width offset in edge direction)
-        // Use relative positions
-        let corner1 = [
-            midpoint_relative.x + perp.x * half_edge_len,
-            y,
-            midpoint_relative.z + perp.z * half_edge_len,
-        ];
-        let corner2 = [
-            midpoint_relative.x - perp.x * half_edge_len,
-            y,
-            midpoint_relative.z - perp.z * half_edge_len,
-        ];
-        corner_positions.push(corner1);
-        corner_positions.push(corner2);
-
-        // Create 4 vertices for this edge segment
-        // Edge extends perpendicular to the line between centers
-        // Use relative positions
-        let v0 = [
-            midpoint_relative.x + perp.x * half_edge_len + edge_dir.x * line_width,
-            y,
-            midpoint_relative.z + perp.z * half_edge_len + edge_dir.z * line_width,
-        ];
-        let v1 = [
-            midpoint_relative.x + perp.x * half_edge_len - edge_dir.x * line_width,
-            y,
-            midpoint_relative.z + perp.z * half_edge_len - edge_dir.z * line_width,
-        ];
-        let v2 = [
-            midpoint_relative.x - perp.x * half_edge_len + edge_dir.x * line_width,
-            y,
-            midpoint_relative.z - perp.z * half_edge_len + edge_dir.z * line_width,
-        ];
-        let v3 = [
-            midpoint_relative.x - perp.x * half_edge_len - edge_dir.x * line_width,
-            y,
-            midpoint_relative.z - perp.z * half_edge_len - edge_dir.z * line_width,
-        ];
-
-        positions.push(v0);
-        normals.push([0.0, 1.0, 0.0]);
-        uvs.push([0.0, 0.0]);
-
-        positions.push(v1);
-        normals.push([0.0, 1.0, 0.0]);
-        uvs.push([0.0, 1.0]);
-
-        positions.push(v2);
-        normals.push([0.0, 1.0, 0.0]);
-        uvs.push([1.0, 0.0]);
-
-        positions.push(v3);
-        normals.push([0.0, 1.0, 0.0]);
-        uvs.push([1.0, 1.0]);
-
-        // Two triangles for the quad
-        indices.push(base_idx);
-        indices.push(base_idx + 1);
-        indices.push(base_idx + 2);
-
-        indices.push(base_idx + 1);
-        indices.push(base_idx + 3);
-        indices.push(base_idx + 2);
+        let mid = Vec3::new((pos1.x + pos2.x) * 0.5, 0.0, (pos1.z + pos2.z) * 0.5);
+        let ev_raw = Vec3::new(pos2.x - pos1.x, 0.0, pos2.z - pos1.z);
+        let ev_len = ev_raw.length();
+        if ev_len < 0.001 { continue; }
+        let ev = ev_raw / ev_len;
+        let perp = Vec3::new(-ev.z, 0.0, ev.x);
+        // Inward normal: whichever of ±ev points toward the pad center
+        let inw = if ev.dot(pad_center - mid) >= 0.0 { ev } else { -ev };
+        mids[i]      = mid;
+        perp_dirs[i] = perp;
+        inward[i]    = inw;
+        ep_a[i]      = mid + perp * half_len;
+        ep_b[i]      = mid - perp * half_len;
     }
 
-    // Deduplicate corner positions (merge positions that are very close)
-    let threshold = 0.1; // Consider positions within 0.1 units as the same
-    let mut unique_corners: Vec<[f32; 3]> = Vec::new();
+    // Intersect two lines (XZ plane): p1 + t*d1 = p2 + s*d2 → returns intersection point
+    let line_isect = |p1: Vec3, d1: Vec3, p2: Vec3, d2: Vec3| -> Vec3 {
+        let cross = d1.x * d2.z - d1.z * d2.x;
+        if cross.abs() < 1e-6 { return (p1 + p2) * 0.5; }
+        let dp = p2 - p1;
+        let t = (dp.x * d2.z - dp.z * d2.x) / cross;
+        p1 + d1 * t
+    };
 
-    for corner in corner_positions {
-        let is_duplicate = unique_corners.iter().any(|existing| {
-            let dx = existing[0] - corner[0];
-            let dz = existing[2] - corner[2];
-            (dx * dx + dz * dz).sqrt() < threshold
-        });
-
-        if !is_duplicate {
-            unique_corners.push(corner);
+    // For edge i at endpoint ep, find the neighbor edge that shares that endpoint
+    let find_neighbor = |i: usize, ep: Vec3| -> Option<usize> {
+        for j in 0..n {
+            if j == i { continue; }
+            if ep.distance(ep_a[j]) < EPS || ep.distance(ep_b[j]) < EPS {
+                return Some(j);
+            }
         }
-    }
+        None
+    };
 
-    // Add circles at each unique corner to fill in the gaps
-    let circle_segments = 12;
-    let circle_radius = line_width * 1.00; // Larger radius to fully cover corner gaps
-    for corner_pos in unique_corners {
-        let center_idx = positions.len() as u32;
+    let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut normals:   Vec<[f32; 3]> = Vec::new();
+    let mut uvs:       Vec<[f32; 2]> = Vec::new();
+    let mut indices:   Vec<u32>      = Vec::new();
 
-        // Center vertex
-        positions.push(corner_pos);
-        normals.push([0.0, 1.0, 0.0]);
-        uvs.push([0.5, 0.5]);
+    // Compute miter-corrected corner vertices for each (edge, endpoint) pair.
+    // Using the bisector of the two adjacent inward normals ensures both quads
+    // that share a corner land on exactly the same outer/inner vertex.
+    let miter_corner = |i: usize, ep: Vec3, sign: f32| -> (Vec3, Vec3) {
+        let inset_mid_i = mids[i] + inward[i] * INSET;
+        let center = match find_neighbor(i, ep) {
+            Some(j) => {
+                let inset_mid_j = mids[j] + inward[j] * INSET;
+                line_isect(inset_mid_i, perp_dirs[i], inset_mid_j, perp_dirs[j])
+            }
+            None => inset_mid_i + perp_dirs[i] * (half_len * sign),
+        };
+        let bisector = match find_neighbor(i, ep) {
+            Some(j) => {
+                let b = (inward[i] + inward[j]).normalize_or_zero();
+                // Miter length: HALF_THICK / cos(angle/2) = HALF_THICK / dot(bisector, inward[i])
+                let cos_half = b.dot(inward[i]).max(0.2); // clamp to avoid blowup
+                let miter_len = HALF_THICK / cos_half;
+                (b, miter_len)
+            }
+            None => (inward[i], HALF_THICK),
+        };
+        let outer = center - bisector.0 * bisector.1;
+        let inner = center + bisector.0 * bisector.1;
+        (outer - pad_center, inner - pad_center)
+    };
 
-        // Create circle vertices
-        for i in 0..circle_segments {
-            let angle = (i as f32 / circle_segments as f32) * 2.0 * std::f32::consts::PI;
-            let x = corner_pos[0] + circle_radius * angle.cos();
-            let z = corner_pos[2] + circle_radius * angle.sin();
+    for i in 0..n {
+        let (outer_a, inner_a) = miter_corner(i, ep_a[i],  1.0);
+        let (outer_b, inner_b) = miter_corner(i, ep_b[i], -1.0);
 
-            positions.push([x, y, z]);
+        let base = positions.len() as u32;
+        positions.push([outer_a.x, 0.0, outer_a.z]);
+        positions.push([inner_a.x, 0.0, inner_a.z]);
+        positions.push([outer_b.x, 0.0, outer_b.z]);
+        positions.push([inner_b.x, 0.0, inner_b.z]);
+        for _ in 0..4 {
             normals.push([0.0, 1.0, 0.0]);
             uvs.push([0.0, 0.0]);
         }
-
-        // Create triangles for the circle
-        for i in 0..circle_segments {
-            let next_i = (i + 1) % circle_segments;
-            indices.push(center_idx);
-            indices.push(center_idx + 1 + i);
-            indices.push(center_idx + 1 + next_i);
-        }
+        indices.extend_from_slice(&[base, base+1, base+2, base+1, base+3, base+2]);
     }
 
     Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
@@ -1113,8 +1062,7 @@ fn spawn_launch_pad_outline(
                 cull_mode: None,
                 ..default()
             })),
-            Transform::from_translation(Vec3::new(pad_center.x, outline_y, pad_center.z))
-                .with_scale(Vec3::splat(1.0)),
+            Transform::from_translation(Vec3::new(pad_center.x, outline_y, pad_center.z)),
             LaunchPadOutline { pad_index: pad_idx },
         ));
     }
@@ -1830,6 +1778,37 @@ fn trigger_missile_launch(
     }
 }
 
+fn debug_trigger_missile_launch(
+    mut commands: Commands,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    player_army: Res<crate::units::LocalPlayerArmy>,
+    map_def: Res<crate::map_loader::MapDefinition>,
+    untriggered: Query<Entity, (With<SiloMissile>, Without<MissileLaunch>)>,
+    mut existing: Query<&mut MissileLaunch>,
+) {
+    if !keyboard.just_pressed(KeyCode::F3) { return; }
+
+    let enemy_hq = match player_army.0 {
+        crate::units::Army::Red => map_def.hq_blue,
+        crate::units::Army::Blue => map_def.hq_red,
+    };
+    let target_pos = if let Some((q, r)) = enemy_hq {
+        axial_to_world_pos(q, r)
+    } else {
+        Vec3::ZERO
+    };
+
+    for entity in &untriggered {
+        commands.entity(entity).insert(MissileLaunch { target_pos, ..default() });
+    }
+    // If already launched, reset to Rising so it plays again
+    for mut launch in &mut existing {
+        launch.phase = MissilePhase::Rising;
+        launch.elapsed = 0.0;
+        launch.target_pos = target_pos;
+    }
+}
+
 fn check_missile_animation_complete(
     mut game_state: ResMut<GameState>,
     missiles: Query<&MissileLaunch>,
@@ -1840,12 +1819,32 @@ fn check_missile_animation_complete(
     }
 }
 
+fn set_shadow_caster_recursive(
+    commands: &mut Commands,
+    entity: Entity,
+    children_query: &Query<&Children>,
+    cast: bool,
+) {
+    if cast {
+        commands.entity(entity).remove::<bevy::light::NotShadowCaster>();
+    } else {
+        commands.entity(entity).insert(bevy::light::NotShadowCaster);
+    }
+    if let Ok(children) = children_query.get(entity) {
+        for child in children.iter() {
+            set_shadow_caster_recursive(commands, child, children_query, cast);
+        }
+    }
+}
+
 fn animate_missile_launch(
-    mut missiles: Query<(&mut Transform, &GlobalTransform, &mut MissileLaunch, &bevy::ecs::hierarchy::ChildOf, &SiloMissile)>,
+    mut commands: Commands,
+    mut missiles: Query<(Entity, &mut Transform, &GlobalTransform, &mut MissileLaunch, &bevy::ecs::hierarchy::ChildOf, &SiloMissile)>,
     parent_transforms: Query<&GlobalTransform, Without<SiloMissile>>,
+    children_query: Query<&Children>,
     time: Res<Time>,
 ) {
-    for (mut transform, global_tf, mut launch, child_of, missile) in &mut missiles {
+    for (entity, mut transform, global_tf, mut launch, child_of, missile) in &mut missiles {
         let dt = time.delta_secs();
         let Ok(parent_gt) = parent_transforms.get(child_of.0) else { continue; };
 
@@ -1858,35 +1857,31 @@ fn animate_missile_launch(
                     launch.launch_world_rot = global_tf.to_scale_rotation_translation().1;
                     launch.elapsed = 0.0;
                     launch.phase = MissilePhase::Flying;
+                    set_shadow_caster_recursive(&mut commands, entity, &children_query, false);
                 }
             }
             MissilePhase::Flying => {
-                let duration = 4.0;
+                // First frame: missile teleports to directly above the target (off-screen).
+                // Subsequent frames: falls straight down with ease-in (slow start, fast impact).
+                let fall_height = 800.0; // world units above target — well above the camera
+                let duration = 0.8;
                 launch.elapsed = (launch.elapsed + dt).min(duration);
                 let t = launch.elapsed / duration;
-                // Ease-in cubic: slow launch, fast fall
-                let t_eased = t * t * t;
+                let t_eased = t * t * t; // ease-in cubic: accelerates toward impact
 
-                let p0 = launch.launch_world_pos;
-                let p2 = launch.target_pos;
-                let apex = (p0 + p2) * 0.5 + Vec3::Y * 300.0;
-
-                let it = 1.0 - t_eased;
-                let world_pos = it * it * p0 + 2.0 * it * t_eased * apex + t_eased * t_eased * p2;
-                let vel = 2.0 * it * (apex - p0) + 2.0 * t_eased * (p2 - apex);
-
-                // Convert world position to local space via parent's inverse transform
+                let world_start = launch.target_pos + Vec3::Y * fall_height;
+                let world_pos = world_start.lerp(launch.target_pos, t_eased);
                 let local_pos = parent_gt.affine().inverse().transform_point3(world_pos);
                 transform.translation = local_pos;
 
-                if vel.length_squared() > 0.001 {
-                    let world_rot = Quat::from_rotation_arc(Vec3::Y, vel.normalize());
-                    let parent_rot = parent_gt.to_scale_rotation_translation().1;
-                    transform.rotation = parent_rot.inverse() * world_rot;
-                }
+                // Point nose straight down for re-entry
+                let parent_rot = parent_gt.to_scale_rotation_translation().1;
+                let world_rot = Quat::from_rotation_arc(Vec3::Y, Vec3::NEG_Y);
+                transform.rotation = parent_rot.inverse() * world_rot;
 
                 if launch.elapsed >= duration {
                     launch.phase = MissilePhase::Done;
+                    set_shadow_caster_recursive(&mut commands, entity, &children_query, true);
                 }
             }
             MissilePhase::Done => {
