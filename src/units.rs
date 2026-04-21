@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use bevy::gltf::GltfAssetLabel;
+use bevy_sprinkles::ParticleSystem3D;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::asset::RenderAssetUsages;
 use std::time::Duration;
@@ -327,10 +328,6 @@ pub struct ExplosionEffect {
     pub damage: f32,
 }
 
-#[derive(Component)]
-pub struct ExplosionVisual {
-    pub timer: f32,
-}
 
 #[derive(Component)]
 pub struct SmokeCloud {
@@ -1486,6 +1483,7 @@ fn update_targeting_system(
 
 fn remove_dead_units(
     mut commands: Commands,
+    asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     unit_query: Query<(Entity, &Health, &Unit, &Transform)>,
@@ -1501,23 +1499,11 @@ fn remove_dead_units(
 
             let death_pos = transform.translation;
 
-            // Spawn a large explosion effect at death location
-            let explosion_mesh = meshes.add(Sphere::new(30.0));
-            let explosion_material = materials.add(StandardMaterial {
-                base_color: Color::srgb(1.0, 0.5, 0.0), // Orange
-                emissive: Color::srgb(6.0, 3.0, 0.0).into(), // Bright orange-yellow
-                unlit: true,
-                alpha_mode: bevy::prelude::AlphaMode::Blend,
-                ..default()
-            });
-
             commands.spawn((
-                Mesh3d(explosion_mesh.clone()),
-                MeshMaterial3d(explosion_material),
-                Transform::from_translation(death_pos).with_scale(Vec3::splat(0.1)),
-                ExplosionVisual {
-                    timer: 0.0,
+                ParticleSystem3D {
+                    handle: asset_server.load("particles/3d-explosion.ron"),
                 },
+                Transform::from_translation(death_pos).with_scale(Vec3::splat(30.0)),
                 DespawnOnExit(crate::loading::LoadingState::Playing),
             ));
 
@@ -2449,40 +2435,23 @@ fn cleanup_flash_visuals(
 fn handle_explosion_effects(
     time: Res<Time>,
     mut commands: Commands,
+    asset_server: Res<AssetServer>,
     mut explosion_query: Query<(Entity, &mut ExplosionEffect, &Transform)>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     for (entity, mut explosion, transform) in &mut explosion_query {
         if explosion.timer == 0.0 {
-            // First frame - spawn explosion visual as an independent entity
-            // Scale based on damage: 5-20 damage maps to radius 10-30
-            let base_radius = 10.0 + (explosion.damage.min(50.0) / 50.0) * 20.0;
-
-            let explosion_mesh = meshes.add(Sphere::new(base_radius).mesh().ico(3).unwrap());
-            let explosion_material = materials.add(StandardMaterial {
-                base_color: Color::srgb(3.0, 1.5, 0.0), // Orange
-                emissive: Color::srgb(3.0, 1.5, 0.0).into(),
-                unlit: true,
-                alpha_mode: AlphaMode::Blend,
-                ..default()
-            });
-
             let explosion_pos = transform.translation + Vec3::new(0.0, 25.0, 0.0);
             commands.spawn((
-                Mesh3d(explosion_mesh),
-                MeshMaterial3d(explosion_material),
-                Transform::from_translation(explosion_pos).with_scale(Vec3::splat(0.1)),
-                ExplosionVisual {
-                    timer: 0.0,
+                ParticleSystem3D {
+                    handle: asset_server.load("particles/3d-explosion.ron"),
                 },
+                Transform::from_translation(explosion_pos).with_scale(Vec3::splat(20.0)),
             ));
         }
 
         explosion.timer += time.delta_secs();
 
         if explosion.timer >= explosion.duration {
-            // Try to remove explosion effect component if entity still exists
             if let Ok(mut entity_commands) = commands.get_entity(entity) {
                 entity_commands.remove::<ExplosionEffect>();
             }
@@ -2490,36 +2459,6 @@ fn handle_explosion_effects(
     }
 }
 
-fn animate_explosion_visuals(
-    time: Res<Time>,
-    mut commands: Commands,
-    mut explosion_visuals: Query<(Entity, &mut ExplosionVisual, &mut Transform)>,
-) {
-    for (entity, mut explosion_visual, mut transform) in &mut explosion_visuals {
-        explosion_visual.timer += time.delta_secs();
-
-        let duration = 0.5; // Slightly longer for visibility
-        let progress = (explosion_visual.timer / duration).min(1.0);
-
-        // Rapid expansion with bounce
-        if progress < 0.5 {
-            // Expand phase - quick blast
-            let expand_progress = progress / 0.5;
-            let scale = 0.1 + expand_progress * 2.5; // Larger explosion
-            transform.scale = Vec3::splat(scale);
-        } else {
-            // Fade/shrink phase
-            let fade_progress = (progress - 0.5) / 0.5;
-            let scale = 2.6 - (fade_progress * 2.6);
-            transform.scale = Vec3::splat(scale.max(0.1));
-        }
-
-        // Despawn after duration
-        if explosion_visual.timer >= duration {
-            commands.entity(entity).despawn();
-        }
-    }
-}
 
 fn animate_smoke_clouds(
     time: Res<Time>,
@@ -3186,7 +3125,6 @@ impl Plugin for UnitsPlugin {
                 (
                     cleanup_flash_visuals,
                     handle_explosion_effects,
-                    animate_explosion_visuals,
                     animate_smoke_clouds,
                     handle_infantry_progressive_death,
                     fade_out_dead_infantry,

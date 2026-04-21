@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use bevy::diagnostic::{FrameTimeDiagnosticsPlugin, DiagnosticsStore};
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use bevy_inspector_egui::bevy_egui::EguiPlugin;
+use bevy_sprinkles::SprinklesPlugin;
 
 mod map;
 mod map_loader;
@@ -54,6 +55,7 @@ fn main() {
         .add_plugins(SelectionPlugin)
         .add_plugins(UIPlugin)
         .add_plugins(MusicPlugin)
+        .add_plugins(SprinklesPlugin)
         .insert_resource(bevy::light::PointLightShadowMap { size: 2048 })
         .insert_resource(InspectorEnabled(false))
         .insert_resource(Paused(false))
