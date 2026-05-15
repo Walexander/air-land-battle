@@ -2,6 +2,7 @@ use bevy::prelude::*;
 
 use crate::loading::LoadingState;
 use crate::map::{CrystalField, HexMapConfig, Obstacles};
+use crate::networking::is_not_client;
 use crate::units::{find_path_waypoints, Army, Occupancy, Unit, UnitClass, UnitMovement, UnitStats, UnitDefinitions};
 
 // Economy Resources
@@ -259,7 +260,7 @@ impl Plugin for EconomyPlugin {
                     harvester_move_to_field,
                     harvester_collect_crystals,
                 )
-                    .run_if(in_state(LoadingState::Playing).and(not_paused)),
+                    .run_if(in_state(LoadingState::Playing).and(not_paused).and(is_not_client)),
             );
     }
 }

@@ -135,6 +135,21 @@ pub struct VisibleHexes(pub std::collections::HashSet<(i32, i32)>);
 #[derive(Resource)]
 pub struct FogMaterial(pub Handle<StandardMaterial>);
 
+// Spawn particle systems far below the map to prime the GPU pipeline on the first
+// frame of gameplay, avoiding the one-shot emission window being missed.
+fn warmup_particle_systems(mut commands: Commands, asset_server: Res<AssetServer>) {
+    let warmup_pos = Transform::from_translation(Vec3::new(0.0, -100_000.0, 0.0));
+    for path in ["particles/3d-explosion.ron", "particles/magic-puff.ron"] {
+        commands.spawn((
+            bevy_sprinkles::ParticleSystem3D {
+                handle: asset_server.load(path),
+            },
+            warmup_pos,
+            DespawnOnExit(crate::loading::LoadingState::Playing),
+        ));
+    }
+}
+
 pub struct MapPlugin;
 
 impl Plugin for MapPlugin {
@@ -145,7 +160,7 @@ impl Plugin for MapPlugin {
             .insert_resource(VisibleHexes::default())
             .insert_resource(DebugOverlay::default())
             .insert_resource(ClearColor(Color::srgb(0.53, 0.81, 0.92))) // Light sky blue
-            .add_systems(OnEnter(LoadingState::Playing), (setup_hex_map, crate::hex_pathfinding::setup_hex_pathfinding).chain())
+            .add_systems(OnEnter(LoadingState::Playing), (setup_hex_map, crate::hex_pathfinding::setup_hex_pathfinding, warmup_particle_systems).chain())
             .add_systems(Update, (hex_hover_system, update_outline_colors, update_launch_pad_colors, billboard_sprites, apply_crystal_materials, animate_crystal_sparkle, update_fog_of_war, update_crystal_visuals, toggle_debug_overlay, tag_silo_missiles, tag_silo_covers, rotate_silo_missiles, trigger_missile_launch, debug_trigger_missile_launch, animate_missile_launch, check_missile_animation_complete).run_if(in_state(LoadingState::Playing)));
     }
 }
@@ -1839,6 +1854,7 @@ fn set_shadow_caster_recursive(
 
 fn animate_missile_launch(
     mut commands: Commands,
+    asset_server: Res<AssetServer>,
     mut missiles: Query<(Entity, &mut Transform, &GlobalTransform, &mut MissileLaunch, &bevy::ecs::hierarchy::ChildOf, &SiloMissile)>,
     parent_transforms: Query<&GlobalTransform, Without<SiloMissile>>,
     children_query: Query<&Children>,
@@ -1882,6 +1898,12 @@ fn animate_missile_launch(
                 if launch.elapsed >= duration {
                     launch.phase = MissilePhase::Done;
                     set_shadow_caster_recursive(&mut commands, entity, &children_query, true);
+                    commands.spawn((
+                        bevy_sprinkles::ParticleSystem3D {
+                            handle: asset_server.load("particles/magic-puff.ron"),
+                        },
+                        Transform::from_translation(launch.target_pos).with_scale(Vec3::splat(50.0)),
+                    ));
                 }
             }
             MissilePhase::Done => {

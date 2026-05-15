@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 
+use crate::networking::{BroadcastNetMsg, MultiplayerMode, NetworkMessage, is_not_client};
 use crate::units::{Army, Unit};
 use crate::loading::LoadingState;
 
@@ -51,6 +52,27 @@ pub struct LaunchPadOwnership {
 }
 
 // Systems
+/// Sets game-over state and, when in multiplayer, makes the host the
+/// single source of truth by broadcasting the winner to the client.
+/// The client skips its own local game-over logic (net_mode == Client).
+fn trigger_game_over(
+    winner: Army,
+    game_state: &mut GameState,
+    net_mode: &MultiplayerMode,
+    net_broadcast: &mut MessageWriter<BroadcastNetMsg>,
+) {
+    // Clients in multiplayer wait for the host's GameOver broadcast instead.
+    if *net_mode == MultiplayerMode::Client {
+        return;
+    }
+    println!("{:?} wins!", winner);
+    game_state.game_over = true;
+    game_state.winner = Some(winner);
+    if *net_mode == MultiplayerMode::Host {
+        net_broadcast.write(BroadcastNetMsg(NetworkMessage::GameOver { winner }));
+    }
+}
+
 fn check_launch_pad_ownership(
     unit_query: Query<&Unit>,
     launch_pads: Res<LaunchPads>,
@@ -58,6 +80,8 @@ fn check_launch_pad_ownership(
     mut game_state: ResMut<GameState>,
     mut pad_ownership: ResMut<LaunchPadOwnership>,
     time: Res<Time>,
+    net_mode: Res<MultiplayerMode>,
+    mut net_broadcast: MessageWriter<BroadcastNetMsg>,
 ) {
     if game_state.game_over {
         return;
@@ -122,10 +146,8 @@ fn check_launch_pad_ownership(
 
         game_timer.time_remaining -= time.delta_secs();
         if game_timer.time_remaining <= 0.0 {
-            println!("Red army wins!");
-            game_state.game_over = true;
-            game_state.winner = Some(Army::Red);
             game_timer.is_active = false;
+            trigger_game_over(Army::Red, &mut game_state, &net_mode, &mut net_broadcast);
         }
     } else if blue_count > red_count {
         if !game_timer.is_active {
@@ -145,10 +167,8 @@ fn check_launch_pad_ownership(
 
         game_timer.time_remaining -= time.delta_secs();
         if game_timer.time_remaining <= 0.0 {
-            println!("Blue army wins!");
-            game_state.game_over = true;
-            game_state.winner = Some(Army::Blue);
             game_timer.is_active = false;
+            trigger_game_over(Army::Blue, &mut game_state, &net_mode, &mut net_broadcast);
         }
     } else {
         // Launch pads are tied/neutral
@@ -181,7 +201,7 @@ impl Plugin for LaunchPadsPlugin {
             .insert_resource(GameState::default())
             .insert_resource(LaunchPadOwnership::default())
             .add_systems(OnEnter(LoadingState::Playing), populate_launch_pads)
-            .add_systems(Update, check_launch_pad_ownership.run_if(in_state(LoadingState::Playing).and(not_paused)));
+            .add_systems(Update, check_launch_pad_ownership.run_if(in_state(LoadingState::Playing).and(not_paused).and(is_not_client)));
     }
 }
 

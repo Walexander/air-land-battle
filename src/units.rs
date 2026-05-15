@@ -107,7 +107,7 @@ pub struct RedArmy;
 #[derive(Component)]
 pub struct BlueArmy;
 
-#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Army {
     Red,
     Blue,
@@ -235,7 +235,7 @@ pub struct UnitClickCollider {
     pub unit_entity: Entity,
 }
 
-#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum UnitClass {
     Infantry,
     Cavalry,
@@ -384,6 +384,16 @@ pub struct UnitSpawnQueue {
 pub struct UnitSpawnRequest {
     pub unit_class: UnitClass,
     pub army: Army,
+    /// Authoritative spawn cell. When `Some`, skip the local occupancy search and
+    /// use this position directly (used for network-replicated spawns so both
+    /// clients always place the unit at the same hex).
+    pub spawn_pos: Option<(i32, i32)>,
+    /// When true (snapshot-initiated spawn on client), skip cost/limit/cooldown
+    /// checks and money deduction — the host already validated and deducted.
+    pub skip_validation: bool,
+    /// When set, use this StableId instead of allocating a new one. Required for
+    /// snapshot-initiated spawns so client units get the same ID as the host's.
+    pub stable_id: Option<u32>,
 }
 
 pub struct ArmyCooldowns {
@@ -1236,7 +1246,13 @@ fn combat_system(
     time: Res<Time>,
     mut commands: Commands,
     mut unit_query: Query<(Entity, &Unit, &Army, &UnitStats, &mut Combat, &mut Health, Option<&UnitMovement>)>,
+    net_mode: Res<crate::networking::MultiplayerMode>,
 ) {
+    // Client does not simulate combat — health arrives via state snapshots.
+    if *net_mode == crate::networking::MultiplayerMode::Client {
+        return;
+    }
+
     let current_time = time.elapsed_secs();
 
     // Process attacks immediately to prevent simultaneous kills
@@ -1297,9 +1313,13 @@ fn combat_system(
                 // Calculate damage: attack - (armor / 2), minimum 5 damage
                 let base_damage = attacker_stats.attack - (defender_stats.armor / 2.0);
 
-                // Add randomness: ±30% variation
-                let mut rng = rand::thread_rng();
-                let variation = rng.gen_range(-0.3..=0.3);
+                // In multiplayer skip RNG so both clients compute identical damage.
+                let variation = if *net_mode == crate::networking::MultiplayerMode::Singleplayer {
+                    let mut rng = rand::thread_rng();
+                    rng.gen_range(-0.3..=0.3)
+                } else {
+                    0.0
+                };
                 let damage = (base_damage * (1.0 + variation)).max(5.0);
 
                 attacks_to_apply.push((*attacker_entity, *defender_entity, damage, *attacker_army, *defender_army));
@@ -2507,61 +2527,66 @@ fn spawn_unit_from_request(
     for spawn_request in requests.iter() {
         let cost = spawn_request.unit_class.cost(&unit_definitions);
 
-        // Check if army can afford the unit
-        let can_afford = match spawn_request.army {
-            Army::Red => economy.red_money >= cost,
-            Army::Blue => economy.blue_money >= cost,
-        };
+        if !spawn_request.skip_validation {
+            // Check if army can afford the unit
+            let can_afford = match spawn_request.army {
+                Army::Red => economy.red_money >= cost,
+                Army::Blue => economy.blue_money >= cost,
+            };
+            if !can_afford {
+                println!("{:?} army: Not enough money to spawn unit!", spawn_request.army);
+                continue;
+            }
 
-        if !can_afford {
-            println!("{:?} army: Not enough money to spawn unit!", spawn_request.army);
-            continue;
+            // Check unit limit (hard cap at 5 units including harvesters)
+            let total_units = unit_query.iter()
+                .filter(|(u, _uc)| u.army == spawn_request.army)
+                .count();
+            if total_units >= 5 {
+                println!("{:?} army: Unit limit reached (5/5)!", spawn_request.army);
+                continue;
+            }
+
+            // Check if spawn cooldown is ready
+            let army_cooldowns = spawn_cooldowns.get_army_cooldowns(spawn_request.army);
+            if !army_cooldowns.is_ready(spawn_request.unit_class, total_units + 1) {
+                println!("{:?} army: Spawn cooldown not ready for {:?}", spawn_request.army, spawn_request.unit_class);
+                continue;
+            }
         }
 
-        // Check unit limit (hard cap at 5 units including harvesters)
-        let total_units = unit_query.iter()
-            .filter(|(u, _uc)| u.army == spawn_request.army)
-            .count();
+        // Resolve spawn position
+        let (q, r) = if let Some(pos) = spawn_request.spawn_pos {
+            pos
+        } else {
+            let spawn_candidates: Vec<(i32, i32)> = match spawn_request.army {
+                Army::Red => map_def.spawn_red.clone(),
+                Army::Blue => map_def.spawn_blue.clone(),
+            };
 
-        if total_units >= 5 {
-            println!("{:?} army: Unit limit reached (5/5)!", spawn_request.army);
-            continue;
-        }
+            let intended_positions: HashSet<(i32, i32)> = occupancy_intent
+                .intentions
+                .values()
+                .copied()
+                .collect();
 
-        // Check if spawn cooldown is ready
-        // Pass the count AFTER spawning would occur (current + 1) to match how cooldown was started
-        let army_cooldowns = spawn_cooldowns.get_army_cooldowns(spawn_request.army);
-        if !army_cooldowns.is_ready(spawn_request.unit_class, total_units + 1) {
-            println!("{:?} army: Spawn cooldown not ready for {:?}", spawn_request.army, spawn_request.unit_class);
-            continue;
-        }
+            let spawn_pos = spawn_candidates
+                .iter()
+                .find(|pos| !occupancy.positions.contains(pos) && !intended_positions.contains(pos));
 
-        // Find available spawn location from loaded map definition
-        let spawn_candidates: Vec<(i32, i32)> = match spawn_request.army {
-            Army::Red => map_def.spawn_red.clone(),
-            Army::Blue => map_def.spawn_blue.clone(),
+            let Some(&pos) = spawn_pos else {
+                println!("{:?} army: No available spawn location!", spawn_request.army);
+                continue;
+            };
+            pos
         };
 
-        // Check both current occupancy AND intent (units moving toward cells)
-        let intended_positions: HashSet<(i32, i32)> = occupancy_intent
-            .intentions
-            .values()
-            .copied()
-            .collect();
-
-        let spawn_pos = spawn_candidates
-            .iter()
-            .find(|pos| !occupancy.positions.contains(pos) && !intended_positions.contains(pos));
-
-        let Some(&(q, r)) = spawn_pos else {
-            println!("{:?} army: No available spawn location!", spawn_request.army);
-            continue;
-        };
-
-        // Deduct money from appropriate army
-        match spawn_request.army {
-            Army::Red => economy.red_money -= cost,
-            Army::Blue => economy.blue_money -= cost,
+        // Deduct money (only on host/singleplayer; client gets money from snapshot)
+        if !spawn_request.skip_validation {
+            match spawn_request.army {
+                Army::Red => economy.red_money -= cost,
+                Army::Blue => economy.blue_money -= cost,
+            }
         }
 
         let world_pos = axial_to_world_pos(q, r);
@@ -2642,6 +2667,9 @@ fn spawn_unit_from_request(
                     max: stats.max_health,
                 },
                 Name::new(format!("{:?} {:?} ({}, {})", spawn_request.army, spawn_request.unit_class, q, r)),
+                crate::networking::StableId(
+                    spawn_request.stable_id.unwrap_or_else(crate::networking::next_stable_id)
+                ),
             ));
 
             // Add Harvester component if unit has harvester behavior
@@ -2848,15 +2876,17 @@ fn spawn_unit_from_request(
             ));
         });
 
-        // Start cooldown based on this army's total unit count (including harvesters)
-        // Use total_units + 1 (the unit we just spawned) since the spawned unit
-        // won't appear in queries until the command buffer flushes
-        let army_cooldowns = spawn_cooldowns.get_army_cooldowns_mut(spawn_request.army);
-        army_cooldowns.start_cooldown(spawn_request.unit_class, total_units + 1);
+        // Start cooldown — skip for snapshot-induced spawns (skip_validation units
+        // are host-replicated on the client and should not affect local cooldowns).
+        if !spawn_request.skip_validation {
+            let current_total = unit_query.iter()
+                .filter(|(u, _uc)| u.army == spawn_request.army)
+                .count();
+            let army_cooldowns = spawn_cooldowns.get_army_cooldowns_mut(spawn_request.army);
+            army_cooldowns.start_cooldown(spawn_request.unit_class, current_total + 1);
+        }
 
-        println!("Spawned {:?} {:?} unit at ({}, {}) for ${} (global cooldown: {:.1}s)",
-            spawn_request.army, spawn_request.unit_class, q, r, cost, army_cooldowns.cooldown
-        );
+        println!("Spawned {:?} {:?} unit at ({}, {})", spawn_request.army, spawn_request.unit_class, q, r);
     }
 }
 

@@ -184,6 +184,9 @@ fn ai_spawn_units(
             spawn_queue.requests.push(UnitSpawnRequest {
                 unit_class,
                 army: ai_army,
+                spawn_pos: None,
+                skip_validation: false,
+                stable_id: None,
             });
             println!("AI ({:?} strategy): Spawning {:?}", ai_controller.strategy, unit_class);
         }
@@ -642,12 +645,17 @@ fn find_nearest(from: (i32, i32), targets: &[(i32, i32)]) -> Option<(i32, i32)> 
 // AI Plugin
 pub struct AIPlugin;
 
+fn is_singleplayer(mode: Res<crate::networking::MultiplayerMode>) -> bool {
+    *mode == crate::networking::MultiplayerMode::Singleplayer
+}
+
 impl Plugin for AIPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AIController>()
             .add_systems(
                 Update,
-                (ai_spawn_units, ai_command_units).run_if(in_state(LoadingState::Playing).and(not_paused)),
+                (ai_spawn_units, ai_command_units)
+                    .run_if(in_state(LoadingState::Playing).and(not_paused).and(is_singleplayer)),
             );
     }
 }

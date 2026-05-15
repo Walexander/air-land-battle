@@ -6,6 +6,7 @@ use bevy_mod_outline::OutlineVolume;
 
 use crate::map::{axial_to_world_pos, HexMapConfig, HoveredHex, Obstacles, VisibleHexes};
 use crate::units::{find_path_waypoints, Occupancy, ClaimedCellsThisFrame, Unit, UnitMovement, Army, UnitStats, LocalPlayerArmy};
+use crate::networking::{BroadcastNetMsg, MultiplayerMode, NetworkMessage};
 use crate::loading::LoadingState;
 
 // Components
@@ -642,9 +643,30 @@ fn create_path_line_mesh(
 struct SelectionRenderAssets<'w> {
     meshes: ResMut<'w, Assets<Mesh>>,
     materials: ResMut<'w, Assets<StandardMaterial>>,
+    net_mode: Res<'w, MultiplayerMode>,
+    net_writer: MessageWriter<'w, BroadcastNetMsg>,
 }
 
 // Systems
+/// Send a `MoveUnit` command to the peer if we're in multiplayer.
+fn broadcast_move(
+    writer: &mut MessageWriter<BroadcastNetMsg>,
+    mode: &MultiplayerMode,
+    stable_id: Option<&crate::networking::StableId>,
+    goal: (i32, i32),
+) {
+    if *mode != MultiplayerMode::Client {
+        return;
+    }
+    if let Some(sid) = stable_id {
+        writer.write(BroadcastNetMsg(NetworkMessage::MoveUnit {
+            stable_id: sid.0,
+            target_q: goal.0,
+            target_r: goal.1,
+        }));
+    }
+}
+
 fn handle_unit_selection(
     mouse_button: Res<ButtonInput<MouseButton>>,
     clicked_unit: Res<crate::units::ClickedUnit>,
@@ -655,7 +677,7 @@ fn handle_unit_selection(
     hex_grid: Res<crate::hex_pathfinding::HexPathfindingGrid>,
     mut claimed_cells: ResMut<ClaimedCellsThisFrame>,
     unit_query: Query<(Entity, &Unit, Option<&UnitMovement>)>,
-    selected_query: Query<(Entity, &Unit, &UnitStats, Option<&UnitMovement>, &Transform), With<Selected>>,
+    selected_query: Query<(Entity, &Unit, &UnitStats, Option<&UnitMovement>, &Transform, Option<&crate::networking::StableId>), With<Selected>>,
     path_viz_query: Query<(Entity, &PathVisualization)>,
     dest_ring_query: Query<(Entity, &DestinationRing)>,
     visible_hexes: Res<VisibleHexes>,
@@ -671,7 +693,7 @@ fn handle_unit_selection(
             if let Ok((_entity, unit, _)) = unit_query.get(clicked_entity)
                 && unit.army == player {
                     // Select this unit
-                    for (entity, _, _, _, _) in &selected_query {
+                    for (entity, _, _, _, _, _) in &selected_query {
                         commands.entity(entity).remove::<Selected>();
                     }
                     commands.entity(clicked_entity).insert(Selected);
@@ -681,7 +703,7 @@ fn handle_unit_selection(
             // If clicked unit is an enemy and we have a unit selected, target it
             if let Ok((_, enemy_unit, _)) = unit_query.get(clicked_entity)
                 && enemy_unit.army != player {
-                    if let Ok((selected_entity, selected_unit, stats, existing_movement, _)) = selected_query.single() {
+                    if let Ok((selected_entity, selected_unit, stats, existing_movement, _, _)) = selected_query.single() {
                         let enemy_pos = (enemy_unit.q, enemy_unit.r);
 
                         // Remove old path visualizations
@@ -915,7 +937,7 @@ fn handle_unit_selection(
         // Handle movement to empty cells (only if no unit was clicked directly via hitbox)
         if clicked_unit.entity.is_none()
             && hovered_hex.entity.is_some()
-                && let Ok((selected_entity, selected_unit, stats, existing_movement, _unit_transform)) =
+                && let Ok((selected_entity, selected_unit, stats, existing_movement, _unit_transform, selected_stable_id)) =
                     selected_query.single()
                 {
                     // Remove targeting when issuing normal movement command
@@ -981,6 +1003,7 @@ fn handle_unit_selection(
                                             segment_distance: 0.0,
                         segment_start: Vec3::ZERO,
                                         });
+                                        broadcast_move(&mut render.net_writer, &render.net_mode, selected_stable_id, goal);
 
                                         // Note: Cell claiming is no longer applicable with waypoint-based movement
                                         claimed_cells.cells.insert(goal);
@@ -1010,6 +1033,7 @@ fn handle_unit_selection(
                                             segment_distance: 0.0,
                                         segment_start: Vec3::ZERO,
                                         });
+                                        broadcast_move(&mut render.net_writer, &render.net_mode, selected_stable_id, goal);
 
                                         // Note: Cell claiming is no longer applicable with waypoint-based movement
                                         claimed_cells.cells.insert(goal);
@@ -1043,6 +1067,7 @@ fn handle_unit_selection(
                                         segment_distance: 0.0,
                         segment_start: Vec3::ZERO,
                                     });
+                                    broadcast_move(&mut render.net_writer, &render.net_mode, selected_stable_id, goal);
 
                                     // Note: Cell claiming is no longer applicable with waypoint-based movement
                                     claimed_cells.cells.insert(goal);

@@ -16,6 +16,9 @@ mod ai;
 mod economy;
 mod music;
 mod hex_pathfinding;
+mod networking;
+mod lobby;
+mod net_sync;
 
 use map::MapPlugin;
 use map_loader::MapLoaderPlugin;
@@ -28,6 +31,9 @@ use loading::LoadingPlugin;
 use ai::AIPlugin;
 use economy::EconomyPlugin;
 use music::MusicPlugin;
+use networking::NetworkingPlugin;
+use lobby::LobbyPlugin;
+use net_sync::NetSyncPlugin;
 
 fn main() {
     App::new()
@@ -44,6 +50,9 @@ fn main() {
         .add_plugins(EguiPlugin::default())
         .add_plugins(WorldInspectorPlugin::default().run_if(inspector_enabled))
         .add_plugins(bevy_mod_outline::OutlinePlugin)
+        .add_plugins(NetworkingPlugin)
+        .add_plugins(LobbyPlugin)
+        .add_plugins(NetSyncPlugin)
         .add_plugins(LoadingPlugin)
         .add_plugins(MinimapPlugin)
         .add_plugins(MapLoaderPlugin)
@@ -65,8 +74,32 @@ fn main() {
         .add_systems(OnExit(loading::LoadingState::Playing), cleanup_countdown)
         .add_systems(Update, (update_fps_text, toggle_inspector, toggle_pause, handle_pause_time, show_pause_overlay))
         .add_systems(Update, tick_countdown.run_if(in_state(loading::LoadingState::Playing)))
+        .add_systems(Update, handle_game_net_events.run_if(in_state(loading::LoadingState::Playing)))
         .add_systems(Update, quit_to_menu.run_if(in_state(loading::LoadingState::Playing)))
         .run();
+}
+
+fn handle_game_net_events(
+    mut events: MessageReader<networking::GameNetEvent>,
+    mut countdown: ResMut<Countdown>,
+    mut paused: ResMut<Paused>,
+    mut game_state: ResMut<launch_pads::GameState>,
+) {
+    for event in events.read() {
+        match event {
+            networking::GameNetEvent::StartGame => {
+                info!("GameStart received — beginning countdown");
+                countdown.active = true;
+                paused.0 = true; // tick_countdown un-pauses on completion
+            }
+            networking::GameNetEvent::GameOver { winner } => {
+                info!("GameOver received from host — winner: {:?}", winner);
+                game_state.game_over = true;
+                game_state.winner = Some(*winner);
+            }
+            networking::GameNetEvent::Snapshot(_) => {} // handled by net_sync::apply_snapshot
+        }
+    }
 }
 
 fn quit_to_menu(
@@ -191,10 +224,24 @@ fn start_countdown(
     mut countdown: ResMut<Countdown>,
     mut cam: ResMut<crate::ui::CameraSettings>,
     map_def: Res<crate::map_loader::MapDefinition>,
+    net_mode: Res<networking::MultiplayerMode>,
+    mut net_broadcast: MessageWriter<networking::BroadcastNetMsg>,
 ) {
+    // In multiplayer, pause and wait for the GameStart handshake.
+    // We still set up the camera intro so it's ready to go.
+    // The actual countdown activation happens in handle_game_net_events.
+    if *net_mode != networking::MultiplayerMode::Singleplayer {
+        paused.0 = true;
+        countdown.active = false;
+        // Tell the peer (or host) that we have finished loading.
+        net_broadcast.write(networking::BroadcastNetMsg(networking::NetworkMessage::ReadyToPlay));
+        // Fall through to set up camera and overlay, but active stays false.
+    } else {
+        countdown.active = true;
+        paused.0 = true;
+    }
+
     countdown.remaining = 6.5;
-    countdown.active = true;
-    paused.0 = true;
 
     // Compute centroid of Red spawn cells as the intro focus point.
     let spawn_world: Vec<Vec3> = map_def.spawn_red.iter()

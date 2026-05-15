@@ -5,6 +5,7 @@ use bevy::animation::AnimationClip;
 pub enum LoadingState {
     #[default]
     TitleScreen,
+    Lobby,
     Loading,
     Playing,
 }
@@ -12,6 +13,14 @@ pub enum LoadingState {
 /// The map file the player chose on the title screen.
 #[derive(Resource)]
 pub struct SelectedMap(pub String);
+
+/// Marker for the "Host Game" button on the title screen.
+#[derive(Component)]
+pub struct HostButton;
+
+/// Marker for the "Join Game" button on the title screen.
+#[derive(Component)]
+pub struct JoinButton;
 
 #[derive(Resource)]
 pub struct AssetsLoading {
@@ -109,6 +118,71 @@ fn setup_title_screen(mut commands: Commands) {
                         ));
                     });
                 }
+
+                // Multiplayer divider
+                col.spawn((
+                    Node {
+                        width: Val::Px(340.0),
+                        height: Val::Px(1.0),
+                        margin: UiRect::vertical(Val::Px(8.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.3, 0.3, 0.5)),
+                ));
+
+                col.spawn((
+                    Text::new("Multiplayer"),
+                    TextFont { font_size: 18.0, ..default() },
+                    TextColor(Color::srgb(0.6, 0.6, 0.8)),
+                    Node { margin: UiRect::bottom(Val::Px(4.0)), ..default() },
+                ));
+
+                // Host Game button
+                col.spawn((
+                    Button,
+                    Node {
+                        width: Val::Px(340.0),
+                        height: Val::Px(50.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        border: UiRect::all(Val::Px(2.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.1, 0.2, 0.15)),
+                    BorderColor::all(Color::srgb(0.3, 0.6, 0.4)),
+                    HostButton,
+                ))
+                .with_children(|btn| {
+                    btn.spawn((
+                        Text::new("Host Game"),
+                        TextFont { font_size: 22.0, ..default() },
+                        TextColor(Color::srgb(0.5, 1.0, 0.6)),
+                    ));
+                });
+
+                // Join Game button
+                col.spawn((
+                    Button,
+                    Node {
+                        width: Val::Px(340.0),
+                        height: Val::Px(50.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        border: UiRect::all(Val::Px(2.0)),
+                        margin: UiRect::top(Val::Px(4.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.1, 0.15, 0.25)),
+                    BorderColor::all(Color::srgb(0.3, 0.4, 0.7)),
+                    JoinButton,
+                ))
+                .with_children(|btn| {
+                    btn.spawn((
+                        Text::new("Join Game"),
+                        TextFont { font_size: 22.0, ..default() },
+                        TextColor(Color::srgb(0.5, 0.7, 1.0)),
+                    ));
+                });
             });
 
             // Right column: minimap preview panel
@@ -144,12 +218,21 @@ fn setup_title_screen(mut commands: Commands) {
 fn handle_title_screen_buttons(
     mut commands: Commands,
     mut next_state: ResMut<NextState<LoadingState>>,
-    mut interaction_query: Query<
+    mut map_query: Query<
         (&Interaction, &MapButton, &mut BackgroundColor),
         (Changed<Interaction>, With<Button>),
     >,
+    mut host_query: Query<
+        (&Interaction, &mut BackgroundColor),
+        (Changed<Interaction>, With<HostButton>, Without<MapButton>),
+    >,
+    mut join_query: Query<
+        (&Interaction, &mut BackgroundColor),
+        (Changed<Interaction>, With<JoinButton>, Without<MapButton>, Without<HostButton>),
+    >,
+    mut mode: ResMut<crate::networking::MultiplayerMode>,
 ) {
-    for (interaction, map_button, mut bg) in &mut interaction_query {
+    for (interaction, map_button, mut bg) in &mut map_query {
         match interaction {
             Interaction::Pressed => {
                 commands.insert_resource(SelectedMap(map_button.0.clone()));
@@ -160,6 +243,36 @@ fn handle_title_screen_buttons(
             }
             Interaction::None => {
                 *bg = BackgroundColor(Color::srgb(0.15, 0.15, 0.25));
+            }
+        }
+    }
+
+    for (interaction, mut bg) in &mut host_query {
+        match interaction {
+            Interaction::Pressed => {
+                *mode = crate::networking::MultiplayerMode::Host;
+                next_state.set(LoadingState::Lobby);
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgb(0.15, 0.3, 0.2));
+            }
+            Interaction::None => {
+                *bg = BackgroundColor(Color::srgb(0.1, 0.2, 0.15));
+            }
+        }
+    }
+
+    for (interaction, mut bg) in &mut join_query {
+        match interaction {
+            Interaction::Pressed => {
+                *mode = crate::networking::MultiplayerMode::Client;
+                next_state.set(LoadingState::Lobby);
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgb(0.15, 0.2, 0.35));
+            }
+            Interaction::None => {
+                *bg = BackgroundColor(Color::srgb(0.1, 0.15, 0.25));
             }
         }
     }

@@ -3,7 +3,8 @@ use bevy::input::mouse::MouseWheel;
 
 use crate::launch_pads::{GameState, GameTimer, GAME_DURATION};
 use crate::economy::Economy;
-use crate::units::{Army, Unit, UnitClass, UnitSpawnRequest, UnitSpawnQueue, SpawnCooldowns, UnitDefinitions, LocalPlayerArmy};
+use crate::units::{Army, Unit, UnitClass, UnitSpawnRequest, UnitSpawnQueue, SpawnCooldowns, UnitDefinitions, LocalPlayerArmy, Occupancy, OccupancyIntent};
+use crate::networking::{BroadcastNetMsg, MultiplayerMode, NetworkMessage};
 use crate::loading::LoadingState;
 
 // Components
@@ -450,6 +451,11 @@ fn handle_unit_spawn_buttons(
     mut ui_clicked: ResMut<UIClicked>,
     unit_definitions: Res<UnitDefinitions>,
     player_army: Res<LocalPlayerArmy>,
+    multiplayer_mode: Res<MultiplayerMode>,
+    mut net_broadcast: MessageWriter<BroadcastNetMsg>,
+    occupancy: Res<Occupancy>,
+    occupancy_intent: Res<OccupancyIntent>,
+    map_def: Res<crate::map_loader::MapDefinition>,
 ) {
     let player = player_army.0;
     let player_money = match player { Army::Red => economy.red_money, Army::Blue => economy.blue_money };
@@ -489,10 +495,30 @@ fn handle_unit_spawn_buttons(
                 };
 
                 if can_afford && cooldown_ready {
-                    spawn_queue.requests.push(UnitSpawnRequest {
-                        unit_class,
-                        army: player,
-                    });
+                    if *multiplayer_mode == MultiplayerMode::Client {
+                        // In host-auth multiplayer, the client only sends the request to
+                        // the host. The unit will appear once the host's snapshot includes it.
+                        net_broadcast.write(BroadcastNetMsg(NetworkMessage::InputSpawnUnit { unit_class }));
+                    } else {
+                        // Singleplayer or host: spawn locally.
+                        let spawn_candidates = match player {
+                            Army::Red => &map_def.spawn_red,
+                            Army::Blue => &map_def.spawn_blue,
+                        };
+                        let intended: std::collections::HashSet<_> =
+                            occupancy_intent.intentions.values().copied().collect();
+                        let spawn_pos = spawn_candidates
+                            .iter()
+                            .find(|pos| !occupancy.positions.contains(pos) && !intended.contains(pos))
+                            .copied();
+                        spawn_queue.requests.push(UnitSpawnRequest {
+                            unit_class,
+                            army: player,
+                            spawn_pos,
+                            skip_validation: false,
+                            stable_id: None,
+                        });
+                    }
                     *border_color = BorderColor::all(Color::srgb(0.1, 0.1, 0.1));
                 } else if !can_afford {
                     // Flash red border if not enough money
