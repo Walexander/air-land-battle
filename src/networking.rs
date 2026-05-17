@@ -101,11 +101,16 @@ pub enum NetworkMessage {
 
     // Client → host inputs
     /// Client asks host to spawn a unit for them.
-    InputSpawnUnit { unit_class: UnitClass },
+    /// `tentative_stable_id` is pre-allocated by the client so both sides use
+    /// the same ID and the client can spawn optimistically without waiting.
+    InputSpawnUnit { unit_class: UnitClass, tentative_stable_id: u32 },
     /// Either player commanding a unit to move (client→host or host→client for smooth UX).
     MoveUnit { stable_id: u32, target_q: i32, target_r: i32 },
 
     // Host → client authoritative state
+    /// Sent immediately when any unit spawns so the client doesn't have to wait
+    /// for the next 200 ms snapshot before the unit appears.
+    SpawnedUnit { stable_id: u32, unit_class: UnitClass, army: Army, q: i32, r: i32 },
     StateSnapshot(Box<GameStateSnapshot>),
 }
 
@@ -199,7 +204,7 @@ fn poll_socket(
             }
 
             // Client → host: spawn request
-            NetworkMessage::InputSpawnUnit { unit_class } => {
+            NetworkMessage::InputSpawnUnit { unit_class, tentative_stable_id } => {
                 if *net_mode == MultiplayerMode::Host
                     && *state.get() == LoadingState::Playing
                 {
@@ -214,7 +219,7 @@ fn poll_socket(
                         army: client_army,
                         spawn_pos: None,
                         skip_validation: false,
-                        stable_id: None,
+                        stable_id: Some(*tentative_stable_id),
                     });
                 }
             }
@@ -243,6 +248,25 @@ fn poll_socket(
                     );
                     if !found {
                         pending.items.push((*stable_id, *target_q, *target_r));
+                    }
+                }
+            }
+
+            // Host → client: unit spawned (immediate, don't wait for snapshot)
+            NetworkMessage::SpawnedUnit { stable_id, unit_class, army, q, r } => {
+                if *net_mode == MultiplayerMode::Client {
+                    if let Some(ref mut sq) = spawn_queue {
+                        let already_exists = unit_query.iter().any(|(_, sid, _, _)| sid.0 == *stable_id);
+                        let already_queued = sq.requests.iter().any(|req| req.stable_id == Some(*stable_id));
+                        if !already_exists && !already_queued {
+                            sq.requests.push(UnitSpawnRequest {
+                                unit_class: *unit_class,
+                                army: *army,
+                                spawn_pos: Some((*q, *r)),
+                                skip_validation: true,
+                                stable_id: Some(*stable_id),
+                            });
+                        }
                     }
                 }
             }

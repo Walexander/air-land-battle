@@ -392,8 +392,11 @@ fn show_pause_overlay(
     countdown: Res<Countdown>,
     overlay_query: Query<Entity, With<PauseOverlay>>,
     children_query: Query<&Children>,
+    countdown_overlay_query: Query<(), With<CountdownOverlay>>,
 ) {
-    if paused.is_changed() && !countdown.active {
+    // Don't show "PAUSED" while the countdown sequence is active (including
+    // the pre-start wait in multiplayer where paused=true but no countdown yet).
+    if paused.is_changed() && !countdown.active && countdown_overlay_query.is_empty() {
         if paused.0 {
             // Show pause overlay
             if overlay_query.is_empty() {

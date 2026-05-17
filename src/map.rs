@@ -1827,10 +1827,18 @@ fn debug_trigger_missile_launch(
 fn check_missile_animation_complete(
     mut game_state: ResMut<GameState>,
     missiles: Query<&MissileLaunch>,
+    mut post_impact_timer: Local<f32>,
+    time: Res<Time<Real>>,
 ) {
     if !game_state.game_over || game_state.missile_animation_complete { return; }
     if missiles.iter().all(|m| m.phase == MissilePhase::Done) && !missiles.is_empty() {
-        game_state.missile_animation_complete = true;
+        // Wait for the explosion particles to finish playing before declaring
+        // the animation complete.  We use real time so the delay is unaffected
+        // by the virtual-time pause that will follow.
+        *post_impact_timer += time.delta_secs();
+        if *post_impact_timer >= 2.5 {
+            game_state.missile_animation_complete = true;
+        }
     }
 }
 

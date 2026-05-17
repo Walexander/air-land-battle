@@ -105,22 +105,55 @@ pub fn broadcast_snapshot(
 // already has UnitMovement in place.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// broadcast_new_units — host only
+//
+// Fires immediately when any unit is spawned (Added<StableId>), giving the
+// client instant notification rather than waiting up to 200 ms for the next
+// snapshot. The snapshot still reconciles position/health as the source of truth.
+// ---------------------------------------------------------------------------
+
+pub fn broadcast_new_units(
+    net_mode: Res<MultiplayerMode>,
+    new_units: Query<(&Unit, &UnitClass, &StableId), Added<StableId>>,
+    mut net_broadcast: MessageWriter<BroadcastNetMsg>,
+) {
+    if *net_mode != MultiplayerMode::Host {
+        return;
+    }
+    for (unit, unit_class, sid) in &new_units {
+        net_broadcast.write(BroadcastNetMsg(NetworkMessage::SpawnedUnit {
+            stable_id: sid.0,
+            unit_class: *unit_class,
+            army: unit.army,
+            q: unit.q,
+            r: unit.r,
+        }));
+    }
+}
+
 pub fn broadcast_new_movements(
     net_mode: Res<MultiplayerMode>,
-    new_movements: Query<(&StableId, &UnitMovement), Added<UnitMovement>>,
+    changed_movements: Query<(&StableId, &UnitMovement), Changed<UnitMovement>>,
+    mut last_broadcast: Local<std::collections::HashMap<u32, (i32, i32)>>,
     mut net_broadcast: MessageWriter<BroadcastNetMsg>,
 ) {
     if *net_mode != MultiplayerMode::Host {
         return;
     }
 
-    for (sid, movement) in &new_movements {
-        if let Some(&last_wp) = movement.waypoints.last() {
-            let (target_q, target_r) = world_pos_to_axial(last_wp);
+    for (sid, movement) in &changed_movements {
+        let Some(&last_wp) = movement.waypoints.last() else { continue };
+        let dest = world_pos_to_axial(last_wp);
+        // Only broadcast when the destination actually changes — `Changed<UnitMovement>`
+        // fires every frame while a unit is moving (progress/waypoint index updates),
+        // so we deduplicate by the final waypoint to avoid flooding the network.
+        if last_broadcast.get(&sid.0) != Some(&dest) {
+            last_broadcast.insert(sid.0, dest);
             net_broadcast.write(BroadcastNetMsg(NetworkMessage::MoveUnit {
                 stable_id: sid.0,
-                target_q,
-                target_r,
+                target_q: dest.0,
+                target_r: dest.1,
             }));
         }
     }
@@ -292,6 +325,7 @@ impl Plugin for NetSyncPlugin {
             Update,
             (
                 broadcast_snapshot,
+                broadcast_new_units,
                 broadcast_new_movements,
                 apply_snapshot,
                 tick_game_timer_client,

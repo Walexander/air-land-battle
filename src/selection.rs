@@ -40,11 +40,6 @@ pub struct DestinationRing {
     pub bounce_count: u32,
 }
 
-#[derive(Component)]
-pub struct TargetRing {
-    pub unit_entity: Entity,
-    pub target_entity: Entity,
-}
 
 #[derive(Component)]
 pub struct HoverRing {
@@ -766,67 +761,29 @@ fn handle_unit_selection(
                                 if should_reverse {
                                     // Reverse and path from current cell
                                     if let (Some(goal), Some(waypoints)) = (goal_from_current, waypoints_from_current) {
-                                        // Check if already adjacent
-                                        if goal == current_cell {
-                                            // Already adjacent, just set targeting without new movement
-                                            commands.entity(selected_entity).insert(crate::units::Targeting {
-                                                target_entity: clicked_entity,
-                                                target_last_position: enemy_pos,
-                                                repathing_cooldown: 0.5,
-                                                last_repath_time: 0.0,
+                                        if goal != current_cell && waypoints.len() > 1 {
+                                            commands.entity(selected_entity).insert(UnitMovement {
+                                                waypoints,
+                                                current_waypoint: 1,
+                                                progress: 0.0,
+                                                speed: stats.speed,
+                                                segment_distance: 0.0,
+                                                segment_start: Vec3::ZERO,
                                             });
-                                        } else {
-                                            if waypoints.len() > 1 {
-                                                commands.entity(selected_entity).insert((
-                                                    UnitMovement {
-                                                        waypoints,
-                                                        current_waypoint: 1,
-                                                        progress: 0.0,
-                                                        speed: stats.speed,
-                                                        segment_distance: 0.0,
-                                                        segment_start: Vec3::ZERO,
-                                                    },
-                                                    crate::units::Targeting {
-                                                        target_entity: clicked_entity,
-                                                        target_last_position: enemy_pos,
-                                                        repathing_cooldown: 0.5,
-                                                        last_repath_time: 0.0,
-                                                    },
-                                                ));
-                                            }
                                         }
                                     }
                                 } else {
                                     // Continue forward from next cell
                                     if let (Some(goal), Some(waypoints)) = (goal_from_next, waypoints_from_next) {
-                                        // Check if already adjacent (or will be adjacent at next_cell)
-                                        if goal == next_cell {
-                                            // Will be adjacent when we reach next_cell, just set targeting
-                                            commands.entity(selected_entity).insert(crate::units::Targeting {
-                                                target_entity: clicked_entity,
-                                                target_last_position: enemy_pos,
-                                                repathing_cooldown: 0.5,
-                                                last_repath_time: 0.0,
+                                        if goal != next_cell && waypoints.len() > 1 {
+                                            commands.entity(selected_entity).insert(UnitMovement {
+                                                waypoints,
+                                                current_waypoint: 1,
+                                                progress: 0.0,
+                                                speed: stats.speed,
+                                                segment_distance: 0.0,
+                                                segment_start: Vec3::ZERO,
                                             });
-                                        } else {
-                                            if waypoints.len() > 1 {
-                                                commands.entity(selected_entity).insert((
-                                                    UnitMovement {
-                                                        waypoints,
-                                                        current_waypoint: 1,
-                                                        progress: 0.0,
-                                                        speed: stats.speed,
-                                                        segment_distance: 0.0,
-                        segment_start: Vec3::ZERO,
-                                                    },
-                                                    crate::units::Targeting {
-                                                        target_entity: clicked_entity,
-                                                        target_last_position: enemy_pos,
-                                                        repathing_cooldown: 0.5,
-                                                        last_repath_time: 0.0,
-                                                    },
-                                                ));
-                                            }
                                         }
                                     }
                                 }
@@ -849,33 +806,18 @@ fn handle_unit_selection(
                                 }
 
                                 if let Some(goal) = crate::units::find_closest_adjacent_cell(enemy_pos, start_pos, &blocking_cells) {
-                                    // Check if already adjacent (goal is current position)
-                                    if goal == start_pos {
-                                        // Already adjacent, just set targeting without movement
-                                        commands.entity(selected_entity).insert(crate::units::Targeting {
-                                            target_entity: clicked_entity,
-                                            target_last_position: enemy_pos,
-                                            repathing_cooldown: 0.5,
-                                            last_repath_time: 0.0,
-                                        });
-                                    } else if let Some(waypoints) = crate::units::find_path_waypoints(start_pos, goal, &config.valid_cells, &blocking_cells, &hex_grid) {
-                                        if waypoints.len() > 1 {
-                                            commands.entity(selected_entity).insert((
-                                                UnitMovement {
+                                    if goal != start_pos {
+                                        if let Some(waypoints) = crate::units::find_path_waypoints(start_pos, goal, &config.valid_cells, &blocking_cells, &hex_grid) {
+                                            if waypoints.len() > 1 {
+                                                commands.entity(selected_entity).insert(UnitMovement {
                                                     waypoints,
                                                     current_waypoint: 1,
                                                     progress: 0.0,
                                                     speed: stats.speed,
                                                     segment_distance: 0.0,
-                        segment_start: Vec3::ZERO,
-                                                },
-                                                crate::units::Targeting {
-                                                    target_entity: clicked_entity,
-                                                    target_last_position: enemy_pos,
-                                                    repathing_cooldown: 0.5,
-                                                    last_repath_time: 0.0,
-                                                },
-                                            ));
+                                                    segment_start: Vec3::ZERO,
+                                                });
+                                            }
                                         }
                                     }
                                 }
@@ -898,33 +840,18 @@ fn handle_unit_selection(
                                 }
                             }
                             if let Some(goal) = crate::units::find_closest_adjacent_cell(enemy_pos, start_pos, &blocking_cells) {
-                                // Check if already adjacent (goal is current position)
-                                if goal == start_pos {
-                                    // Already adjacent, just set targeting without movement
-                                    commands.entity(selected_entity).insert(crate::units::Targeting {
-                                        target_entity: clicked_entity,
-                                        target_last_position: enemy_pos,
-                                        repathing_cooldown: 0.5,
-                                        last_repath_time: 0.0,
-                                    });
-                                } else if let Some(waypoints) = crate::units::find_path_waypoints(start_pos, goal, &config.valid_cells, &blocking_cells, &hex_grid) {
-                                    if waypoints.len() > 1 {
-                                        commands.entity(selected_entity).insert((
-                                            UnitMovement {
+                                if goal != start_pos {
+                                    if let Some(waypoints) = crate::units::find_path_waypoints(start_pos, goal, &config.valid_cells, &blocking_cells, &hex_grid) {
+                                        if waypoints.len() > 1 {
+                                            commands.entity(selected_entity).insert(UnitMovement {
                                                 waypoints,
                                                 current_waypoint: 1,
                                                 progress: 0.0,
                                                 speed: stats.speed,
                                                 segment_distance: 0.0,
-                        segment_start: Vec3::ZERO,
-                                            },
-                                            crate::units::Targeting {
-                                                target_entity: clicked_entity,
-                                                target_last_position: enemy_pos,
-                                                repathing_cooldown: 0.5,
-                                                last_repath_time: 0.0,
-                                            },
-                                        ));
+                                                segment_start: Vec3::ZERO,
+                                            });
+                                        }
                                     }
                                 }
                             }
@@ -940,9 +867,6 @@ fn handle_unit_selection(
                 && let Ok((selected_entity, selected_unit, stats, existing_movement, _unit_transform, selected_stable_id)) =
                     selected_query.single()
                 {
-                    // Remove targeting when issuing normal movement command
-                    commands.entity(selected_entity).remove::<crate::units::Targeting>();
-
                     let goal = (hovered_hex.q, hovered_hex.r);
 
                         if obstacles.positions.contains(&goal) {
@@ -1328,12 +1252,11 @@ fn update_path_visualizations(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    unit_query: Query<(Entity, &Unit, &Transform, Option<&UnitMovement>, Option<&crate::units::Targeting>, Has<Selected>)>,
-    target_transform_query: Query<&Transform, (With<Unit>, Without<PathVisualization>)>,
+    unit_query: Query<(Entity, &Unit, &Transform, Option<&UnitMovement>, Has<Selected>)>,
     mut path_viz_query: Query<(Entity, &mut PathVisualization, &mut Mesh3d)>,
 ) {
     let mut selected_units_with_movement = std::collections::HashSet::new();
-    for (unit_entity, _, _, movement, _, is_selected) in &unit_query {
+    for (unit_entity, _, _, movement, is_selected) in &unit_query {
         if movement.is_some() && is_selected {
             selected_units_with_movement.insert(unit_entity);
         }
@@ -1345,23 +1268,13 @@ fn update_path_visualizations(
         }
     }
 
-    for (unit_entity, unit, transform, movement, targeting, is_selected) in &unit_query {
+    for (unit_entity, unit, transform, movement, is_selected) in &unit_query {
         if let Some(movement) = movement {
             if !is_selected {
                 continue;
             }
             let remaining_waypoints = &movement.waypoints[movement.current_waypoint..];
-
-            // Get target position if unit is targeting
-            let target_pos = if let Some(targeting) = targeting {
-                if let Ok(target_transform) = target_transform_query.get(targeting.target_entity) {
-                    Some(target_transform.translation)
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
+            let target_pos: Option<Vec3> = None;
 
             let mut total_length = 0.0;
             let mut prev_pos = transform.translation;
@@ -1452,92 +1365,9 @@ fn update_path_visualizations(
     }
 }
 
-fn visualize_targeting(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    selected_query: Query<(Entity, &crate::units::Targeting), With<Selected>>,
-    target_query: Query<&Transform, With<Unit>>,
-    existing_target_rings: Query<(Entity, &TargetRing)>,
-) {
-    // Track which units should have target rings
-    let mut active_targeting: std::collections::HashSet<(Entity, Entity)> = std::collections::HashSet::new();
-
-    for (unit_entity, targeting) in &selected_query {
-        active_targeting.insert((unit_entity, targeting.target_entity));
-    }
-
-    // Remove rings that are no longer needed
-    for (ring_entity, target_ring) in &existing_target_rings {
-        let should_keep = active_targeting.contains(&(target_ring.unit_entity, target_ring.target_entity));
-        if !should_keep {
-            commands.entity(ring_entity).despawn();
-        } else {
-            // Remove from set so we don't spawn a duplicate
-            active_targeting.remove(&(target_ring.unit_entity, target_ring.target_entity));
-        }
-    }
-
-    // Spawn new target rings for active targeting relationships that don't have rings yet
-    for (unit_entity, target_entity) in active_targeting {
-        if let Ok(target_transform) = target_query.get(target_entity) {
-            // Spawn red square outline on target (4-segment circle with thinner lines)
-            let ring_mesh = meshes.add(create_ring_mesh_with_segments(50.0, 58.0, 4));
-            let ring_material = materials.add(StandardMaterial {
-                base_color: Color::srgb(0.9, 0.2, 0.2), // Red
-                emissive: Color::srgb(0.9, 0.2, 0.2).into(),
-                unlit: true,
-                alpha_mode: AlphaMode::Blend,
-                ..default()
-            });
-
-            commands.spawn((
-                Mesh3d(ring_mesh),
-                MeshMaterial3d(ring_material),
-                Transform::from_translation(target_transform.translation + Vec3::new(0.0, 1.0, 0.0))
-                    .with_scale(Vec3::splat(1.0)),
-                TargetRing {
-                    unit_entity,
-                    target_entity,
-                },
-                DespawnOnExit(LoadingState::Playing),
-            ));
-        }
-    }
-}
 
 pub struct SelectionPlugin;
 
-fn update_target_ring_positions(
-    mut target_ring_query: Query<(&TargetRing, &mut Transform)>,
-    unit_transform_query: Query<&Transform, (With<crate::units::Unit>, Without<TargetRing>)>,
-) {
-    for (target_ring, mut ring_transform) in &mut target_ring_query {
-        // Update ring position to follow the target entity's actual transform
-        if let Ok(target_transform) = unit_transform_query.get(target_ring.target_entity) {
-            ring_transform.translation = target_transform.translation + Vec3::new(0.0, 1.0, 0.0);
-        }
-    }
-}
-
-fn cleanup_target_rings(
-    mut commands: Commands,
-    target_ring_query: Query<(Entity, &TargetRing)>,
-    targeting_query: Query<&crate::units::Targeting>,
-    unit_query: Query<&Unit>,
-) {
-    for (ring_entity, target_ring) in &target_ring_query {
-        let should_remove =
-            // Remove if unit no longer has targeting
-            targeting_query.get(target_ring.unit_entity).is_err() ||
-            // Remove if target no longer exists
-            unit_query.get(target_ring.target_entity).is_err();
-
-        if should_remove {
-            commands.entity(ring_entity).despawn();
-        }
-    }
-}
 
 fn visualize_hover_ring(
     mut commands: Commands,
@@ -1684,14 +1514,6 @@ impl Plugin for SelectionPlugin {
                 update_path_visualizations,
                 animate_inner_quarter_circles,
                 update_selected_cell_highlight,
-            ).run_if(in_state(LoadingState::Playing))
-        );
-        app.add_systems(
-            Update,
-            (
-                visualize_targeting,
-                update_target_ring_positions,
-                cleanup_target_rings,
             ).run_if(in_state(LoadingState::Playing))
         );
         app.add_systems(

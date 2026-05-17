@@ -222,13 +222,6 @@ pub struct Combat {
     pub movement_cooldown: f32, // Cooldown after moving before can attack
 }
 
-#[derive(Component)]
-pub struct Targeting {
-    pub target_entity: Entity,
-    pub target_last_position: (i32, i32),
-    pub repathing_cooldown: f32,
-    pub last_repath_time: f32,
-}
 
 #[derive(Component)]
 pub struct UnitClickCollider {
@@ -1381,125 +1374,6 @@ fn combat_system(
     }
 }
 
-fn update_targeting_system(
-    time: Res<Time>,
-    mut commands: Commands,
-    config: Res<HexMapConfig>,
-    obstacles: Res<Obstacles>,
-    occupancy: Res<Occupancy>,
-    occupancy_intent: Res<OccupancyIntent>,
-    hex_grid: Res<crate::hex_pathfinding::HexPathfindingGrid>,
-    non_targeting_units: Query<(Entity, &Unit), Without<Targeting>>,
-    mut targeting_query: Query<(Entity, &mut Unit, &UnitStats, &mut Targeting, Option<&UnitMovement>)>,
-) {
-    let current_time = time.elapsed_secs();
-
-    // Build a map of non-targeting unit entities to their armies for quick lookup
-    let non_targeting_armies: std::collections::HashMap<Entity, Army> = non_targeting_units
-        .iter()
-        .map(|(entity, unit)| (entity, unit.army))
-        .collect();
-
-    // Also collect targeting unit armies (before mutable iteration)
-    let _targeting_armies: std::collections::HashMap<Entity, Army> = targeting_query
-        .iter()
-        .map(|(entity, unit, _, _, _)| (entity, unit.army))
-        .collect();
-
-    for (attacker_entity, mut attacker_unit, stats, mut targeting, movement_opt) in &mut targeting_query {
-        // Check if target still exists
-        if let Some(&_target_army) = non_targeting_armies.get(&targeting.target_entity) {
-            // Get target position from non_targeting_units
-            let target_unit = non_targeting_units.get(targeting.target_entity).unwrap().1;
-            let target_pos = (target_unit.q, target_unit.r);
-            let attacker_pos = (attacker_unit.q, attacker_unit.r);
-
-            // Check if target moved
-            let target_moved = target_pos != targeting.target_last_position;
-            let should_repath = target_moved && current_time - targeting.last_repath_time > targeting.repathing_cooldown;
-
-            // Only repath if target moved and cooldown elapsed
-            if should_repath {
-                targeting.target_last_position = target_pos;
-                targeting.last_repath_time = current_time;
-
-                // Find closest adjacent cell to target
-                let mut blocking_cells = obstacles.positions.clone();
-                for &occupied_pos in &occupancy.positions {
-                    if occupied_pos != attacker_pos {
-                        blocking_cells.insert(occupied_pos);
-                    }
-                }
-                for (entity, &intent_pos) in &occupancy_intent.intentions {
-                    if *entity != attacker_entity && intent_pos != attacker_pos {
-                        blocking_cells.insert(intent_pos);
-                    }
-                }
-
-                if let Some(goal) = find_closest_adjacent_cell(target_pos, attacker_pos, &blocking_cells) {
-                    if let Some(movement) = movement_opt {
-                        // Unit is currently moving - handle mid-movement repathing
-                        if movement.current_waypoint < movement.waypoints.len() {
-                            let current_cell = (attacker_unit.q, attacker_unit.r);
-
-                            // Get waypoints from current position to goal
-                            if let Some(waypoints) = find_path_waypoints(current_cell, goal, &config.valid_cells, &blocking_cells, &hex_grid) {
-                                if waypoints.len() > 1 {
-                                    // Calculate unit position based on progress
-                                    let unit_position = if movement.progress >= 0.5 {
-                                        // Past midpoint, closer to next waypoint
-                                        if movement.current_waypoint < movement.waypoints.len() {
-                                            let next_wp = movement.waypoints[movement.current_waypoint];
-                                            let next_cell = crate::map::world_pos_to_axial(next_wp.x, next_wp.z);
-                                            next_cell
-                                        } else {
-                                            current_cell
-                                        }
-                                    } else {
-                                        current_cell
-                                    };
-
-                                    *attacker_unit = Unit {
-                                        q: unit_position.0,
-                                        r: unit_position.1,
-                                        _sprite_index: attacker_unit._sprite_index,
-                                        army: attacker_unit.army,
-                                    };
-
-                                    commands.entity(attacker_entity).insert(UnitMovement {
-                                        waypoints,
-                                        current_waypoint: 1,
-                                        progress: 0.0,
-                                        speed: stats.speed,
-                                        segment_distance: 0.0,
-                                        segment_start: Vec3::ZERO,
-                                    });
-                                }
-                            }
-                        }
-                    } else {
-                        // Unit not moving - start new movement
-                        if let Some(waypoints) = find_path_waypoints(attacker_pos, goal, &config.valid_cells, &blocking_cells, &hex_grid) {
-                            if waypoints.len() > 1 {
-                                commands.entity(attacker_entity).insert(UnitMovement {
-                                    waypoints,
-                                    current_waypoint: 1,
-                                    progress: 0.0,
-                                    speed: stats.speed,
-                                    segment_distance: 0.0,
-                                    segment_start: Vec3::ZERO,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-        } else {
-            // Target no longer exists, clear targeting
-            commands.entity(attacker_entity).remove::<Targeting>();
-        }
-    }
-}
 
 fn remove_dead_units(
     mut commands: Commands,
@@ -1511,7 +1385,6 @@ fn remove_dead_units(
     health_bar_query: Query<(Entity, &HealthBar)>,
     selection_ring_query: Query<(Entity, &crate::selection::SelectionRing)>,
     collider_query: Query<(Entity, &UnitClickCollider)>,
-    targeting_query: Query<(Entity, &Targeting)>,
 ) {
     for (entity, health, _unit, transform) in &unit_query {
         if health.current <= 0.0 {
@@ -1574,13 +1447,6 @@ fn remove_dead_units(
             for (collider_entity, collider) in &collider_query {
                 if collider.unit_entity == entity {
                     commands.entity(collider_entity).despawn();
-                }
-            }
-
-            // Remove targeting from any units targeting this dead unit
-            for (attacker_entity, targeting) in &targeting_query {
-                if targeting.target_entity == entity {
-                    commands.entity(attacker_entity).remove::<Targeting>();
                 }
             }
 
@@ -3140,7 +3006,6 @@ impl Plugin for UnitsPlugin {
                     reset_game,
                     update_spawn_cooldowns,
                     spawn_unit_from_request,
-                    update_targeting_system,
                     update_occupancy_intent,
                     update_occupancy,
                     detect_collisions_and_repath,

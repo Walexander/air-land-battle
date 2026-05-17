@@ -496,9 +496,31 @@ fn handle_unit_spawn_buttons(
 
                 if can_afford && cooldown_ready {
                     if *multiplayer_mode == MultiplayerMode::Client {
-                        // In host-auth multiplayer, the client only sends the request to
-                        // the host. The unit will appear once the host's snapshot includes it.
-                        net_broadcast.write(BroadcastNetMsg(NetworkMessage::InputSpawnUnit { unit_class }));
+                        // Optimistic spawn: allocate stable ID locally, spawn immediately,
+                        // and send it to the host so both sides use the same ID.
+                        // If the host rejects (rare race), the next snapshot will mark it dead.
+                        let tentative_stable_id = crate::networking::next_stable_id();
+                        let spawn_candidates = match player {
+                            Army::Red => &map_def.spawn_red,
+                            Army::Blue => &map_def.spawn_blue,
+                        };
+                        let intended: std::collections::HashSet<_> =
+                            occupancy_intent.intentions.values().copied().collect();
+                        let spawn_pos = spawn_candidates
+                            .iter()
+                            .find(|pos| !occupancy.positions.contains(pos) && !intended.contains(pos))
+                            .copied();
+                        spawn_queue.requests.push(UnitSpawnRequest {
+                            unit_class,
+                            army: player,
+                            spawn_pos,
+                            skip_validation: true,
+                            stable_id: Some(tentative_stable_id),
+                        });
+                        net_broadcast.write(BroadcastNetMsg(NetworkMessage::InputSpawnUnit {
+                            unit_class,
+                            tentative_stable_id,
+                        }));
                     } else {
                         // Singleplayer or host: spawn locally.
                         let spawn_candidates = match player {
