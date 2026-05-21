@@ -50,6 +50,13 @@ pub fn next_stable_id() -> u32 {
     NEXT_STABLE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Called once when this process is confirmed to be the multiplayer client.
+/// Seeds the stable-ID counter into the upper half of u32 so client-allocated
+/// tentative IDs can never collide with host-allocated IDs (which start at 0).
+pub fn init_client_id_space() {
+    NEXT_STABLE_ID.store(0x8000_0000, std::sync::atomic::Ordering::Relaxed);
+}
+
 // ---------------------------------------------------------------------------
 // State snapshot data (host → client every 200 ms)
 // ---------------------------------------------------------------------------

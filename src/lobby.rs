@@ -201,6 +201,9 @@ fn handle_lobby_events(
 
                 NetworkMessage::LobbyAssignment { peer_army, map_path } => {
                     // We are the client: apply the assignment the host sent us.
+                    // Seed stable IDs into the upper half of u32 so our tentative
+                    // IDs never collide with host-allocated ones (which start at 0).
+                    crate::networking::init_client_id_space();
                     player_army.0 = *peer_army;
                     commands.insert_resource(SelectedMap(map_path.clone()));
 
