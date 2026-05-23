@@ -111,6 +111,11 @@ struct CrystalVisual {
 #[derive(Resource, Default)]
 pub struct HexMapConfig {
     pub valid_cells: std::collections::HashSet<(i32, i32)>,
+    pub cell_world_pos: std::collections::HashMap<(i32, i32), Vec3>,
+}
+
+pub fn cell_center(q: i32, r: i32, config: &HexMapConfig) -> Vec3 {
+    config.cell_world_pos.get(&(q, r)).copied().unwrap_or_else(|| axial_to_world_pos(q, r))
 }
 
 #[derive(Resource, Default)]

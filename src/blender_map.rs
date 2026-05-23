@@ -3,7 +3,7 @@ use bevy::scene::SceneInstanceReady;
 use bevy_skein::SkeinPlugin;
 
 use crate::loading::{LoadingState, SelectedMap};
-use crate::map::{world_pos_to_axial, HexTile as MapHexTile};
+use crate::map::{world_pos_to_axial, HexMapConfig, HexTile as MapHexTile};
 use crate::map_loader::MapDefinition;
 use crate::ui::GameCamera;
 use crate::units::Army;
@@ -145,6 +145,7 @@ fn on_scene_ready(
 fn extract_map_definition(
     mut commands: Commands,
     mut map_def: ResMut<MapDefinition>,
+    mut map_config: ResMut<HexMapConfig>,
     scene_ready: Res<BlenderSceneReady>,
     children_query: Query<&Children>,
     global_transforms: Query<&GlobalTransform>,
@@ -154,8 +155,7 @@ fn extract_map_definition(
     launch_pads: Query<&LaunchPadMarker>,
     crystal_markers: Query<(), With<CrystalMarker>>,
     blocked_markers: Query<(), With<Blocked>>,
-    cameras: Query<(), With<Camera3d>>,
-    camera_shifts: Query<&CameraShift>,
+    cameras: Query<((), Option<&CameraShift>), With<Camera3d>>,
     mut point_lights: Query<&mut PointLight>,
     mut spot_lights: Query<&mut SpotLight>,
     mut dir_lights: Query<&mut DirectionalLight>,
@@ -175,6 +175,7 @@ fn extract_map_definition(
         let (q, r) = world_pos_to_axial(pos.x, pos.z);
 
         map_def.tile_map.insert((q, r), 1);
+        map_config.cell_world_pos.insert((q, r), Vec3::new(pos.x, 0.0, pos.z));
         commands.entity(*entity).insert(MapHexTile { q, r, _height: 0.0 });
 
         if let Ok(sp) = spawn_points.get(*entity) {
@@ -235,8 +236,7 @@ fn extract_map_definition(
     // CameraShift component on the camera carries Blender's Shift X/Y values
     // (lost during glTF export) and maps them to viewport_origin.
     for entity in &all_descendants {
-        if cameras.get(*entity).is_ok() {
-            let shift = camera_shifts.get(*entity).ok();
+        if let Ok((_, shift)) = cameras.get(*entity) {
             let origin = Vec2::new(
                 0.5 - shift.map_or(0.0, |s| s.x),
                 0.5 - shift.map_or(0.0, |s| s.y),

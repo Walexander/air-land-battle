@@ -4,7 +4,7 @@ use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::ecs::system::SystemParam;
 use bevy_mod_outline::OutlineVolume;
 
-use crate::map::{axial_to_world_pos, HexMapConfig, HoveredHex, Obstacles, VisibleHexes};
+use crate::map::{axial_to_world_pos, cell_center, HexMapConfig, HoveredHex, Obstacles, VisibleHexes};
 use crate::units::{find_path_waypoints, Occupancy, ClaimedCellsThisFrame, Unit, UnitMovement, Army, UnitStats, LocalPlayerArmy};
 use crate::networking::{BroadcastNetMsg, MultiplayerMode, NetworkMessage};
 use crate::loading::LoadingState;
@@ -295,8 +295,9 @@ pub fn spawn_destination_ring(
     unit_entity: Entity,
     destination: (i32, i32),
     _army: Army,
+    config: &HexMapConfig,
 ) {
-    let dest_pos = axial_to_world_pos(destination.0, destination.1);
+    let dest_pos = cell_center(destination.0, destination.1, config);
     let hex_pos = dest_pos + Vec3::new(0.0, 5.0, 0.0);
 
     let color = Color::linear_rgba(100.0, 100.0, 100.0, 1.0);
@@ -939,6 +940,7 @@ fn handle_unit_selection(
                                             selected_entity,
                                             goal,
                                             selected_unit.army,
+                                            &config,
                                         );
                                     }
                                 }
@@ -969,6 +971,7 @@ fn handle_unit_selection(
                                             selected_entity,
                                             goal,
                                             selected_unit.army,
+                                            &config,
                                         );
                                     }
                                 }
@@ -1003,6 +1006,7 @@ fn handle_unit_selection(
                                         selected_entity,
                                         goal,
                                         selected_unit.army,
+                                        &config,
                                     );
                                 }
                             }
@@ -1466,13 +1470,14 @@ fn update_selected_cell_highlight(
     mut materials: ResMut<Assets<StandardMaterial>>,
     selected_query: Query<Entity, With<Selected>>,
     position_cache: Res<crate::units::UnitPositionCache>,
+    config: Res<HexMapConfig>,
     mut highlight_query: Query<(Entity, &mut Transform), With<SelectedCellHighlight>>,
 ) {
     let occupied_cell = selected_query.single().ok()
         .and_then(|e| position_cache.positions.get(&e).copied());
 
     if let Some((q, r)) = occupied_cell {
-        let cell_pos = axial_to_world_pos(q, r);
+        let cell_pos = cell_center(q, r, &config);
         let target = Vec3::new(cell_pos.x, 2.0, cell_pos.z);
 
         if let Ok((_, mut transform)) = highlight_query.single_mut() {
