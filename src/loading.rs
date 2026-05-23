@@ -44,6 +44,7 @@ pub struct MapButton(pub String);
 // ---------------------------------------------------------------------------
 
 pub const MAPS: &[(&str, &str)] = &[
+    ("Hex Map (Blender)",  "assets/HexMap.glb"),
     ("Topsy Turvy",        "assets/maps/Topsy Turvy.tmx"),
     ("The Bullseye",       "assets/maps/The Bullseye.tmx"),
     ("Frozen Road",        "assets/maps/Frozen Road.tmx"),

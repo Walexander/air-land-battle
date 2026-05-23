@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use bevy::gltf::GltfAssetLabel;
+use bevy::picking::prelude::*;
 use bevy_sprinkles::ParticleSystem3D;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::asset::RenderAssetUsages;
@@ -107,8 +108,10 @@ pub struct RedArmy;
 #[derive(Component)]
 pub struct BlueArmy;
 
-#[derive(Component, Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Component, Reflect, Clone, Copy, PartialEq, Eq, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[reflect(Default)]
 pub enum Army {
+    #[default]
     Red,
     Blue,
 }
@@ -2738,7 +2741,7 @@ fn spawn_unit_from_request(
                 MeshMaterial3d(collider_material),
                 Transform::from_translation(collider_pos),
                 UnitClickCollider { unit_entity },
-                // Visibility::Hidden, // Make visible for debugging
+                Pickable::IGNORE,
             ));
         });
 

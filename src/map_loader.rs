@@ -47,6 +47,11 @@ impl Plugin for MapLoaderPlugin {
 fn load_map_data(mut map_def: ResMut<MapDefinition>, selected_map: Res<SelectedMap>) {
     // Reset to default so stale data from a previous game doesn't carry over.
     *map_def = MapDefinition::default();
+
+    if selected_map.0.ends_with(".glb") || selected_map.0.ends_with(".gltf") {
+        return;
+    }
+
     let tmx_path = Path::new(&selected_map.0);
 
     // Step 1: parse tile layer directly from the CSV in the raw file.

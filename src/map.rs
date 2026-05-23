@@ -2,6 +2,7 @@ use std::f32::consts::PI;
 
 use bevy::light::CascadeShadowConfigBuilder;
 use bevy::light::light_consts::lux;
+use bevy::picking::prelude::*;
 use bevy::prelude::*;
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
@@ -161,7 +162,9 @@ impl Plugin for MapPlugin {
             .insert_resource(DebugOverlay::default())
             .insert_resource(ClearColor(Color::srgb(0.53, 0.81, 0.92))) // Light sky blue
             .add_systems(OnEnter(LoadingState::Playing), (setup_hex_map, crate::hex_pathfinding::setup_hex_pathfinding, warmup_particle_systems).chain())
-            .add_systems(Update, (hex_hover_system, update_outline_colors, update_launch_pad_colors, billboard_sprites, apply_crystal_materials, animate_crystal_sparkle, update_fog_of_war, update_crystal_visuals, toggle_debug_overlay, tag_silo_missiles, tag_silo_covers, rotate_silo_missiles, trigger_missile_launch, debug_trigger_missile_launch, animate_missile_launch, check_missile_animation_complete).run_if(in_state(LoadingState::Playing)));
+            .add_systems(Update, (update_outline_colors, update_launch_pad_colors, billboard_sprites, apply_crystal_materials, animate_crystal_sparkle, update_fog_of_war, update_crystal_visuals, toggle_debug_overlay, tag_silo_missiles, tag_silo_covers, rotate_silo_missiles, trigger_missile_launch, debug_trigger_missile_launch, animate_missile_launch, check_missile_animation_complete).run_if(in_state(LoadingState::Playing)))
+            .add_observer(on_hex_over)
+            .add_observer(on_hex_out);
     }
 }
 
@@ -587,26 +590,41 @@ pub fn setup_hex_map(
     mut map_config: ResMut<HexMapConfig>,
     mut camera_settings: ResMut<CameraSettings>,
     map_def: Res<crate::map_loader::MapDefinition>,
+    blender_active: Option<Res<crate::blender_map::BlenderMapActive>>,
 ) {
-    // Create the shared fog material once and store it as a named resource
-    // so bevy_inspector_egui can find it under "FogMaterial" in the Resources panel.
+    if blender_active.is_some() {
+        let fog_material_handle = materials.add(StandardMaterial {
+            base_color: Color::srgba(0.0, 0.0, 0.0, 0.55),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            double_sided: true,
+            cull_mode: None,
+            ..default()
+        });
+        commands.insert_resource(FogMaterial(fog_material_handle));
+        obstacles.positions = map_def.obstacles.clone();
+        map_config.valid_cells = map_def.tile_map.keys().cloned()
+            .chain(map_def.launch_pad_cells.iter().cloned())
+            .collect();
+        return;
+    }
+
     let fog_material_handle = materials.add(StandardMaterial {
         base_color: Color::srgba(0.0, 0.0, 0.0, 0.55),
         alpha_mode: AlphaMode::Blend,
         unlit: true,
-
         double_sided: true,
         cull_mode: None,
         ..default()
     });
     commands.insert_resource(FogMaterial(fog_material_handle.clone()));
-    // Populate obstacles from the loaded map definition
+
     obstacles.positions = map_def.obstacles.clone();
-    // Build valid_cells from all rendered tiles (tile_map + launch_pad_cells).
+
     map_config.valid_cells = map_def.tile_map.keys().cloned()
         .chain(map_def.launch_pad_cells.iter().cloned())
         .collect();
-    // Compute map center from all valid cells to center the camera.
+
     let mut min_x = f32::INFINITY;
     let mut max_x = f32::NEG_INFINITY;
     let mut min_z = f32::INFINITY;
@@ -623,7 +641,6 @@ pub fn setup_hex_map(
     let center_z = (min_z + max_z) * 0.5;
     info!("Camera: center=({center_x:.1},{center_z:.1}) map_span=({:.0}x{:.0})", max_x - min_x, max_z - min_z);
 
-    // Push the computed center into CameraSettings so update_camera_from_settings uses it.
     camera_settings.x = center_x;
     camera_settings.z = center_z + 350.0;
     camera_settings.look_at_x = center_x;
@@ -631,10 +648,10 @@ pub fn setup_hex_map(
     camera_settings.home_x = center_x;
     camera_settings.home_z = center_z;
 
-    // Spawn 3D camera with orthographic projection
+    // --- Procedural visuals (Tiled maps only) ---
+
     let mut orthographic = OrthographicProjection::default_3d();
     orthographic.scale = camera_settings.scale;
-    // Increase far plane to prevent clipping when camera pans
     orthographic.far = 2000.0;
 
     commands.spawn((
@@ -650,7 +667,6 @@ pub fn setup_hex_map(
         DespawnOnExit(LoadingState::Playing),
     ));
 
-    // Add point light
     commands.spawn((
         DirectionalLight {
             illuminance: 8000.0,
@@ -659,7 +675,6 @@ pub fn setup_hex_map(
             shadow_normal_bias: 0.0,
             ..default()
         },
-        // Nearly overhead, slight left lean — shadows fall right and slightly down
         Transform::from_xyz(-0.4, 4.0, -0.3).looking_at(Vec3::ZERO, Vec3::Y),
         CascadeShadowConfigBuilder {
             num_cascades: 1,
@@ -670,7 +685,6 @@ pub fn setup_hex_map(
         DespawnOnExit(LoadingState::Playing),
     ));
 
-    // Add ambient light for fill/shadow softness
     commands.spawn((
         AmbientLight {
             color: Color::srgb(1.0, 1.0, 1.0),
@@ -682,13 +696,12 @@ pub fn setup_hex_map(
 
     let prism_height = 20.0;
 
-    // Build shared handles bundled into TileAssets.
     let _hex_mesh = meshes.add(create_hexagon_prism_mesh(prism_height));
     let assets = TileAssets {
         filled_hex_mesh: meshes.add(create_filled_hexagon_mesh()),
         hex_border_mesh: meshes.add(create_filled_hexagon_border_mesh()),
-        fog_hex_mesh: meshes.add(create_filled_hexagon_border_mesh()), // same size as the border
-        hover_outline_mesh: meshes.add(create_hexagon_outline_mesh(63.0, 4.0)), // Same as destination ring
+        fog_hex_mesh: meshes.add(create_filled_hexagon_border_mesh()),
+        hover_outline_mesh: meshes.add(create_hexagon_outline_mesh(63.0, 4.0)),
         spawn_center_mesh: meshes.add(create_filled_hexagon_mesh_with_radius(HEX_RADIUS * 0.45)),
         sand_texture: asset_server.load("maps/Tiles/sand_01.png"),
         cement_texture: asset_server.load("maps/Tiles/cement_01.jpg"),
@@ -698,7 +711,6 @@ pub fn setup_hex_map(
         hq_model: asset_server.load("JustBuildings.glb#Scene0"),
     };
 
-    // Create parent HexMap entity; delegate children to helpers.
     commands.spawn((
         HexMap,
         Transform::default(),
@@ -831,6 +843,7 @@ fn setup_tiles(
                 })),
                 Transform::from_translation(filled_hex_pos + Vec3::new(0.0, 0.2, 0.0))
                     .with_rotation(hex_rotation),
+                Pickable::IGNORE,
             ));
         }
 
@@ -872,9 +885,9 @@ fn setup_tiles(
                     .with_scale(Vec3::splat(0.75)),
                 HexOutline {},
                 Visibility::Hidden,
+                Pickable::IGNORE,
             ));
 
-            // Fog sits just above the colored tile (Y+0.51 vs tile Y+0.5).
             let fog_pos = world_pos + Vec3::new(0.0, 0.51, 0.0);
             parent.spawn((
                 Name::new("FogOfWar"),
@@ -883,6 +896,7 @@ fn setup_tiles(
                 Transform::from_translation(fog_pos).with_rotation(hex_rotation),
                 FogOfWar { hex_q: q, hex_r: r },
                 Visibility::Visible,
+                Pickable::IGNORE,
             ));
         }
 
@@ -910,11 +924,11 @@ fn setup_tiles(
                     .with_scale(Vec3::splat(0.75)),
                 DebugOutline,
                 Visibility::Hidden,
+                Pickable::IGNORE,
             ));
         }
     }
 
-    // --- Debug outlines for spawn cells (raised to y=11, above tile outlines at y=9) ---
     info!("debug: spawn_red={} spawn_blue={}", map_def.spawn_red.len(), map_def.spawn_blue.len());
     for &(q, r) in &map_def.spawn_red {
         let world_pos = axial_to_world_pos(q, r);
@@ -933,6 +947,7 @@ fn setup_tiles(
                 .with_scale(Vec3::splat(0.75)),
             DebugOutline,
             Visibility::Hidden,
+            Pickable::IGNORE,
         ));
     }
     for &(q, r) in &map_def.spawn_blue {
@@ -952,10 +967,10 @@ fn setup_tiles(
                 .with_scale(Vec3::splat(0.75)),
             DebugOutline,
             Visibility::Hidden,
+            Pickable::IGNORE,
         ));
     }
 
-    // --- Launch pad polygon outlines (black, toggled by F1 debug overlay) ---
     for poly in &map_def.launch_pad_polygons {
         let mesh = create_polygon_outline_mesh(poly, 13.0, 8.0);
         parent.spawn((
@@ -971,6 +986,7 @@ fn setup_tiles(
             Transform::default(),
             DebugOutline,
             Visibility::Hidden,
+            Pickable::IGNORE,
         ));
     }
 
@@ -990,6 +1006,7 @@ fn setup_tiles(
             Transform::default(),
             DebugOutline,
             Visibility::Hidden,
+            Pickable::IGNORE,
         ));
     }
     if !map_def.base_blue_polygon.is_empty() {
@@ -1007,6 +1024,7 @@ fn setup_tiles(
             Transform::default(),
             DebugOutline,
             Visibility::Hidden,
+            Pickable::IGNORE,
         ));
     }
 }
@@ -1079,6 +1097,7 @@ fn spawn_launch_pad_outline(
             })),
             Transform::from_translation(Vec3::new(pad_center.x, outline_y, pad_center.z)),
             LaunchPadOutline { pad_index: pad_idx },
+            Pickable::IGNORE,
         ));
     }
 }
@@ -1320,66 +1339,28 @@ fn setup_crystals(
     }
 }
 
-fn hex_hover_system(
-    camera_query: Query<(&Camera, &GlobalTransform), With<GameCamera>>,
+fn on_hex_over(
+    event: On<Pointer<Over>>,
+    hex_query: Query<&HexTile>,
     mut hovered_hex: ResMut<HoveredHex>,
-    hex_query: Query<(Entity, &HexTile)>,
-    windows: Query<&Window>,
-    _obstacles: Res<Obstacles>,
 ) {
-    let Ok((camera, camera_transform)) = camera_query.single() else {
-        return;
-    };
-
-    let Some(cursor_position) = windows.single().ok().and_then(|w| w.cursor_position()) else {
-        hovered_hex.entity = None;
-        return;
-    };
-
-    let Some(ray) = camera.viewport_to_world(camera_transform, cursor_position).ok() else {
-        return;
-    };
-
-    let ground_plane_normal = Vec3::Y;
-    let ground_plane_point = Vec3::ZERO;
-    let denom = ground_plane_normal.dot(*ray.direction);
-
-    if denom.abs() > 1e-6 {
-        let t = (ground_plane_point - ray.origin).dot(ground_plane_normal) / denom;
-        if t >= 0.0 {
-            let world_pos = ray.origin + *ray.direction * t;
-
-            let mut closest_hex: Option<(Entity, i32, i32, f32)> = None;
-            // Use a slightly larger radius for more forgiving hex detection
-            let detection_radius = HEX_RADIUS * 1.15;
-
-            for (entity, hex_tile) in hex_query.iter() {
-                let hex_world_pos = axial_to_world_pos(hex_tile.q, hex_tile.r);
-                let distance = (world_pos - hex_world_pos).length();
-
-                if distance < detection_radius {
-                    if let Some((_, _, _, closest_dist)) = closest_hex {
-                        if distance < closest_dist {
-                            closest_hex = Some((entity, hex_tile.q, hex_tile.r, distance));
-                        }
-                    } else {
-                        closest_hex = Some((entity, hex_tile.q, hex_tile.r, distance));
-                    }
-                }
-            }
-
-            if let Some((entity, q, r, _)) = closest_hex {
-                hovered_hex.entity = Some(entity);
-                hovered_hex.q = q;
-                hovered_hex.r = r;
-            } else {
-                hovered_hex.entity = None;
-            }
-            return;
-        }
+    let entity = event.event().entity;
+    if let Ok(hex) = hex_query.get(entity) {
+        hovered_hex.entity = Some(entity);
+        hovered_hex.q = hex.q;
+        hovered_hex.r = hex.r;
     }
+}
 
-    hovered_hex.entity = None;
+fn on_hex_out(
+    event: On<Pointer<Out>>,
+    hex_query: Query<(), With<HexTile>>,
+    mut hovered_hex: ResMut<HoveredHex>,
+) {
+    let entity = event.event().entity;
+    if hex_query.get(entity).is_ok() && hovered_hex.entity == Some(entity) {
+        hovered_hex.entity = None;
+    }
 }
 
 fn update_outline_colors(

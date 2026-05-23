@@ -947,7 +947,12 @@ fn handle_keyboard_and_scroll_camera(
 fn update_camera_from_settings(
     mut camera_query: Query<(&mut Transform, &mut Projection), With<GameCamera>>,
     settings: Res<CameraSettings>,
+    blender_active: Option<Res<crate::blender_map::BlenderMapActive>>,
 ) {
+    if blender_active.is_some() {
+        return;
+    }
+
     if !settings.is_changed() {
         return;
     }

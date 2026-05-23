@@ -4,6 +4,7 @@ use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use bevy_inspector_egui::bevy_egui::EguiPlugin;
 use bevy_sprinkles::SprinklesPlugin;
 
+mod blender_map;
 mod map;
 mod map_loader;
 mod minimap;
@@ -20,6 +21,7 @@ mod networking;
 mod lobby;
 mod net_sync;
 
+use blender_map::BlenderMapPlugin;
 use map::MapPlugin;
 use map_loader::MapLoaderPlugin;
 use minimap::MinimapPlugin;
@@ -46,6 +48,7 @@ fn main() {
             }),
             ..default()
         }))
+        .add_plugins(bevy::picking::mesh_picking::MeshPickingPlugin)
         .add_plugins(FrameTimeDiagnosticsPlugin::default())
         .add_plugins(EguiPlugin::default())
         .add_plugins(WorldInspectorPlugin::default().run_if(inspector_enabled))
@@ -53,6 +56,7 @@ fn main() {
         .add_plugins(NetworkingPlugin)
         .add_plugins(LobbyPlugin)
         .add_plugins(NetSyncPlugin)
+        .add_plugins(BlenderMapPlugin)
         .add_plugins(LoadingPlugin)
         .add_plugins(MinimapPlugin)
         .add_plugins(MapLoaderPlugin)
