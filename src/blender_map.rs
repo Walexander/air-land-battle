@@ -42,6 +42,13 @@ pub struct CrystalMarker;
 #[reflect(Component)]
 pub struct Blocked;
 
+#[derive(Component, Reflect, Debug, Default)]
+#[reflect(Component, Default)]
+pub struct CameraShift {
+    pub x: f32,
+    pub y: f32,
+}
+
 /// Blender hex radius=1.0, game HEX_RADIUS=64.0.
 const BLENDER_SCALE: f32 = 64.0;
 
@@ -69,6 +76,7 @@ impl Plugin for BlenderMapPlugin {
             .register_type::<LaunchPadMarker>()
             .register_type::<CrystalMarker>()
             .register_type::<Blocked>()
+            .register_type::<CameraShift>()
             .register_type::<Army>()
             .add_systems(OnEnter(LoadingState::Loading), load_blender_map)
             .add_systems(
@@ -147,6 +155,7 @@ fn extract_map_definition(
     crystal_markers: Query<(), With<CrystalMarker>>,
     blocked_markers: Query<(), With<Blocked>>,
     cameras: Query<(), With<Camera3d>>,
+    camera_shifts: Query<&CameraShift>,
     mut point_lights: Query<&mut PointLight>,
     mut spot_lights: Query<&mut SpotLight>,
     mut dir_lights: Query<&mut DirectionalLight>,
@@ -223,15 +232,22 @@ fn extract_map_definition(
 
     // Camera inherits 64x scale from scene root, so use Blender-space viewport
     // height (9.0) — the inherited scale handles the world-space conversion.
+    // CameraShift component on the camera carries Blender's Shift X/Y values
+    // (lost during glTF export) and maps them to viewport_origin.
     for entity in &all_descendants {
         if cameras.get(*entity).is_ok() {
+            let shift = camera_shifts.get(*entity).ok();
+            let origin = Vec2::new(
+                0.5 - shift.map_or(0.0, |s| s.x),
+                0.5 - shift.map_or(0.0, |s| s.y),
+            );
             commands.entity(*entity).insert((
                 GameCamera,
                 Projection::Orthographic(OrthographicProjection {
                     scaling_mode: bevy::camera::ScalingMode::FixedVertical {
                         viewport_height: 9.0,
                     },
-                    viewport_origin: Vec2::new(0.5 + 0.055, 0.5 + 0.11),
+                    viewport_origin: origin,
                     scale: 1.0,
                     far: 5000.0,
                     ..OrthographicProjection::default_3d()

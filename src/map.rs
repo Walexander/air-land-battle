@@ -606,6 +606,18 @@ pub fn setup_hex_map(
         map_config.valid_cells = map_def.tile_map.keys().cloned()
             .chain(map_def.launch_pad_cells.iter().cloned())
             .collect();
+
+        for &(q, r) in &map_def.crystal_fields {
+            let crystals = 200 + (((q + r) * 73) % 201).abs();
+            info!("blender_map: crystal field at ({}, {}) with {} crystals", q, r, crystals);
+            commands.spawn((
+                Transform::from_translation(axial_to_world_pos(q, r)),
+                Visibility::default(),
+                CrystalField { q, r, crystals_remaining: crystals, max_crystals: crystals },
+                DespawnOnExit(LoadingState::Playing),
+            ));
+        }
+
         return;
     }
 
