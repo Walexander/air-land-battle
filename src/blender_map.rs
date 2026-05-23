@@ -231,6 +231,7 @@ fn extract_map_definition(
                     scaling_mode: bevy::camera::ScalingMode::FixedVertical {
                         viewport_height: 9.0,
                     },
+                    viewport_origin: Vec2::new(0.5 + 0.055, 0.5 + 0.11),
                     scale: 1.0,
                     far: 5000.0,
                     ..OrthographicProjection::default_3d()
