@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = { version = "0.18", features = ["jpeg"] }
+bevy = { version = "0.18", features = ["jpeg", "webp"] }
 bevy-inspector-egui = "0.36"
 bevy_mod_outline = "0.12"
 tiled = "0.15"

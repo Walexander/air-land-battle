@@ -6,6 +6,7 @@ use crate::loading::{LoadingState, SelectedMap};
 use crate::map::{world_pos_to_axial, HexMapConfig, HexTile as MapHexTile};
 use crate::map_loader::MapDefinition;
 use crate::ui::GameCamera;
+use crate::team_material::UseTeamMaterial;
 use crate::units::Army;
 
 // ---------------------------------------------------------------------------
@@ -78,6 +79,7 @@ impl Plugin for BlenderMapPlugin {
             .register_type::<Blocked>()
             .register_type::<CameraShift>()
             .register_type::<Army>()
+            .register_type::<UseTeamMaterial>()
             .add_systems(OnEnter(LoadingState::Loading), load_blender_map)
             .add_systems(
                 Update,

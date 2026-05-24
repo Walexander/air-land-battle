@@ -20,6 +20,7 @@ mod hex_pathfinding;
 mod networking;
 mod lobby;
 mod net_sync;
+mod team_material;
 
 use blender_map::BlenderMapPlugin;
 use map::MapPlugin;
@@ -36,6 +37,7 @@ use music::MusicPlugin;
 use networking::NetworkingPlugin;
 use lobby::LobbyPlugin;
 use net_sync::NetSyncPlugin;
+use team_material::TeamMaterialPlugin;
 
 fn main() {
     App::new()
@@ -68,6 +70,7 @@ fn main() {
         .add_plugins(SelectionPlugin)
         .add_plugins(UIPlugin)
         .add_plugins(MusicPlugin)
+        .add_plugins(TeamMaterialPlugin)
         .add_plugins(SprinklesPlugin)
         .insert_resource(bevy::light::PointLightShadowMap { size: 2048 })
         .insert_resource(InspectorEnabled(false))
