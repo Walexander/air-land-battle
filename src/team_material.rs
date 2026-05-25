@@ -1,3 +1,4 @@
+use bevy::picking::prelude::*;
 use bevy::prelude::*;
 use bevy::render::render_resource::AsBindGroup;
 
@@ -166,6 +167,9 @@ fn apply_team_materials(
             });
 
             commands.entity(*mesh_entity).insert(MeshMaterial3d(mat.clone()));
+            if is_launch_pad.is_none() {
+                commands.entity(*mesh_entity).insert(Pickable::IGNORE);
+            }
             pad_materials.push(mat);
         }
 

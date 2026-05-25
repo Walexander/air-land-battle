@@ -6,6 +6,7 @@ use bevy::picking::prelude::*;
 use bevy::prelude::*;
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::render::render_resource::{AsBindGroup, CompareFunction, Face};
 
 use crate::ui::{CameraSettings, GameCamera};
 use crate::launch_pads::{LaunchPadOwner, LaunchPadOwnership, GameTimer, GameState};
@@ -137,9 +138,38 @@ pub struct Obstacles {
 pub struct VisibleHexes(pub std::collections::HashSet<(i32, i32)>);
 
 /// Shared material handle for all fog-of-war overlay tiles.
-/// Stored as a resource so bevy_inspector_egui can find it by name.
 #[derive(Resource)]
-pub struct FogMaterial(pub Handle<StandardMaterial>);
+pub struct FogMaterial(pub Handle<FogHexMaterial>);
+
+#[derive(Asset, AsBindGroup, TypePath, Debug, Clone)]
+pub struct FogHexMaterial {
+    #[uniform(0)]
+    pub fog_color: LinearRgba,
+}
+
+impl Material for FogHexMaterial {
+    fn fragment_shader() -> bevy::shader::ShaderRef {
+        "shaders/fog_hex.wgsl".into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode {
+        AlphaMode::Blend
+    }
+
+    fn specialize(
+        _pipeline: &bevy::pbr::MaterialPipeline,
+        descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
+        _layout: &bevy::mesh::MeshVertexBufferLayoutRef,
+        _key: bevy::pbr::MaterialPipelineKey<Self>,
+    ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
+        descriptor.primitive.cull_mode = None;
+        if let Some(depth_stencil) = &mut descriptor.depth_stencil {
+            depth_stencil.depth_write_enabled = false;
+            depth_stencil.depth_compare = CompareFunction::LessEqual;
+        }
+        Ok(())
+    }
+}
 
 // Spawn particle systems far below the map to prime the GPU pipeline on the first
 // frame of gameplay, avoiding the one-shot emission window being missed.
@@ -160,7 +190,8 @@ pub struct MapPlugin;
 
 impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(HexMapConfig::default())
+        app.add_plugins(MaterialPlugin::<FogHexMaterial>::default())
+            .insert_resource(HexMapConfig::default())
             .insert_resource(HoveredHex::default())
             .insert_resource(Obstacles::default())
             .insert_resource(VisibleHexes::default())
@@ -580,7 +611,7 @@ struct TileAssets {
     spawn_center_mesh: Handle<Mesh>,
     sand_texture: Handle<Image>,
     cement_texture: Handle<Image>,
-    fog_material: Handle<StandardMaterial>,
+    fog_material: Handle<FogHexMaterial>,
     mountain_model: Handle<Scene>,
     silo_model: Handle<Scene>,
     hq_model: Handle<Scene>,
@@ -590,6 +621,7 @@ pub fn setup_hex_map(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut fog_materials: ResMut<Assets<FogHexMaterial>>,
     asset_server: Res<AssetServer>,
     mut obstacles: ResMut<Obstacles>,
     mut map_config: ResMut<HexMapConfig>,
@@ -598,19 +630,36 @@ pub fn setup_hex_map(
     blender_active: Option<Res<crate::blender_map::BlenderMapActive>>,
 ) {
     if blender_active.is_some() {
-        let fog_material_handle = materials.add(StandardMaterial {
-            base_color: Color::srgba(0.0, 0.0, 0.0, 0.55),
-            alpha_mode: AlphaMode::Blend,
-            unlit: true,
-            double_sided: true,
-            cull_mode: None,
-            ..default()
+        let fog_material_handle = fog_materials.add(FogHexMaterial {
+            fog_color: LinearRgba::new(0.0, 0.0, 0.0, 0.55),
         });
-        commands.insert_resource(FogMaterial(fog_material_handle));
+        commands.insert_resource(FogMaterial(fog_material_handle.clone()));
         obstacles.positions = map_def.obstacles.clone();
         map_config.valid_cells = map_def.tile_map.keys().cloned()
             .chain(map_def.launch_pad_cells.iter().cloned())
             .collect();
+
+        let fog_mesh = meshes.add(create_filled_hexagon_border_mesh());
+        let mut fog_count = 0u32;
+        for &(q, r) in &map_config.valid_cells {
+            let world_pos = cell_center(q, r, &map_config);
+            let fog_pos = world_pos + Vec3::new(0.0, 10.0, 0.0);
+            info!("fog spawn: ({},{}) at {:?}", q, r, fog_pos);
+            if !map_def.obstacles.contains(&(q, r)) {
+                commands.spawn((
+                    Name::new("FogOfWar"),
+                    Mesh3d(fog_mesh.clone()),
+                    MeshMaterial3d(fog_material_handle.clone()),
+                    Transform::from_translation(fog_pos),
+                    FogOfWar { hex_q: q, hex_r: r },
+                    Visibility::Visible,
+                    Pickable::IGNORE,
+                    DespawnOnExit(LoadingState::Playing),
+                ));
+                fog_count += 1;
+            }
+        }
+        info!("blender fog: spawned {} fog overlays over {} valid cells", fog_count, map_config.valid_cells.len());
 
         for &(q, r) in &map_def.crystal_fields {
             let crystals = 200 + (((q + r) * 73) % 201).abs();
@@ -626,13 +675,8 @@ pub fn setup_hex_map(
         return;
     }
 
-    let fog_material_handle = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.0, 0.0, 0.0, 0.55),
-        alpha_mode: AlphaMode::Blend,
-        unlit: true,
-        double_sided: true,
-        cull_mode: None,
-        ..default()
+    let fog_material_handle = fog_materials.add(FogHexMaterial {
+        fog_color: LinearRgba::new(0.0, 0.0, 0.0, 0.55),
     });
     commands.insert_resource(FogMaterial(fog_material_handle.clone()));
 
